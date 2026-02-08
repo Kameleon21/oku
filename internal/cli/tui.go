@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Kameleon21/oku/internal/app"
 	"github.com/Kameleon21/oku/internal/model"
@@ -20,6 +21,11 @@ const (
 	modeLibrary viewMode = iota
 	modeSearch
 	modeUpdatePage
+)
+
+const (
+	backgroundSyncWindow = 10 * time.Minute
+	backgroundCheckEvery = 1 * time.Minute
 )
 
 type focusPanel int
@@ -95,10 +101,13 @@ type searchLoadedMsg struct {
 }
 
 type opDoneMsg struct {
-	info   string
-	err    error
-	reload bool
+	info      string
+	err       error
+	reload    bool
+	markDirty bool
 }
+
+type backgroundCheckMsg struct{}
 
 type dashboardModel struct {
 	app *app.App
@@ -121,7 +130,9 @@ type dashboardModel struct {
 	readingBooks []model.UserBook
 	okuBooks     []model.UserBook
 
-	pendingBookID int
+	pendingBookID  int
+	dirty          bool
+	lastMutationAt time.Time
 
 	lastQuery string
 	infoMsg   string
@@ -209,7 +220,7 @@ func newDashboardModel(a *app.App) dashboardModel {
 }
 
 func (m dashboardModel) Init() tea.Cmd {
-	return tea.Batch(m.spin.Tick, loadLibraryCmd(m.app, false))
+	return tea.Batch(m.spin.Tick, loadLibraryCmd(m.app, false), backgroundCheckCmd())
 }
 
 func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -247,6 +258,13 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshListItems()
 		m.errMsg = ""
 		return m, nil
+	case backgroundCheckMsg:
+		if m.dirty && !m.loading && time.Since(m.lastMutationAt) >= backgroundSyncWindow {
+			m.loading = true
+			m.dirty = false
+			return m, tea.Batch(loadLibraryCmd(m.app, true), backgroundCheckCmd())
+		}
+		return m, backgroundCheckCmd()
 	case opDoneMsg:
 		m.loading = false
 		if msg.err != nil {
@@ -255,10 +273,14 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.errMsg = ""
 			m.infoMsg = msg.info
+			if msg.markDirty {
+				m.dirty = true
+				m.lastMutationAt = time.Now()
+			}
 		}
 		if msg.reload {
 			m.loading = true
-			return m, loadLibraryCmd(m.app, true)
+			return m, loadLibraryCmd(m.app, false)
 		}
 		return m, nil
 	case tea.KeyMsg:
@@ -359,6 +381,13 @@ func (m dashboardModel) updateSearchMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errMsg = ""
 		m.infoMsg = fmt.Sprintf("Loaded %d results", len(items))
 		return m, nil
+	case backgroundCheckMsg:
+		if m.dirty && !m.loading && time.Since(m.lastMutationAt) >= backgroundSyncWindow {
+			m.loading = true
+			m.dirty = false
+			return m, tea.Batch(loadLibraryCmd(m.app, true), backgroundCheckCmd())
+		}
+		return m, backgroundCheckCmd()
 	case opDoneMsg:
 		m.loading = false
 		if msg.err != nil {
@@ -367,10 +396,14 @@ func (m dashboardModel) updateSearchMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.errMsg = ""
 			m.infoMsg = msg.info
+			if msg.markDirty {
+				m.dirty = true
+				m.lastMutationAt = time.Now()
+			}
 		}
 		if msg.reload {
 			// Keep search view, but refresh local library in background.
-			return m, loadLibraryCmd(m.app, true)
+			return m, loadLibraryCmd(m.app, false)
 		}
 		return m, nil
 	case libraryLoadedMsg:
@@ -455,6 +488,13 @@ func (m dashboardModel) updatePageMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.resize()
 		return m, nil
+	case backgroundCheckMsg:
+		if m.dirty && !m.loading && time.Since(m.lastMutationAt) >= backgroundSyncWindow {
+			m.loading = true
+			m.dirty = false
+			return m, tea.Batch(loadLibraryCmd(m.app, true), backgroundCheckCmd())
+		}
+		return m, backgroundCheckCmd()
 	case opDoneMsg:
 		m.loading = false
 		m.mode = modeLibrary
@@ -465,10 +505,14 @@ func (m dashboardModel) updatePageMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.errMsg = ""
 			m.infoMsg = msg.info
+			if msg.markDirty {
+				m.dirty = true
+				m.lastMutationAt = time.Now()
+			}
 		}
 		if msg.reload {
 			m.loading = true
-			return m, loadLibraryCmd(m.app, true)
+			return m, loadLibraryCmd(m.app, false)
 		}
 		return m, nil
 	case tea.KeyMsg:
@@ -773,8 +817,9 @@ func updateProgressCmd(a *app.App, bookID int, rawPage string) tea.Cmd {
 			return opDoneMsg{err: err}
 		}
 		return opDoneMsg{
-			info:   fmt.Sprintf("Progress updated to page %d", newPage),
-			reload: true,
+			info:      fmt.Sprintf("Progress updated to page %d", newPage),
+			reload:    true,
+			markDirty: true,
 		}
 	}
 }
@@ -785,8 +830,9 @@ func changeStatusCmd(a *app.App, bookID int, status model.Status) tea.Cmd {
 			return opDoneMsg{err: err}
 		}
 		return opDoneMsg{
-			info:   fmt.Sprintf("Status changed to %s", status.Label()),
-			reload: true,
+			info:      fmt.Sprintf("Status changed to %s", status.Label()),
+			reload:    true,
+			markDirty: true,
 		}
 	}
 }
@@ -797,8 +843,9 @@ func addFromSearchCmd(a *app.App, bookID int, status model.Status) tea.Cmd {
 			return opDoneMsg{err: err}
 		}
 		return opDoneMsg{
-			info:   fmt.Sprintf("Added to %s", status.Label()),
-			reload: true,
+			info:      fmt.Sprintf("Added to %s", status.Label()),
+			reload:    true,
+			markDirty: true,
 		}
 	}
 }
@@ -813,6 +860,12 @@ func syncAllAndReloadCmd(a *app.App) tea.Cmd {
 			reload: true,
 		}
 	}
+}
+
+func backgroundCheckCmd() tea.Cmd {
+	return tea.Tick(backgroundCheckEvery, func(time.Time) tea.Msg {
+		return backgroundCheckMsg{}
+	})
 }
 
 func runDashboard() error {
