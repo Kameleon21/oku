@@ -1,8 +1,15 @@
 package cli
 
 import (
+	"context"
 	"fmt"
+	"os"
 
+	"github.com/Kameleon21/oku/internal/api"
+	"github.com/Kameleon21/oku/internal/app"
+	"github.com/Kameleon21/oku/internal/auth"
+	"github.com/Kameleon21/oku/internal/config"
+	"github.com/Kameleon21/oku/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -17,6 +24,27 @@ func newRootCmd(version string) *cobra.Command {
 
 	cmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output as JSON")
 
+	// Auth commands don't need the full app setup.
+	cmd.AddCommand(newAuthCmd())
+	cmd.AddCommand(newConfigCmd())
+
+	// Commands that need the app get it lazily via initApp.
+	cmd.AddCommand(newListCmd())
+	cmd.AddCommand(newNowCmd())
+	cmd.AddCommand(newSearchCmd())
+	cmd.AddCommand(newActiveCmd())
+	cmd.AddCommand(newSetActiveCmd())
+	cmd.AddCommand(newOpenCmd())
+	cmd.AddCommand(newUpdateCmd())
+	cmd.AddCommand(newStatusCmd())
+	cmd.AddCommand(newSyncCmd())
+
+	// Convenience shortcuts.
+	cmd.AddCommand(newShortcutCmd("reading", "List currently reading books", 2))
+	cmd.AddCommand(newShortcutCmd("oku", "List want-to-read books", 1))
+	cmd.AddCommand(newShortcutCmd("finished", "List finished books", 3))
+	cmd.AddCommand(newShortcutCmd("dnf", "List did-not-finish books", 5))
+
 	return cmd
 }
 
@@ -24,8 +52,42 @@ func newRootCmd(version string) *cobra.Command {
 func Execute(version string) int {
 	cmd := newRootCmd(version)
 	if err := cmd.Execute(); err != nil {
-		fmt.Fprintln(cmd.ErrOrStderr(), err)
 		return 1
 	}
 	return 0
+}
+
+// initApp creates the App instance (API client + store + config).
+func initApp() (*app.App, error) {
+	token, err := auth.GetToken()
+	if err != nil {
+		return nil, err
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, fmt.Errorf("load config: %w", err)
+	}
+
+	if err := config.EnsureDataDir(); err != nil {
+		return nil, fmt.Errorf("create data dir: %w", err)
+	}
+
+	db, err := store.New(config.DBPath())
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+
+	client := api.NewClient(token)
+	return app.New(client, db, cfg), nil
+}
+
+// exitErr prints an error and returns exit code 1.
+func exitErr(cmd *cobra.Command, err error) {
+	fmt.Fprintln(os.Stderr, "Error:", err)
+}
+
+// ctx returns a background context.
+func ctx() context.Context {
+	return context.Background()
 }

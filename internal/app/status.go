@@ -1,0 +1,46 @@
+package app
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/Kameleon21/oku/internal/model"
+)
+
+// ChangeStatus changes a book's status. If bookID is 0, uses the active book.
+// If the book has no user_book entry yet, creates one via InsertUserBook.
+func (a *App) ChangeStatus(ctx context.Context, bookID int, status model.Status) error {
+	resolvedID, err := a.ResolveBookID(bookID)
+	if err != nil {
+		return err
+	}
+
+	ub, err := a.Store.GetUserBookByBookID(resolvedID)
+	if err != nil {
+		return err
+	}
+
+	if ub == nil {
+		// Book not in user's library yet — insert it.
+		userBookID, err := a.API.InsertUserBook(ctx, resolvedID, int(status))
+		if err != nil {
+			return fmt.Errorf("add book to library: %w", err)
+		}
+		// Cache the new user_book.
+		newUB := model.UserBook{
+			ID:       userBookID,
+			BookID:   resolvedID,
+			StatusID: status,
+		}
+		return a.Store.UpsertUserBook(newUB)
+	}
+
+	// Update existing user_book status.
+	if err := a.API.UpdateUserBookStatus(ctx, ub.ID, int(status)); err != nil {
+		return fmt.Errorf("update status: %w", err)
+	}
+
+	// Update cache.
+	ub.StatusID = status
+	return a.Store.UpsertUserBook(*ub)
+}
