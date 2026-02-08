@@ -9,7 +9,7 @@ import (
 func newActiveCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "active",
-		Short: "Show the active book",
+		Short: "Show active books",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -17,11 +17,11 @@ func newActiveCmd() *cobra.Command {
 			}
 			defer a.Store.Close()
 
-			ub, err := a.GetActiveBook()
+			books, err := a.GetActiveBooks()
 			if err != nil {
 				return err
 			}
-			printActiveBook(ub)
+			printActiveBooks(books)
 			return nil
 		},
 	}
@@ -32,7 +32,7 @@ func newSetActiveCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "set-active",
-		Short: "Set the active book by ID",
+		Short: "Add a book to the active list by ID",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if bookID <= 0 {
 				return fmt.Errorf("--book is required (use a book ID from search or list)")
@@ -46,7 +46,7 @@ func newSetActiveCmd() *cobra.Command {
 			if err := a.SetActiveBook(bookID); err != nil {
 				return err
 			}
-			fmt.Printf("Active book set to ID %d\n", bookID)
+			fmt.Printf("Added book ID %d to active list\n", bookID)
 			return nil
 		},
 	}

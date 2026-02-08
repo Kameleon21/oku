@@ -33,6 +33,6 @@ func newStatusCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().IntVar(&bookID, "book", 0, "Book ID (defaults to active book)")
+	cmd.Flags().IntVar(&bookID, "book", 0, "Book ID (defaults when there is exactly one active book)")
 	return cmd
 }

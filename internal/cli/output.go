@@ -68,18 +68,28 @@ func printSearchResults(results []model.SearchResult) {
 	}
 }
 
-func printActiveBook(ub *model.UserBook) {
+func printActiveBooks(books []model.UserBook) {
 	if jsonOutput {
-		printJSON(ub)
+		printJSON(books)
 		return
 	}
-	fmt.Printf("%s %s\n", statusStyle.Render("Active:"), titleStyle.Render(ub.Book.Title))
-	if a := ub.Book.AuthorString(); a != "" {
-		fmt.Printf("        %s\n", authorStyle.Render(a))
+
+	if len(books) == 0 {
+		fmt.Println(dimStyle.Render("No active books."))
+		return
 	}
-	fmt.Printf("        %s  %s\n",
-		pageStyle.Render(ub.Progress()),
-		statusStyle.Render(ub.StatusID.Label()))
+
+	fmt.Println(statusStyle.Render("Active Books"))
+	for i, ub := range books {
+		num := dimStyle.Render(fmt.Sprintf("%d.", i+1))
+		fmt.Printf("%s %s\n", num, titleStyle.Render(ub.Book.Title))
+		if a := ub.Book.AuthorString(); a != "" {
+			fmt.Printf("      %s\n", authorStyle.Render(a))
+		}
+		fmt.Printf("      %s  %s\n",
+			pageStyle.Render(ub.Progress()),
+			statusStyle.Render(ub.StatusID.Label()))
+	}
 }
 
 func printJSON(v interface{}) {

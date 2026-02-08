@@ -10,3 +10,6 @@ dist/
 .vscode/
 *.swp
 *~
+
+.claude/
+task/
