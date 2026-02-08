@@ -161,3 +161,32 @@ LIMIT 1
 	}
 	return &r, nil
 }
+
+// DeleteUserBooksByStatus removes all user_books rows for a status and their reads.
+func (s *Store) DeleteUserBooksByStatus(status model.Status) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	const deleteReads = `
+DELETE FROM user_book_reads
+WHERE user_book_id IN (
+	SELECT id FROM user_books WHERE status_id = ?
+)
+`
+	if _, err := tx.Exec(deleteReads, int(status)); err != nil {
+		return fmt.Errorf("delete reads by status %d: %w", status, err)
+	}
+
+	const deleteBooks = `DELETE FROM user_books WHERE status_id = ?`
+	if _, err := tx.Exec(deleteBooks, int(status)); err != nil {
+		return fmt.Errorf("delete user_books status %d: %w", status, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit delete status %d: %w", status, err)
+	}
+	return nil
+}

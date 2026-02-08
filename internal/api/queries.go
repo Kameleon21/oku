@@ -32,7 +32,7 @@ func (c *Client) ListUserBooks(ctx context.Context, statusID int) ([]APIUserBook
     user_books(where: { status_id: { _eq: %d } }) {
       id
       status_id
-      user_book_reads {
+      user_book_reads(order_by: { id: desc }, limit: 1) {
         id
         progress_pages
         started_at
@@ -97,10 +97,10 @@ func (c *Client) SearchBooks(ctx context.Context, query string, perPage int) ([]
 	for _, hit := range tsResults.Hits {
 		doc := hit.Document
 		sr := model.SearchResult{
-			ID:      doc.ID,
+			ID:      int(doc.ID),
 			Title:   doc.Title,
 			Authors: doc.AuthorNames,
-			Pages:   doc.Pages,
+			Pages:   int(doc.Pages),
 			Slug:    doc.Slug,
 		}
 		if doc.Image != nil {

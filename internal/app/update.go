@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/Kameleon21/oku/internal/model"
 )
@@ -25,22 +26,50 @@ func (a *App) UpdateProgress(ctx context.Context, bookID int, pageUpdate model.P
 
 	// Get current page from latest read.
 	currentPage := 0
-	latestRead, _ := a.Store.GetLatestRead(ub.ID)
+	latestRead, err := a.Store.GetLatestRead(ub.ID)
+	if err != nil {
+		return 0, err
+	}
 	if latestRead != nil {
 		currentPage = latestRead.ProgressPages
 	}
 
 	newPage := pageUpdate.Resolve(currentPage, ub.Book.Pages)
 
-	// Update via API using upsert.
-	if err := a.API.UpsertUserBookReads(ctx, ub.ID, newPage); err != nil {
+	// Update an existing read entry when available, otherwise create one.
+	if latestRead != nil && latestRead.ID > 0 {
+		if err := a.API.UpdateReadProgress(ctx, latestRead.ID, newPage); err != nil {
+			return 0, fmt.Errorf("update progress: %w", err)
+		}
+		latestRead.ProgressPages = newPage
+		if err := a.Store.UpsertUserBookRead(*latestRead); err != nil {
+			return 0, err
+		}
+		return newPage, nil
+	}
+
+	read, err := a.API.InsertUserBookRead(ctx, ub.ID, newPage)
+	if err != nil {
 		return 0, fmt.Errorf("update progress: %w", err)
 	}
 
-	// Update local cache.
-	if latestRead != nil {
-		latestRead.ProgressPages = newPage
-		_ = a.Store.UpsertUserBookRead(*latestRead)
+	newRead := model.UserBookRead{
+		ID:            read.ID,
+		UserBookID:    ub.ID,
+		ProgressPages: read.ProgressPages,
+	}
+	if read.StartedAt != nil {
+		if t, parseErr := time.Parse("2006-01-02", *read.StartedAt); parseErr == nil {
+			newRead.StartedAt = &t
+		}
+	}
+	if read.FinishedAt != nil {
+		if t, parseErr := time.Parse("2006-01-02", *read.FinishedAt); parseErr == nil {
+			newRead.FinishedAt = &t
+		}
+	}
+	if err := a.Store.UpsertUserBookRead(newRead); err != nil {
+		return 0, err
 	}
 
 	return newPage, nil
