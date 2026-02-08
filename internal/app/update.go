@@ -9,7 +9,7 @@ import (
 )
 
 // UpdateProgress updates the reading progress for a book.
-// If bookID is 0, uses the active book.
+// If bookID is 0, uses the single active book.
 func (a *App) UpdateProgress(ctx context.Context, bookID int, pageUpdate model.PageUpdate) (int, error) {
 	resolvedID, err := a.ResolveBookID(bookID)
 	if err != nil {

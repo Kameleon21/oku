@@ -52,15 +52,15 @@ Token lookup order:
 ## Commands
 
 ```text
-oku active                                    Show the active book
+oku active                                    Show active books
 oku auth set-token                            Store your API token
 oku config edit                               Open config in your editor
 oku config show                               Print current config
 oku list <reading|oku|finished|dnf> [--refresh]
 oku now [--refresh]                           What are you reading right now?
 oku search <query> [--limit N]                Search Hardcover
-oku set-active --book <id>                    Set a book as your current read
-oku open                                      Open the active book on Hardcover
+oku set-active --book <id>                    Add a book to your active list
+oku open                                      Pick a currently-reading book and add it to active list
 oku update --page <N|+N|-N> [--book <id>]     Update page progress
 oku status <reading|oku|finished|dnf> [--book <id>]
 oku sync                                      Refresh the local cache
@@ -94,9 +94,10 @@ The dashboard has two panes -- **Reading** on the left, **Oku** on the right -- 
 |-----|--------|
 | `Tab` / arrows | Switch pane |
 | `/` | Search Hardcover |
-| `a` | Set selected book as active |
+| `Enter` | Toggle selected book between Reading and Oku |
 | `u` | Update page progress |
 | `g` `w` `f` `d` | Move to Reading / Oku / Finished / DNF |
+| `x` | Remove book from library lists |
 | `r` | Refresh from API |
 | `s` | Sync all statuses |
 | `q` | Quit |
@@ -106,8 +107,7 @@ The dashboard has two panes -- **Reading** on the left, **Oku** on the right -- 
 | Key | Action |
 |-----|--------|
 | Type + `Enter` | Search |
-| `Enter` on result | Add to Reading and set active |
-| `a` | Set active from result |
+| `Enter` on result | Add to Reading |
 | `g` `w` `f` `d` | Assign status to result |
 | `Esc` | Back to library |
 

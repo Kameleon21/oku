@@ -7,6 +7,7 @@ import (
 	"github.com/Kameleon21/oku/internal/app"
 	"github.com/Kameleon21/oku/internal/model"
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -30,26 +31,12 @@ const (
 	focusSearchResults
 )
 
-var (
-	panelFocusedStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("212"))
-	panelStyle        = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("239"))
-	headStyle         = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
-	dimStyleTUI       = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	infoStyleTUI      = lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
-	errorStyleTUI     = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true)
-)
-
 type userBookItem struct {
-	book   model.UserBook
-	active bool
+	book model.UserBook
 }
 
 func (i userBookItem) Title() string {
-	marker := "  "
-	if i.active {
-		marker = "* "
-	}
-	return marker + i.book.Book.Title
+	return i.book.Book.Title
 }
 
 func (i userBookItem) Description() string {
@@ -57,7 +44,15 @@ func (i userBookItem) Description() string {
 	if author == "" {
 		author = "Unknown author"
 	}
-	return fmt.Sprintf("%s | %s", author, i.book.Progress())
+	progress := i.book.Progress()
+	if i.book.Book.Pages > 0 {
+		page := i.book.CurrentPage
+		if len(i.book.UserBookReads) > 0 {
+			page = i.book.UserBookReads[0].ProgressPages
+		}
+		progress += " " + miniProgressBar(page, i.book.Book.Pages, 8)
+	}
+	return fmt.Sprintf("%s · %s", author, progress)
 }
 
 func (i userBookItem) FilterValue() string {
@@ -93,10 +88,6 @@ type libraryLoadedMsg struct {
 	err     error
 }
 
-type activeLoadedMsg struct {
-	id int
-}
-
 type searchLoadedMsg struct {
 	results []model.SearchResult
 	query   string
@@ -104,10 +95,9 @@ type searchLoadedMsg struct {
 }
 
 type opDoneMsg struct {
-	info     string
-	err      error
-	reload   bool
-	activeID int
+	info   string
+	err    error
+	reload bool
 }
 
 type dashboardModel struct {
@@ -126,11 +116,11 @@ type dashboardModel struct {
 	searchList  list.Model
 	searchInput textinput.Model
 	pageInput   textinput.Model
+	spin        spinner.Model
 
 	readingBooks []model.UserBook
 	okuBooks     []model.UserBook
 
-	activeID      int
 	pendingBookID int
 
 	lastQuery string
@@ -141,23 +131,69 @@ type dashboardModel struct {
 func newDashboardModel(a *app.App) dashboardModel {
 	delegate := list.NewDefaultDelegate()
 	delegate.ShowDescription = true
+	delegate.SetSpacing(0)
+
+	// Custom delegate styles — warm library palette
+	delegate.Styles.NormalTitle = lipgloss.NewStyle().
+		Foreground(colorLightGray).
+		Padding(0, 0, 0, 2)
+	delegate.Styles.NormalDesc = lipgloss.NewStyle().
+		Foreground(colorMidGray).
+		Padding(0, 0, 0, 2)
+	delegate.Styles.SelectedTitle = lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder(), false, false, false, true).
+		BorderForeground(colorGold).
+		Foreground(colorGold).
+		Bold(true).
+		Padding(0, 0, 0, 1)
+	delegate.Styles.SelectedDesc = lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder(), false, false, false, true).
+		BorderForeground(colorGold).
+		Foreground(colorMidGray).
+		Padding(0, 0, 0, 1)
+	delegate.Styles.DimmedTitle = lipgloss.NewStyle().
+		Foreground(colorDimGray).
+		Padding(0, 0, 0, 2)
+	delegate.Styles.DimmedDesc = lipgloss.NewStyle().
+		Foreground(colorDarkGray).
+		Padding(0, 0, 0, 2)
 
 	newList := func(title string) list.Model {
 		l := list.New(nil, delegate, 40, 12)
 		l.Title = title
 		l.SetShowStatusBar(false)
 		l.SetFilteringEnabled(true)
+		l.SetShowHelp(false)
 		l.DisableQuitKeybindings()
+
+		styles := list.DefaultStyles()
+		styles.Title = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(colorCream).
+			Background(colorCharcoal).
+			Padding(0, 1)
+		styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 1, 0)
+		l.Styles = styles
 		return l
 	}
 
 	searchIn := textinput.New()
 	searchIn.Placeholder = "Search books..."
 	searchIn.CharLimit = 120
+	searchIn.Prompt = "/ "
+	searchIn.PromptStyle = lipgloss.NewStyle().Foreground(colorGold).Bold(true)
+	searchIn.TextStyle = lipgloss.NewStyle().Foreground(colorLightGray)
 
 	pageIn := textinput.New()
 	pageIn.Placeholder = "370 or +10 or -5"
 	pageIn.CharLimit = 32
+	pageIn.Prompt = "› "
+	pageIn.PromptStyle = lipgloss.NewStyle().Foreground(colorGold).Bold(true)
+	pageIn.TextStyle = lipgloss.NewStyle().Foreground(colorLightGray)
+
+	s := spinner.New()
+	s.Spinner = spinner.MiniDot
+	s.Style = lipgloss.NewStyle().Foreground(colorGold)
 
 	return dashboardModel{
 		app:         a,
@@ -168,11 +204,12 @@ func newDashboardModel(a *app.App) dashboardModel {
 		searchList:  newList("Search Results"),
 		searchInput: searchIn,
 		pageInput:   pageIn,
+		spin:        s,
 	}
 }
 
 func (m dashboardModel) Init() tea.Cmd {
-	return tea.Batch(loadActiveCmd(m.app), loadLibraryCmd(m.app, false))
+	return tea.Batch(m.spin.Tick, loadLibraryCmd(m.app, false))
 }
 
 func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -188,6 +225,10 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spin, cmd = m.spin.Update(msg)
+		return m, cmd
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -206,10 +247,6 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshListItems()
 		m.errMsg = ""
 		return m, nil
-	case activeLoadedMsg:
-		m.activeID = msg.id
-		m.refreshListItems()
-		return m, nil
 	case opDoneMsg:
 		m.loading = false
 		if msg.err != nil {
@@ -218,10 +255,6 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.errMsg = ""
 			m.infoMsg = msg.info
-		}
-		if msg.activeID > 0 {
-			m.activeID = msg.activeID
-			m.refreshListItems()
 		}
 		if msg.reload {
 			m.loading = true
@@ -259,11 +292,11 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "s":
 			m.loading = true
 			return m, syncAllAndReloadCmd(m.app)
-		case "a":
-			if b := m.selectedLibraryBook(); b != nil {
-				m.loading = true
-				return m, setActiveCmd(m.app, b.Book.ID)
+		case "enter":
+			if m.focus == focusOku {
+				return m.changeSelectedLibraryStatus(model.StatusCurrentlyReading)
 			}
+			return m.changeSelectedLibraryStatus(model.StatusWantToRead)
 		case "u":
 			if b := m.selectedLibraryBook(); b != nil {
 				m.mode = modeUpdatePage
@@ -281,6 +314,8 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.changeSelectedLibraryStatus(model.StatusRead)
 		case "d":
 			return m.changeSelectedLibraryStatus(model.StatusDidNotFinish)
+		case "x":
+			return m.changeSelectedLibraryStatus(model.StatusIgnored)
 		}
 	}
 
@@ -295,6 +330,10 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m dashboardModel) updateSearchMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spin, cmd = m.spin.Update(msg)
+		return m, cmd
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -328,9 +367,6 @@ func (m dashboardModel) updateSearchMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.errMsg = ""
 			m.infoMsg = msg.info
-		}
-		if msg.activeID > 0 {
-			m.activeID = msg.activeID
 		}
 		if msg.reload {
 			// Keep search view, but refresh local library in background.
@@ -386,21 +422,16 @@ func (m dashboardModel) updateSearchMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if r := m.selectedSearchResult(); r != nil {
 				m.loading = true
-				return m, addFromSearchCmd(m.app, r.ID, model.StatusCurrentlyReading, true)
-			}
-		case "a":
-			if r := m.selectedSearchResult(); r != nil {
-				m.loading = true
-				return m, setActiveCmd(m.app, r.ID)
+				return m, addFromSearchCmd(m.app, r.ID, model.StatusCurrentlyReading)
 			}
 		case "g":
-			return m.changeSelectedSearchStatus(model.StatusCurrentlyReading, true)
+			return m.changeSelectedSearchStatus(model.StatusCurrentlyReading)
 		case "w":
-			return m.changeSelectedSearchStatus(model.StatusWantToRead, false)
+			return m.changeSelectedSearchStatus(model.StatusWantToRead)
 		case "f":
-			return m.changeSelectedSearchStatus(model.StatusRead, false)
+			return m.changeSelectedSearchStatus(model.StatusRead)
 		case "d":
-			return m.changeSelectedSearchStatus(model.StatusDidNotFinish, false)
+			return m.changeSelectedSearchStatus(model.StatusDidNotFinish)
 		}
 	}
 
@@ -415,6 +446,10 @@ func (m dashboardModel) updateSearchMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m dashboardModel) updatePageMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spin, cmd = m.spin.Update(msg)
+		return m, cmd
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -463,30 +498,40 @@ func (m dashboardModel) updatePageMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m dashboardModel) View() string {
 	if !m.loaded {
-		return "Loading dashboard..."
+		return "\n  " + m.spin.View() + " Loading dashboard..."
 	}
 
-	title := headStyle.Render("Oku Dashboard")
+	// ── Status bar: app name (left) + status message (right) ──
+	left := titleBarStyle.Render(" oku")
 	if m.loading {
-		title += "  " + dimStyleTUI.Render("Loading...")
+		left += " " + m.spin.View()
 	}
 
-	notice := ""
+	rightContent := ""
 	if m.errMsg != "" {
-		notice = errorStyleTUI.Render(m.errMsg)
+		rightContent = errorStyleTUI.Render(m.errMsg)
 	} else if m.infoMsg != "" {
-		notice = infoStyleTUI.Render(m.infoMsg)
-	} else {
-		notice = dimStyleTUI.Render("Rate-limit friendly cache: status lists auto-refresh only when stale or forced.")
+		rightContent = infoStyleTUI.Render(m.infoMsg)
 	}
 
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(rightContent) - 4
+	if gap < 1 {
+		gap = 1
+	}
+	statusBar := statusBarStyle.Width(max(60, m.width)).Render(
+		left + strings.Repeat(" ", gap) + rightContent,
+	)
+
+	// ── Body ──
 	if m.mode == modeSearch {
-		return title + "\n" + notice + "\n\n" + m.renderSearch() + "\n" + m.searchHelp()
+		return statusBar + "\n" + m.renderSearch() + "\n" + m.searchHelp()
 	}
 	if m.mode == modeUpdatePage {
-		return title + "\n" + notice + "\n\n" + m.renderLibrary() + "\n" + infoStyleTUI.Render("Page update: ") + m.pageInput.View() + dimStyleTUI.Render("  (Enter submit, Esc cancel)")
+		pagePrompt := "\n " + keyStyle.Render("Page update") + " " + m.pageInput.View() +
+			dimStyleTUI.Render("  (Enter submit, Esc cancel)")
+		return statusBar + "\n" + m.renderLibrary() + pagePrompt
 	}
-	return title + "\n" + notice + "\n\n" + m.renderLibrary() + "\n" + m.libraryHelp()
+	return statusBar + "\n" + m.renderLibrary() + "\n" + m.libraryHelp()
 }
 
 func (m dashboardModel) renderLibrary() string {
@@ -508,6 +553,18 @@ func (m dashboardModel) renderLibrary() string {
 }
 
 func (m dashboardModel) renderSearch() string {
+	modeTag := lipgloss.NewStyle().
+		Background(colorGold).
+		Foreground(colorCharcoal).
+		Bold(true).
+		Padding(0, 1).
+		Render("SEARCH")
+
+	header := modeTag
+	if m.lastQuery != "" {
+		header += " " + dimStyleTUI.Render(fmt.Sprintf("query: %q", m.lastQuery))
+	}
+
 	inputBox := panelStyle.Render(m.searchInput.View())
 	if m.focus == focusSearchInput {
 		inputBox = panelFocusedStyle.Render(m.searchInput.View())
@@ -519,36 +576,84 @@ func (m dashboardModel) renderSearch() string {
 		resultsBox = panelFocusedStyle.Render(results)
 	}
 
-	return headStyle.Render("Search") + "\n" + inputBox + "\n" + resultsBox
+	return header + "\n" + inputBox + "\n" + resultsBox
 }
 
 func (m dashboardModel) detailsView() string {
 	b := m.selectedLibraryBook()
 	if b == nil {
-		return "No book selected."
+		return dimStyleTUI.Render("  No book selected")
 	}
-	lines := []string{
-		headStyle.Render(b.Book.Title),
-		fmt.Sprintf("Author: %s", fallback(b.Book.AuthorString(), "Unknown author")),
-		fmt.Sprintf("Progress: %s", b.Progress()),
-		fmt.Sprintf("Status: %s", b.StatusID.Label()),
-		fmt.Sprintf("Book ID: %d", b.Book.ID),
+
+	var sb strings.Builder
+
+	// Title + author
+	sb.WriteString(headStyle.Render(b.Book.Title))
+	sb.WriteString("\n")
+	author := fallback(b.Book.AuthorString(), "Unknown author")
+	sb.WriteString(dimStyleTUI.Render(author))
+	sb.WriteString("\n\n")
+
+	// Labeled fields
+	writeField := func(label, value string) {
+		sb.WriteString(labelStyle.Render(fmt.Sprintf("  %-10s ", label)))
+		sb.WriteString(valueStyle.Render(value))
+		sb.WriteString("\n")
 	}
+
+	writeField("Status", b.StatusID.Label())
+
+	// Progress with visual bar
+	page := b.CurrentPage
+	if len(b.UserBookReads) > 0 {
+		page = b.UserBookReads[0].ProgressPages
+	}
+	progressText := b.Progress()
 	if b.Book.Pages > 0 {
-		lines = append(lines, fmt.Sprintf("Pages: %d", b.Book.Pages))
+		progressText += "  " + progressBar(page, b.Book.Pages, 20)
+	}
+	writeField("Progress", progressText)
+
+	writeField("Book ID", fmt.Sprintf("%d", b.Book.ID))
+
+	if b.Book.Pages > 0 {
+		writeField("Pages", fmt.Sprintf("%d", b.Book.Pages))
 	}
 	if b.Book.Slug != "" {
-		lines = append(lines, fmt.Sprintf("Slug: %s", b.Book.Slug))
+		writeField("Slug", b.Book.Slug)
 	}
-	return strings.Join(lines, "\n")
+
+	return sb.String()
 }
 
 func (m dashboardModel) libraryHelp() string {
-	return dimStyleTUI.Render("Home keys: Tab switch pane | / search | a active | u update | g/w/f/d status | r refresh | s sync | q quit")
+	return renderHelpBar([][2]string{
+		{"Tab", "switch pane"},
+		{"/", "search"},
+		{"↵", "toggle read/oku"},
+		{"u", "update"},
+		{"g", "reading"},
+		{"w", "want"},
+		{"f", "finished"},
+		{"d", "dnf"},
+		{"x", "remove"},
+		{"r", "refresh"},
+		{"s", "sync"},
+		{"q", "quit"},
+	})
 }
 
 func (m dashboardModel) searchHelp() string {
-	return dimStyleTUI.Render("Search keys: Enter search/add-reading | Tab switch input/results | a active | g/w/f/d status | Esc back | q quit")
+	return renderHelpBar([][2]string{
+		{"↵", "search/add"},
+		{"Tab", "input/results"},
+		{"g", "reading"},
+		{"w", "want"},
+		{"f", "finished"},
+		{"d", "dnf"},
+		{"Esc", "back"},
+		{"q", "quit"},
+	})
 }
 
 func (m *dashboardModel) resize() {
@@ -567,8 +672,7 @@ func (m *dashboardModel) refreshListItems() {
 		items := make([]list.Item, 0, len(books))
 		for _, b := range books {
 			items = append(items, userBookItem{
-				book:   b,
-				active: b.Book.ID == m.activeID,
+				book: b,
 			})
 		}
 		return items
@@ -620,14 +724,14 @@ func (m dashboardModel) changeSelectedLibraryStatus(status model.Status) (tea.Mo
 	return m, changeStatusCmd(m.app, b.Book.ID, status)
 }
 
-func (m dashboardModel) changeSelectedSearchStatus(status model.Status, setActive bool) (tea.Model, tea.Cmd) {
+func (m dashboardModel) changeSelectedSearchStatus(status model.Status) (tea.Model, tea.Cmd) {
 	r := m.selectedSearchResult()
 	if r == nil {
 		m.errMsg = "no search result selected"
 		return m, nil
 	}
 	m.loading = true
-	return m, addFromSearchCmd(m.app, r.ID, status, setActive)
+	return m, addFromSearchCmd(m.app, r.ID, status)
 }
 
 func loadLibraryCmd(a *app.App, refresh bool) tea.Cmd {
@@ -647,16 +751,6 @@ func loadLibraryCmd(a *app.App, refresh bool) tea.Cmd {
 	}
 }
 
-func loadActiveCmd(a *app.App) tea.Cmd {
-	return func() tea.Msg {
-		id, err := a.GetActiveBookID()
-		if err != nil {
-			return activeLoadedMsg{}
-		}
-		return activeLoadedMsg{id: id}
-	}
-}
-
 func searchCmd(a *app.App, query string) tea.Cmd {
 	return func() tea.Msg {
 		results, err := a.SearchBooks(ctx(), query, 10)
@@ -664,18 +758,6 @@ func searchCmd(a *app.App, query string) tea.Cmd {
 			results: results,
 			query:   query,
 			err:     err,
-		}
-	}
-}
-
-func setActiveCmd(a *app.App, bookID int) tea.Cmd {
-	return func() tea.Msg {
-		if err := a.SetActiveBook(bookID); err != nil {
-			return opDoneMsg{err: err}
-		}
-		return opDoneMsg{
-			info:     fmt.Sprintf("Active book set to ID %d", bookID),
-			activeID: bookID,
 		}
 	}
 }
@@ -709,24 +791,14 @@ func changeStatusCmd(a *app.App, bookID int, status model.Status) tea.Cmd {
 	}
 }
 
-func addFromSearchCmd(a *app.App, bookID int, status model.Status, setActive bool) tea.Cmd {
+func addFromSearchCmd(a *app.App, bookID int, status model.Status) tea.Cmd {
 	return func() tea.Msg {
 		if err := a.ChangeStatus(ctx(), bookID, status); err != nil {
 			return opDoneMsg{err: err}
 		}
-		if setActive {
-			if err := a.SetActiveBook(bookID); err != nil {
-				return opDoneMsg{err: err}
-			}
-		}
-		msg := fmt.Sprintf("Added to %s", status.Label())
-		if setActive {
-			msg += " and set active"
-		}
 		return opDoneMsg{
-			info:     msg,
-			reload:   true,
-			activeID: ternaryInt(setActive, bookID, 0),
+			info:   fmt.Sprintf("Added to %s", status.Label()),
+			reload: true,
 		}
 	}
 }
@@ -770,11 +842,4 @@ func fallback(value, def string) string {
 		return def
 	}
 	return value
-}
-
-func ternaryInt(cond bool, a, b int) int {
-	if cond {
-		return a
-	}
-	return b
 }

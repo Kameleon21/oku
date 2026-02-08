@@ -11,7 +11,7 @@ import (
 func newOpenCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "open",
-		Short: "Interactively pick a book and set it as active",
+		Short: "Interactively pick a book and add it to active list",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -43,7 +43,7 @@ func newOpenCmd() *cobra.Command {
 			// Find the selected book for display.
 			for _, b := range books {
 				if b.Book.ID == bookID {
-					fmt.Printf("Active: %s\n", titleStyle.Render(b.Book.Title))
+					fmt.Printf("Added to active list: %s\n", titleStyle.Render(b.Book.Title))
 					break
 				}
 			}
