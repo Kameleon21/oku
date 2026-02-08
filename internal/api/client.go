@@ -131,7 +131,11 @@ func isRetryable(err error) bool {
 		return false
 	}
 
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+	// User-initiated cancellation should not be retried.
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
 
@@ -149,7 +153,11 @@ func isNetworkish(err error) bool {
 		return false
 	}
 
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+	// Cancellation is intentional and should not be classified as network failure.
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
 
