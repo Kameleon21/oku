@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/machinebox/graphql"
 )
@@ -85,13 +86,49 @@ func (c *Client) UpdateReadProgress(ctx context.Context, userBookReadID int, pro
 	return nil
 }
 
+// InsertUserBookRead creates a new reading progress entry for the given user book.
+func (c *Client) InsertUserBookRead(ctx context.Context, userBookID int, progressPages int) (*APIUserBookRead, error) {
+	startedAt := time.Now().UTC().Format("2006-01-02")
+	q := fmt.Sprintf(`mutation {
+  insert_user_book_read(
+    user_book_id: %d,
+    user_book_read: { progress_pages: %d, started_at: "%s" }
+  ) {
+    id
+    error
+    user_book_read {
+      id
+      progress_pages
+      started_at
+      finished_at
+    }
+  }
+}`, userBookID, progressPages, startedAt)
+
+	req := graphql.NewRequest(q)
+
+	var resp InsertUserBookReadResponse
+	if err := c.do(ctx, req, &resp); err != nil {
+		return nil, fmt.Errorf("InsertUserBookRead: %w", err)
+	}
+
+	r := resp.InsertUserBookRead
+	if r.Error != nil {
+		return nil, fmt.Errorf("InsertUserBookRead: API error: %s", *r.Error)
+	}
+	if r.UserBookRead == nil {
+		return nil, fmt.Errorf("InsertUserBookRead: no user_book_read returned")
+	}
+
+	return r.UserBookRead, nil
+}
+
 // UpsertUserBookReads creates or updates a reading progress entry for the given user book.
 func (c *Client) UpsertUserBookReads(ctx context.Context, userBookID int, progressPages int) error {
 	q := fmt.Sprintf(`mutation {
   upsert_user_book_reads(user_book_id: %d, datesRead: [{ progress_pages: %d }]) {
-    user_book_reads {
-      id
-    }
+    error
+    user_book_id
   }
 }`, userBookID, progressPages)
 
@@ -100,6 +137,9 @@ func (c *Client) UpsertUserBookReads(ctx context.Context, userBookID int, progre
 	var resp UpsertUserBookReadsResponse
 	if err := c.do(ctx, req, &resp); err != nil {
 		return fmt.Errorf("UpsertUserBookReads: %w", err)
+	}
+	if resp.UpsertUserBookReads.Error != nil {
+		return fmt.Errorf("UpsertUserBookReads: API error: %s", *resp.UpsertUserBookReads.Error)
 	}
 
 	return nil

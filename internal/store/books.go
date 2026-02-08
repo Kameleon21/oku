@@ -59,3 +59,21 @@ func splitAuthors(s string) []string {
 	}
 	return out
 }
+
+// PruneOrphanBooks removes cached books not referenced by user_books and older than maxAgeDays.
+func (s *Store) PruneOrphanBooks(maxAgeDays int) error {
+	if maxAgeDays <= 0 {
+		maxAgeDays = 30
+	}
+
+	const query = `
+DELETE FROM books
+WHERE id NOT IN (SELECT book_id FROM user_books)
+  AND updated_at < datetime('now', ?)
+`
+	age := fmt.Sprintf("-%d days", maxAgeDays)
+	if _, err := s.db.Exec(query, age); err != nil {
+		return fmt.Errorf("prune orphan books: %w", err)
+	}
+	return nil
+}

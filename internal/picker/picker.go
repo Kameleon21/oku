@@ -2,7 +2,6 @@ package picker
 
 import (
 	"fmt"
-	"io"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -121,7 +120,7 @@ func PickBook(books []model.UserBook, title string) (int, error) {
 	l.SetFilteringEnabled(true)
 
 	m := pickerModel{list: l}
-	p := tea.NewProgram(m, tea.WithOutput(io.Discard))
+	p := tea.NewProgram(m)
 
 	final, err := p.Run()
 	if err != nil {
@@ -148,7 +147,7 @@ func PickSearchResult(results []model.SearchResult, title string) (int, error) {
 	l.SetFilteringEnabled(true)
 
 	m := pickerModel{list: l}
-	p := tea.NewProgram(m, tea.WithOutput(io.Discard))
+	p := tea.NewProgram(m)
 
 	final, err := p.Run()
 	if err != nil {

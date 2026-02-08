@@ -18,8 +18,11 @@ func (c *Client) GetMe(ctx context.Context) (int, string, error) {
 	if err := c.do(ctx, req, &resp); err != nil {
 		return 0, "", fmt.Errorf("GetMe: %w", err)
 	}
+	if len(resp.Me) == 0 {
+		return 0, "", fmt.Errorf("GetMe: empty response")
+	}
 
-	return resp.Me.ID, resp.Me.Username, nil
+	return resp.Me[0].ID, resp.Me[0].Username, nil
 }
 
 // ListUserBooks returns the user's books filtered by status ID.
@@ -29,7 +32,7 @@ func (c *Client) ListUserBooks(ctx context.Context, statusID int) ([]APIUserBook
     user_books(where: { status_id: { _eq: %d } }) {
       id
       status_id
-      user_book_reads {
+      user_book_reads(order_by: { id: desc }, limit: 1) {
         id
         progress_pages
         started_at
@@ -59,8 +62,11 @@ func (c *Client) ListUserBooks(ctx context.Context, statusID int) ([]APIUserBook
 	if err := c.do(ctx, req, &resp); err != nil {
 		return nil, fmt.Errorf("ListUserBooks: %w", err)
 	}
+	if len(resp.Me) == 0 {
+		return nil, nil
+	}
 
-	return resp.Me.UserBooks, nil
+	return resp.Me[0].UserBooks, nil
 }
 
 // SearchBooks searches for books by query string and returns parsed results.
@@ -91,10 +97,10 @@ func (c *Client) SearchBooks(ctx context.Context, query string, perPage int) ([]
 	for _, hit := range tsResults.Hits {
 		doc := hit.Document
 		sr := model.SearchResult{
-			ID:      doc.ID,
+			ID:      int(doc.ID),
 			Title:   doc.Title,
 			Authors: doc.AuthorNames,
-			Pages:   doc.Pages,
+			Pages:   int(doc.Pages),
 			Slug:    doc.Slug,
 		}
 		if doc.Image != nil {

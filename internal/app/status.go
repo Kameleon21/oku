@@ -22,17 +22,12 @@ func (a *App) ChangeStatus(ctx context.Context, bookID int, status model.Status)
 
 	if ub == nil {
 		// Book not in user's library yet — insert it.
-		userBookID, err := a.API.InsertUserBook(ctx, resolvedID, int(status))
+		_, err := a.API.InsertUserBook(ctx, resolvedID, int(status))
 		if err != nil {
 			return fmt.Errorf("add book to library: %w", err)
 		}
-		// Cache the new user_book.
-		newUB := model.UserBook{
-			ID:       userBookID,
-			BookID:   resolvedID,
-			StatusID: status,
-		}
-		return a.Store.UpsertUserBook(newUB)
+		// Refresh status cache so we get full book metadata from API.
+		return a.syncStatus(ctx, status)
 	}
 
 	// Update existing user_book status.

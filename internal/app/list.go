@@ -2,10 +2,13 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/Kameleon21/oku/internal/model"
 )
+
+const cacheStaleAfter = 6 * time.Hour
 
 // ListBooks returns user books for the given status.
 // Serves from cache by default; if refresh is true, fetches from API first.
@@ -21,21 +24,51 @@ func (a *App) ListBooks(ctx context.Context, status model.Status, refresh bool) 
 		return nil, err
 	}
 
-	// If cache is empty and we haven't refreshed yet, try fetching.
-	if len(books) == 0 && !refresh {
-		if err := a.syncStatus(ctx, status); err != nil {
+	// Refresh when cache is empty or stale.
+	if !refresh {
+		stale, err := a.isStatusCacheStale(status)
+		if err != nil {
 			return nil, err
 		}
-		books, err = a.Store.ListUserBooks(status)
+		if len(books) == 0 || stale {
+			if err := a.syncStatus(ctx, status); err != nil {
+				return nil, err
+			}
+			books, err = a.Store.ListUserBooks(status)
+		}
 	}
 
 	return books, err
 }
 
-// syncStatus fetches books for a status from the API and caches them.
+func (a *App) isStatusCacheStale(status model.Status) (bool, error) {
+	val, err := a.Store.GetState(syncStateKey(status))
+	if err != nil {
+		return true, err
+	}
+	if val == "" {
+		return true, nil
+	}
+	t, err := time.Parse(time.RFC3339, val)
+	if err != nil {
+		return true, nil
+	}
+	return time.Since(t) > cacheStaleAfter, nil
+}
+
+func syncStateKey(status model.Status) string {
+	return fmt.Sprintf("last_sync_status_%d", int(status))
+}
+
+// syncStatus fetches books for a status from the API and replaces cached rows for that status.
 func (a *App) syncStatus(ctx context.Context, status model.Status) error {
 	apiBooks, err := a.API.ListUserBooks(ctx, int(status))
 	if err != nil {
+		return err
+	}
+
+	// Replace rows to avoid stale entries lingering in cache.
+	if err := a.Store.DeleteUserBooksByStatus(status); err != nil {
 		return err
 	}
 
@@ -51,6 +84,8 @@ func (a *App) syncStatus(ctx context.Context, status model.Status) error {
 		}
 	}
 
+	_ = a.Store.SetState(syncStateKey(status), time.Now().UTC().Format(time.RFC3339))
+	_ = a.Store.PruneOrphanBooks(30)
 	return nil
 }
 

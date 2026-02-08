@@ -20,7 +20,15 @@ func newRootCmd(version string) *cobra.Command {
 		Use:     "oku",
 		Short:   "A fast CLI for Hardcover",
 		Version: version,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !isInteractiveTerminal(os.Stdin) || !isInteractiveTerminal(os.Stdout) {
+				return cmd.Help()
+			}
+			return runDashboard()
+		},
 	}
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
 
 	cmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output as JSON")
 
@@ -35,6 +43,7 @@ func newRootCmd(version string) *cobra.Command {
 	cmd.AddCommand(newActiveCmd())
 	cmd.AddCommand(newSetActiveCmd())
 	cmd.AddCommand(newOpenCmd())
+	cmd.AddCommand(newTUICmd())
 	cmd.AddCommand(newUpdateCmd())
 	cmd.AddCommand(newStatusCmd())
 	cmd.AddCommand(newSyncCmd())
@@ -52,6 +61,10 @@ func newRootCmd(version string) *cobra.Command {
 func Execute(version string) int {
 	cmd := newRootCmd(version)
 	if err := cmd.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		if api.IsNetworkError(err) {
+			return 2
+		}
 		return 1
 	}
 	return 0
@@ -82,12 +95,15 @@ func initApp() (*app.App, error) {
 	return app.New(client, db, cfg), nil
 }
 
-// exitErr prints an error and returns exit code 1.
-func exitErr(cmd *cobra.Command, err error) {
-	fmt.Fprintln(os.Stderr, "Error:", err)
-}
-
 // ctx returns a background context.
 func ctx() context.Context {
 	return context.Background()
+}
+
+func isInteractiveTerminal(f *os.File) bool {
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (info.Mode() & os.ModeCharDevice) != 0
 }

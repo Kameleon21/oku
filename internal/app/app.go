@@ -39,19 +39,35 @@ func (a *App) ValidateToken(ctx context.Context) (int, string, error) {
 }
 
 // GetActiveBookID returns the active book ID from local state.
+// If no active book is explicitly set, it falls back to the user's
+// currently-reading books from the cache — auto-selecting if there's exactly one.
 func (a *App) GetActiveBookID() (int, error) {
 	val, err := a.Store.GetState("active_book_id")
 	if err != nil {
 		return 0, err
 	}
-	if val == "" {
-		return 0, fmt.Errorf("no active book set. Use: oku set-active --book <id> or oku open")
+	if val != "" {
+		id, err := strconv.Atoi(val)
+		if err != nil {
+			return 0, fmt.Errorf("invalid active book ID: %s", val)
+		}
+		return id, nil
 	}
-	id, err := strconv.Atoi(val)
+
+	// No explicit active book — try to auto-detect from currently reading.
+	books, err := a.Store.ListUserBooks(model.StatusCurrentlyReading)
 	if err != nil {
-		return 0, fmt.Errorf("invalid active book ID: %s", val)
+		return 0, err
 	}
-	return id, nil
+	if len(books) == 1 {
+		// Auto-set when there's exactly one currently-reading book.
+		_ = a.SetActiveBook(books[0].BookID)
+		return books[0].BookID, nil
+	}
+	if len(books) > 1 {
+		return 0, fmt.Errorf("multiple books currently reading. Use: oku open")
+	}
+	return 0, fmt.Errorf("no active book set. Use: oku set-active --book <id> or oku open")
 }
 
 // SetActiveBook sets the active book by book ID.
