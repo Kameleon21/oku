@@ -2,19 +2,21 @@ package api
 
 import "encoding/json"
 
+// MeUser represents a single user entry from the me query.
+type MeUser struct {
+	ID        int           `json:"id"`
+	Username  string        `json:"username"`
+	UserBooks []APIUserBook `json:"user_books"`
+}
+
 // MeResponse is the response shape for the me query.
 type MeResponse struct {
-	Me struct {
-		ID       int    `json:"id"`
-		Username string `json:"username"`
-	} `json:"me"`
+	Me []MeUser `json:"me"`
 }
 
 // UserBooksResponse is the response shape for listing user books.
 type UserBooksResponse struct {
-	Me struct {
-		UserBooks []APIUserBook `json:"user_books"`
-	} `json:"me"`
+	Me []MeUser `json:"me"`
 }
 
 // APIUserBook represents a user-book relationship from the API.

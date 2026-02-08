@@ -18,8 +18,11 @@ func (c *Client) GetMe(ctx context.Context) (int, string, error) {
 	if err := c.do(ctx, req, &resp); err != nil {
 		return 0, "", fmt.Errorf("GetMe: %w", err)
 	}
+	if len(resp.Me) == 0 {
+		return 0, "", fmt.Errorf("GetMe: empty response")
+	}
 
-	return resp.Me.ID, resp.Me.Username, nil
+	return resp.Me[0].ID, resp.Me[0].Username, nil
 }
 
 // ListUserBooks returns the user's books filtered by status ID.
@@ -59,8 +62,11 @@ func (c *Client) ListUserBooks(ctx context.Context, statusID int) ([]APIUserBook
 	if err := c.do(ctx, req, &resp); err != nil {
 		return nil, fmt.Errorf("ListUserBooks: %w", err)
 	}
+	if len(resp.Me) == 0 {
+		return nil, nil
+	}
 
-	return resp.Me.UserBooks, nil
+	return resp.Me[0].UserBooks, nil
 }
 
 // SearchBooks searches for books by query string and returns parsed results.

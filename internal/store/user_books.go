@@ -60,6 +60,10 @@ ORDER BY ub.updated_at DESC
 		if t, err := time.Parse(time.RFC3339, updatedAt); err == nil {
 			ub.UpdatedAt = t
 		}
+		// Attach latest reading progress.
+		if read, err := s.GetLatestRead(ub.ID); err == nil && read != nil {
+			ub.UserBookReads = []model.UserBookRead{*read}
+		}
 		result = append(result, ub)
 	}
 	return result, rows.Err()
@@ -91,6 +95,11 @@ WHERE ub.book_id = ?
 	ub.Book.Authors = splitAuthors(authors)
 	if t, err := time.Parse(time.RFC3339, updatedAt); err == nil {
 		ub.UpdatedAt = t
+	}
+
+	// Attach latest reading progress.
+	if read, err := s.GetLatestRead(ub.ID); err == nil && read != nil {
+		ub.UserBookReads = []model.UserBookRead{*read}
 	}
 	return &ub, nil
 }
