@@ -36,6 +36,13 @@ const (
 	focusSearchResults
 )
 
+type searchInputMode int
+
+const (
+	searchModeNormal searchInputMode = iota
+	searchModeInsert
+)
+
 type userBookItem struct {
 	book model.UserBook
 }
@@ -137,6 +144,8 @@ type dashboardModel struct {
 	infoMsg   string
 	errMsg    string
 
+	searchMode searchInputMode
+
 	showHelp bool
 }
 
@@ -211,6 +220,7 @@ func newDashboardModel(a *app.App) dashboardModel {
 		app:         a,
 		mode:        modeLibrary,
 		focus:       focusReading,
+		searchMode:  searchModeNormal,
 		readingList: newList("Reading"),
 		okuList:     newList("Oku"),
 		searchList:  newList("Search Results"),
@@ -316,6 +326,43 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// ── Focus-specific key handling ──
 		if m.focus == focusSearchInput {
+			if m.searchMode == searchModeNormal {
+				switch msg.String() {
+				case "ctrl+c":
+					return m, tea.Quit
+				case "?":
+					m.showHelp = true
+					return m, nil
+				case "i":
+					m.enterSearchInsertMode()
+					return m, nil
+				case "a":
+					m.enterSearchInsertMode()
+					m.searchInput.CursorEnd()
+					return m, nil
+				case "enter":
+					query := strings.TrimSpace(m.searchInput.Value())
+					if query == "" {
+						m.errMsg = "search query cannot be empty"
+						return m, nil
+					}
+					m.loading = true
+					m.errMsg = ""
+					return m, searchCmd(m.app, query)
+				case "esc":
+					m.focus = focusReading
+					m.searchInput.Blur()
+					return m, nil
+				case "h", "H", "left":
+					m.focusPrevPane()
+					return m, nil
+				case "l", "L", "right":
+					m.focusNextPane()
+					return m, nil
+				}
+				return m, nil
+			}
+
 			switch msg.String() {
 			case "ctrl+c":
 				return m, tea.Quit
@@ -332,18 +379,10 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.errMsg = ""
 				return m, searchCmd(m.app, query)
 			case "esc":
-				m.focus = focusReading
-				m.searchInput.Blur()
-				return m, nil
-			case "tab":
-				m.focus = focusReading
-				m.searchInput.Blur()
-				return m, nil
-			case "shift+tab":
-				m.focus = focusOku
-				m.searchInput.Blur()
+				m.enterSearchNormalMode()
 				return m, nil
 			}
+
 			var cmd tea.Cmd
 			m.searchInput, cmd = m.searchInput.Update(msg)
 			return m, cmd
@@ -358,7 +397,7 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "esc":
 				m.focus = focusSearchInput
-				m.searchInput.Focus()
+				m.enterSearchNormalMode()
 				return m, nil
 			case "enter":
 				if r := m.selectedSearchResult(); r != nil {
@@ -373,12 +412,11 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m.changeSelectedSearchStatus(model.StatusRead)
 			case "d":
 				return m.changeSelectedSearchStatus(model.StatusDidNotFinish)
-			case "tab":
-				m.focus = focusReading
+			case "h", "H", "left":
+				m.focusPrevPane()
 				return m, nil
-			case "shift+tab":
-				m.focus = focusSearchInput
-				m.searchInput.Focus()
+			case "l", "L", "right":
+				m.focusNextPane()
 				return m, nil
 			}
 
@@ -394,24 +432,15 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "?":
 			m.showHelp = true
 			return m, nil
-		case "tab":
-			if m.focus == focusReading {
-				m.focus = focusOku
-			} else {
-				m.focus = focusSearchInput
-				m.searchInput.Focus()
-			}
+		case "h", "H", "left":
+			m.focusPrevPane()
 			return m, nil
-		case "shift+tab":
-			if m.focus == focusOku {
-				m.focus = focusReading
-			} else {
-				m.focus = focusOku
-			}
+		case "l", "L", "right":
+			m.focusNextPane()
 			return m, nil
 		case "/":
 			m.focus = focusSearchInput
-			m.searchInput.Focus()
+			m.enterSearchInsertMode()
 			m.searchInput.SetValue("")
 			m.errMsg = ""
 			return m, nil
@@ -456,6 +485,62 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.okuList, cmd = m.okuList.Update(msg)
 	}
 	return m, cmd
+}
+
+func (m dashboardModel) hasSearchResults() bool {
+	return len(m.searchList.Items()) > 0
+}
+
+func (m *dashboardModel) enterSearchNormalMode() {
+	m.searchMode = searchModeNormal
+	m.searchInput.Blur()
+}
+
+func (m *dashboardModel) enterSearchInsertMode() {
+	m.searchMode = searchModeInsert
+	m.searchInput.Focus()
+}
+
+func (m *dashboardModel) focusNextPane() {
+	switch m.focus {
+	case focusReading:
+		m.focus = focusOku
+		m.searchInput.Blur()
+	case focusOku:
+		m.focus = focusSearchInput
+		m.enterSearchNormalMode()
+	case focusSearchInput:
+		m.searchInput.Blur()
+		if m.hasSearchResults() {
+			m.focus = focusSearchResults
+		} else {
+			m.focus = focusReading
+		}
+	case focusSearchResults:
+		m.focus = focusReading
+	}
+}
+
+func (m *dashboardModel) focusPrevPane() {
+	switch m.focus {
+	case focusReading:
+		if m.hasSearchResults() {
+			m.focus = focusSearchResults
+			m.searchInput.Blur()
+		} else {
+			m.focus = focusSearchInput
+			m.enterSearchNormalMode()
+		}
+	case focusOku:
+		m.focus = focusReading
+		m.searchInput.Blur()
+	case focusSearchInput:
+		m.focus = focusOku
+		m.searchInput.Blur()
+	case focusSearchResults:
+		m.focus = focusSearchInput
+		m.enterSearchNormalMode()
+	}
 }
 
 func (m dashboardModel) updatePageMode(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -579,7 +664,7 @@ func (m dashboardModel) renderLibrary() string {
 	// Force consistent width and height on all left panels
 	readingBox := panelStyle.Width(leftW).Height(listH).Render(readingView)
 	okuBox := panelStyle.Width(leftW).Height(listH).Render(okuView)
-	searchBox := panelStyle.Width(leftW).Height(searchH).Render(m.searchInput.View())
+	searchBox := panelStyle.Width(leftW).Height(searchH).Render(m.searchInputWithModeBadge())
 	if m.focus == focusReading {
 		readingBox = panelFocusedStyle.Width(leftW).Height(listH).Render(readingView)
 	}
@@ -587,7 +672,7 @@ func (m dashboardModel) renderLibrary() string {
 		okuBox = panelFocusedStyle.Width(leftW).Height(listH).Render(okuView)
 	}
 	if m.focus == focusSearchInput {
-		searchBox = panelFocusedStyle.Width(leftW).Height(searchH).Render(m.searchInput.View())
+		searchBox = panelFocusedStyle.Width(leftW).Height(searchH).Render(m.searchInputWithModeBadge())
 	}
 
 	leftCol := lipgloss.JoinVertical(lipgloss.Left, readingBox, okuBox, searchBox)
@@ -663,6 +748,14 @@ func (m dashboardModel) detailsView() string {
 	return sb.String()
 }
 
+func (m dashboardModel) searchInputWithModeBadge() string {
+	mode := dimStyleTUI.Render("[NORMAL]")
+	if m.searchMode == searchModeInsert {
+		mode = keyStyle.Render("[INSERT]")
+	}
+	return mode + " " + m.searchInput.View()
+}
+
 func (m dashboardModel) renderHelpModal() string {
 	section := func(title string, keys [][2]string) string {
 		s := headStyle.Render(title) + "\n"
@@ -677,8 +770,8 @@ func (m dashboardModel) renderHelpModal() string {
 
 	body := lipgloss.JoinVertical(lipgloss.Left,
 		section("Navigation", [][2]string{
-			{"Tab", "Cycle: Reading → Oku → Search"},
-			{"Shift+Tab", "Cycle backwards"},
+			{"h / l", "Move pane left / right"},
+			{"← / →", "Move pane left / right"},
 			{"j / k", "Move up / down in list"},
 			{"/", "Focus search input"},
 			{"Esc", "Back / cancel"},
@@ -698,8 +791,11 @@ func (m dashboardModel) renderHelpModal() string {
 		}),
 		section("Search Panel", [][2]string{
 			{"Enter", "Execute search / add book"},
+			{"i / a", "Enter insert mode"},
+			{"Esc", "Insert -> normal / back"},
+			{"h/l or ←/→", "Pane nav in normal mode"},
 			{"g/w/f/d", "Add result with status"},
-			{"Esc", "Back to input / Reading"},
+			{"Esc (results)", "Back to search input"},
 		}),
 		section("General", [][2]string{
 			{"?", "Toggle this help"},
@@ -724,9 +820,17 @@ func (m dashboardModel) overlayModal(modal string) string {
 func (m dashboardModel) libraryHelp() string {
 	switch m.focus {
 	case focusSearchInput:
+		if m.searchMode == searchModeInsert {
+			return renderHelpBar([][2]string{
+				{"↵", "search"},
+				{"Esc", "normal mode"},
+				{"?", "help"},
+			})
+		}
 		return renderHelpBar([][2]string{
 			{"↵", "search"},
-			{"Tab", "switch pane"},
+			{"i/a", "insert"},
+			{"h/l", "pane"},
 			{"Esc", "back"},
 			{"?", "help"},
 		})
@@ -737,13 +841,13 @@ func (m dashboardModel) libraryHelp() string {
 			{"w", "want"},
 			{"f", "finished"},
 			{"d", "dnf"},
-			{"Tab", "switch pane"},
+			{"h/l", "pane"},
 			{"Esc", "back"},
 			{"?", "help"},
 		})
 	default:
 		return renderHelpBar([][2]string{
-			{"Tab", "switch pane"},
+			{"h/l", "pane"},
 			{"/", "search"},
 			{"↵", "toggle read/oku"},
 			{"u", "update"},

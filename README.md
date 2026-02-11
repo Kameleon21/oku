@@ -92,8 +92,8 @@ The dashboard has **Reading** and **Oku** lists stacked vertically on the left, 
 
 | Key | Action |
 |-----|--------|
-| `Tab` | Switch between Reading and Oku |
-| `/` | Search Hardcover |
+| `h` / `l` (`←` / `→`) | Move focus between panes |
+| `/` | Jump to search input (insert mode) |
 | `Enter` | Toggle selected book between Reading and Oku |
 | `u` | Update page progress |
 | `g` `w` `f` `d` | Move to Reading / Oku / Finished / DNF |
@@ -103,15 +103,17 @@ The dashboard has **Reading** and **Oku** lists stacked vertically on the left, 
 | `?` | Show help modal |
 | `q` | Quit |
 
-**Search mode:**
+**Search panel:**
 
 | Key | Action |
 |-----|--------|
-| Type + `Enter` | Search |
+| `i` / `a` | Enter insert mode |
+| Type + `Enter` | Search (insert mode) |
+| `Esc` | Insert -> normal, then normal -> library |
+| `h` / `l` (`←` / `→`) | Move focus between panes (normal mode) |
 | `Enter` on result | Add to Reading |
 | `g` `w` `f` `d` | Assign status to result |
 | `?` | Show help modal |
-| `Esc` | Back to library |
 
 ## How Caching Works
 
