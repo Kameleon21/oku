@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -54,6 +55,14 @@ CREATE TABLE IF NOT EXISTS books (
 	pages      INTEGER NOT NULL DEFAULT 0,
 	slug       TEXT    NOT NULL DEFAULT '',
 	image_url  TEXT    NOT NULL DEFAULT '',
+	rating     REAL    NOT NULL DEFAULT 0,
+	ratings_count INTEGER NOT NULL DEFAULT 0,
+	reviews_count INTEGER NOT NULL DEFAULT 0,
+	users_count INTEGER NOT NULL DEFAULT 0,
+	users_read_count INTEGER NOT NULL DEFAULT 0,
+	release_date TEXT   NOT NULL DEFAULT '',
+	featured_series TEXT NOT NULL DEFAULT '',
+	featured_series_position INTEGER NOT NULL DEFAULT 0,
 	updated_at TEXT    NOT NULL DEFAULT ''
 );
 
@@ -78,6 +87,62 @@ CREATE TABLE IF NOT EXISTS state (
 	value TEXT NOT NULL DEFAULT ''
 );
 `
-	_, err := db.Exec(ddl)
-	return err
+	if _, err := db.Exec(ddl); err != nil {
+		return err
+	}
+
+	// Incremental migrations for existing installations.
+	for _, col := range []struct {
+		name string
+		def  string
+	}{
+		{"rating", "REAL NOT NULL DEFAULT 0"},
+		{"ratings_count", "INTEGER NOT NULL DEFAULT 0"},
+		{"reviews_count", "INTEGER NOT NULL DEFAULT 0"},
+		{"users_count", "INTEGER NOT NULL DEFAULT 0"},
+		{"users_read_count", "INTEGER NOT NULL DEFAULT 0"},
+		{"release_date", "TEXT NOT NULL DEFAULT ''"},
+		{"featured_series", "TEXT NOT NULL DEFAULT ''"},
+		{"featured_series_position", "INTEGER NOT NULL DEFAULT 0"},
+	} {
+		if err := ensureColumn(db, "books", col.name, col.def); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func ensureColumn(db *sql.DB, table, column, def string) error {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return fmt.Errorf("pragma table_info(%s): %w", table, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			colType   string
+			notNull   int
+			defaultV  sql.NullString
+			primaryKV int
+		)
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &defaultV, &primaryKV); err != nil {
+			return fmt.Errorf("scan table_info(%s): %w", table, err)
+		}
+		if strings.EqualFold(name, column) {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate table_info(%s): %w", table, err)
+	}
+
+	stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, def)
+	if _, err := db.Exec(stmt); err != nil {
+		return fmt.Errorf("alter table %s add column %s: %w", table, column, err)
+	}
+	return nil
 }

@@ -11,12 +11,12 @@ import (
 type Status int
 
 const (
-	StatusWantToRead      Status = 1 // "oku"
+	StatusWantToRead       Status = 1 // "oku"
 	StatusCurrentlyReading Status = 2 // "reading"
-	StatusRead            Status = 3 // "finished"
-	StatusPaused          Status = 4
-	StatusDidNotFinish    Status = 5 // "dnf"
-	StatusIgnored         Status = 6
+	StatusRead             Status = 3 // "finished"
+	StatusPaused           Status = 4
+	StatusDidNotFinish     Status = 5 // "dnf"
+	StatusIgnored          Status = 6
 )
 
 // StatusFromString maps CLI aliases to status IDs.
@@ -77,12 +77,20 @@ func (s Status) Label() string {
 
 // Book represents a book from Hardcover.
 type Book struct {
-	ID        int
-	Title     string
-	Authors   []string
-	Pages     int
-	Slug      string
-	ImageURL  string
+	ID                     int
+	Title                  string
+	Authors                []string
+	Pages                  int
+	Slug                   string
+	ImageURL               string
+	Rating                 float64
+	RatingsCount           int
+	ReviewsCount           int
+	UsersCount             int
+	UsersReadCount         int
+	ReleaseDate            string
+	FeaturedSeries         string
+	FeaturedSeriesPosition int
 }
 
 // AuthorString returns authors joined by ", ".

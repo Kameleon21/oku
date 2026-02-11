@@ -12,10 +12,19 @@ import (
 // Authors are stored as a comma-separated string.
 func (s *Store) UpsertBook(b model.Book) error {
 	const query = `
-INSERT OR REPLACE INTO books (id, title, authors, pages, slug, image_url, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+INSERT OR REPLACE INTO books (
+	id, title, authors, pages, slug, image_url,
+	rating, ratings_count, reviews_count, users_count, users_read_count,
+	release_date, featured_series, featured_series_position, updated_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 `
-	_, err := s.db.Exec(query, b.ID, b.Title, strings.Join(b.Authors, ", "), b.Pages, b.Slug, b.ImageURL)
+	_, err := s.db.Exec(
+		query,
+		b.ID, b.Title, strings.Join(b.Authors, ", "), b.Pages, b.Slug, b.ImageURL,
+		b.Rating, b.RatingsCount, b.ReviewsCount, b.UsersCount, b.UsersReadCount,
+		b.ReleaseDate, b.FeaturedSeries, b.FeaturedSeriesPosition,
+	)
 	if err != nil {
 		return fmt.Errorf("upsert book %d: %w", b.ID, err)
 	}
@@ -26,13 +35,19 @@ VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
 // Returns nil, nil when the book is not found.
 func (s *Store) GetBookByID(id int) (*model.Book, error) {
 	const query = `
-SELECT id, title, authors, pages, slug, image_url
+SELECT id, title, authors, pages, slug, image_url,
+       rating, ratings_count, reviews_count, users_count, users_read_count,
+       release_date, featured_series, featured_series_position
 FROM books
 WHERE id = ?
 `
 	var b model.Book
 	var authors string
-	err := s.db.QueryRow(query, id).Scan(&b.ID, &b.Title, &authors, &b.Pages, &b.Slug, &b.ImageURL)
+	err := s.db.QueryRow(query, id).Scan(
+		&b.ID, &b.Title, &authors, &b.Pages, &b.Slug, &b.ImageURL,
+		&b.Rating, &b.RatingsCount, &b.ReviewsCount, &b.UsersCount, &b.UsersReadCount,
+		&b.ReleaseDate, &b.FeaturedSeries, &b.FeaturedSeriesPosition,
+	)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

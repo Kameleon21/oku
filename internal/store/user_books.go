@@ -32,7 +32,9 @@ VALUES (?, ?, ?, ?)
 func (s *Store) ListUserBooks(status model.Status) ([]model.UserBook, error) {
 	const query = `
 SELECT ub.id, ub.book_id, ub.status_id, ub.updated_at,
-       b.id, b.title, b.authors, b.pages, b.slug, b.image_url
+       b.id, b.title, b.authors, b.pages, b.slug, b.image_url,
+       b.rating, b.ratings_count, b.reviews_count, b.users_count, b.users_read_count,
+       b.release_date, b.featured_series, b.featured_series_position
 FROM user_books ub
 JOIN books b ON b.id = ub.book_id
 WHERE ub.status_id = ?
@@ -52,6 +54,8 @@ ORDER BY ub.updated_at DESC
 		err := rows.Scan(
 			&ub.ID, &ub.BookID, &ub.StatusID, &updatedAt,
 			&ub.Book.ID, &ub.Book.Title, &authors, &ub.Book.Pages, &ub.Book.Slug, &ub.Book.ImageURL,
+			&ub.Book.Rating, &ub.Book.RatingsCount, &ub.Book.ReviewsCount, &ub.Book.UsersCount, &ub.Book.UsersReadCount,
+			&ub.Book.ReleaseDate, &ub.Book.FeaturedSeries, &ub.Book.FeaturedSeriesPosition,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan user_book row: %w", err)
@@ -74,7 +78,9 @@ ORDER BY ub.updated_at DESC
 func (s *Store) GetUserBookByBookID(bookID int) (*model.UserBook, error) {
 	const query = `
 SELECT ub.id, ub.book_id, ub.status_id, ub.updated_at,
-       b.id, b.title, b.authors, b.pages, b.slug, b.image_url
+       b.id, b.title, b.authors, b.pages, b.slug, b.image_url,
+       b.rating, b.ratings_count, b.reviews_count, b.users_count, b.users_read_count,
+       b.release_date, b.featured_series, b.featured_series_position
 FROM user_books ub
 JOIN books b ON b.id = ub.book_id
 WHERE ub.book_id = ?
@@ -85,6 +91,8 @@ WHERE ub.book_id = ?
 	err := s.db.QueryRow(query, bookID).Scan(
 		&ub.ID, &ub.BookID, &ub.StatusID, &updatedAt,
 		&ub.Book.ID, &ub.Book.Title, &authors, &ub.Book.Pages, &ub.Book.Slug, &ub.Book.ImageURL,
+		&ub.Book.Rating, &ub.Book.RatingsCount, &ub.Book.ReviewsCount, &ub.Book.UsersCount, &ub.Book.UsersReadCount,
+		&ub.Book.ReleaseDate, &ub.Book.FeaturedSeries, &ub.Book.FeaturedSeriesPosition,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil

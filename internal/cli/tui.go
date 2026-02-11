@@ -755,8 +755,49 @@ func (m dashboardModel) detailsView() string {
 	if b.Book.Pages > 0 {
 		writeField("Pages", fmt.Sprintf("%d", b.Book.Pages))
 	}
+	if b.Book.Rating > 0 {
+		rating := fmt.Sprintf("%.2f", b.Book.Rating)
+		if b.Book.RatingsCount > 0 {
+			rating += fmt.Sprintf(" (%s ratings)", formatCount(b.Book.RatingsCount))
+		}
+		writeField("Rating", rating)
+	}
+	if b.Book.ReviewsCount > 0 {
+		writeField("Reviews", formatCount(b.Book.ReviewsCount))
+	}
+	if b.Book.UsersReadCount > 0 || b.Book.UsersCount > 0 {
+		readers := ""
+		if b.Book.UsersReadCount > 0 {
+			readers = formatCount(b.Book.UsersReadCount) + " read"
+		}
+		if b.Book.UsersCount > 0 {
+			if readers != "" {
+				readers += " · "
+			}
+			readers += formatCount(b.Book.UsersCount) + " shelved"
+		}
+		writeField("Readers", readers)
+	}
+	if b.Book.ReleaseDate != "" {
+		writeField("Released", b.Book.ReleaseDate)
+	}
+	if b.Book.FeaturedSeries != "" {
+		series := b.Book.FeaturedSeries
+		if b.Book.FeaturedSeriesPosition > 0 {
+			series += fmt.Sprintf(" #%d", b.Book.FeaturedSeriesPosition)
+		}
+		writeField("Series", series)
+	}
 	if b.Book.Slug != "" {
 		writeField("Slug", b.Book.Slug)
+	}
+	if len(b.UserBookReads) > 0 {
+		if b.UserBookReads[0].StartedAt != nil {
+			writeField("Started", b.UserBookReads[0].StartedAt.Format("2006-01-02"))
+		}
+		if b.UserBookReads[0].FinishedAt != nil {
+			writeField("Finished", b.UserBookReads[0].FinishedAt.Format("2006-01-02"))
+		}
 	}
 
 	return sb.String()

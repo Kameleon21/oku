@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Kameleon21/oku/internal/model"
@@ -91,16 +92,31 @@ func (a *App) syncStatus(ctx context.Context, status model.Status) error {
 
 func convertAPIUserBook(ab apiUserBookAlias) model.UserBook {
 	book := model.Book{
-		ID:    ab.Book.ID,
-		Title: ab.Book.Title,
-		Pages: ab.Book.Pages,
-		Slug:  ab.Book.Slug,
+		ID:             ab.Book.ID,
+		Title:          ab.Book.Title,
+		Pages:          ab.Book.Pages,
+		Slug:           ab.Book.Slug,
+		Rating:         ab.Book.Rating,
+		RatingsCount:   ab.Book.RatingsCount,
+		ReviewsCount:   ab.Book.ReviewsCount,
+		UsersCount:     ab.Book.UsersCount,
+		UsersReadCount: ab.Book.UsersReadCount,
 	}
 	if ab.Book.Image != nil {
 		book.ImageURL = ab.Book.Image.URL
 	}
+	if ab.Book.ReleaseDate != nil {
+		book.ReleaseDate = strings.TrimSpace(*ab.Book.ReleaseDate)
+	}
 	for _, c := range ab.Book.Contributions {
 		book.Authors = append(book.Authors, c.Author.Name)
+	}
+
+	updatedAt := time.Now().UTC()
+	if ab.UpdatedAt != nil {
+		if t, ok := parseAPITime(*ab.UpdatedAt); ok {
+			updatedAt = t
+		}
 	}
 
 	ub := model.UserBook{
@@ -108,7 +124,7 @@ func convertAPIUserBook(ab apiUserBookAlias) model.UserBook {
 		BookID:    ab.Book.ID,
 		StatusID:  model.Status(ab.StatusID),
 		Book:      book,
-		UpdatedAt: time.Now(),
+		UpdatedAt: updatedAt,
 	}
 
 	for _, r := range ab.UserBookReads {
@@ -117,8 +133,37 @@ func convertAPIUserBook(ab apiUserBookAlias) model.UserBook {
 			UserBookID:    ab.ID,
 			ProgressPages: r.ProgressPages,
 		}
+		if r.StartedAt != nil {
+			if t, ok := parseAPITime(*r.StartedAt); ok {
+				read.StartedAt = &t
+			}
+		}
+		if r.FinishedAt != nil {
+			if t, ok := parseAPITime(*r.FinishedAt); ok {
+				read.FinishedAt = &t
+			}
+		}
 		ub.UserBookReads = append(ub.UserBookReads, read)
 	}
 
 	return ub
+}
+
+func parseAPITime(raw string) (time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, false
+	}
+
+	layouts := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02",
+	}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, raw); err == nil {
+			return t.UTC(), true
+		}
+	}
+	return time.Time{}, false
 }
