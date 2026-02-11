@@ -1,141 +1,152 @@
 # Oku
 
-A terminal companion for [Hardcover](https://hardcover.app). Track what you're reading, update your progress, and manage your shelves -- all without leaving the terminal.
+Terminal companion for [Hardcover](https://hardcover.app): browse your shelves, search books, and update progress without leaving the terminal.
 
-Oku gives you two ways to work:
+## What You Get
 
-- **CLI** -- scriptable commands for quick actions and automation
-- **TUI dashboard** -- a full interactive view that launches by default
+- CLI for scripting and quick actions
+- Full TUI dashboard (`oku` or `oku tui`)
+- Vim-first navigation in TUI (arrow keys also work)
+- Search modes: `book`, `author`, `genre`
+- Output density modes: `compact`, `default`, `verbose`
+- Local SQLite cache with auto-refresh and manual sync
 
-## What's Working
+## Requirements
 
-Everything you need for day-to-day use is in place:
+- Go (project currently uses `go 1.25.7`)
+- Hardcover API token
+- Keychain support (recommended) or `HARDCOVER_TOKEN` env var
 
-- All CLI commands
-- Interactive TUI dashboard (`oku` or `oku tui`)
-- Local SQLite cache with stale-refresh and pruning
-- Hardcover API integration with auth, throttling, timeouts, and retries
-
-## Getting Started
-
-### Prerequisites
-
-- Go (`go 1.25.7` or compatible)
-- A [Hardcover](https://hardcover.app) API token
-- macOS keychain support (via `go-keyring`), or set `HARDCOVER_TOKEN` in your environment
-
-### Build and Run
+## Quick Start
 
 ```bash
 go build -o oku ./cmd/oku
 
-# Store your token in the system keychain
+# Save token in keychain
 ./oku auth set-token
 
-# Pull your library into the local cache
+# Pull data to local cache
 ./oku sync
 
-# Open the dashboard
+# Launch dashboard
 ./oku
 ```
 
-Prefer environment variables? That works too:
-
-```bash
-export HARDCOVER_TOKEN="your_token"
-```
-
 Token lookup order:
-1. `HARDCOVER_TOKEN` environment variable
-2. System keychain (`service=oku`, `account=hardcover`)
 
-## Commands
+1. `HARDCOVER_TOKEN`
+2. Keychain (`service=oku`, `account=hardcover`)
+
+## Core Commands
 
 ```text
-oku active                                    Show active books
-oku auth set-token                            Store your API token
-oku config edit                               Open config in your editor
-oku config show                               Print current config
+oku auth set-token
+oku config show
+oku config edit
+
 oku list <reading|oku|finished|dnf> [--refresh]
-oku now [--refresh]                           What are you reading right now?
-oku search <query> [--limit N] [--mode M]     Search Hardcover (book/author/genre)
-oku set-active --book <id>                    Add a book to your active list
-oku open                                      Pick a currently-reading book and add it to active list
-oku update --page <N|+N|-N> [--book <id>]     Update page progress
-oku status <reading|oku|finished|dnf> [--book <id>]
-oku sync                                      Refresh the local cache
-oku tui                                       Launch the dashboard
+oku reading|oku|finished|dnf [--refresh]
+oku now [--refresh]
+oku sync
+
+oku search <query> [--mode book|author|genre] [--limit N]
+oku status <reading|oku|finished|dnf> [--book ID]
+oku update --page <N|+N|-N> [--book ID]
+
+oku active
+oku set-active --book ID
+oku open
+
+oku tui
 ```
 
-There are shortcuts for listing shelves:
+Global flags:
 
-```bash
-oku reading    # currently reading
-oku oku        # want to read
-oku finished   # done
-oku dnf        # did not finish
-```
+- `--json` return JSON output
+- `--view compact|default|verbose` control CLI/TUI output density
 
-Add `--json` to any CLI command for machine-readable output.
-Use `--view compact|default|verbose` for text density in list/active output.
+Exit codes:
 
-Exit codes: `0` success, `1` user/app error, `2` network/transient failure.
+- `0` success
+- `1` validation/app error
+- `2` network/transient API error
 
-## TUI Dashboard
+## TUI (LazyGit-Style Flow)
 
-Just run `oku` in a terminal (or `oku tui` explicitly).
+Run with `oku` (interactive terminal) or `oku tui`.
 
-The dashboard has **Reading** and **Oku** lists stacked vertically on the left, with a full-height **Output** panel on the right showing book details. Press `?` at any time to open the help modal with all keybindings.
+Layout:
 
-### Keybindings
+- Left: `Reading`, `Oku`, and search input
+- Right: selected book details or search results
 
-**Library view:**
+Key controls:
 
-| Key | Action |
-|-----|--------|
-| `h` / `l` (`←` / `→`) | Move focus between panes |
-| `/` | Jump to search input (insert mode) |
-| `Enter` | Toggle selected book between Reading and Oku |
-| `+` / `-` | Quick page update (+/- 10 pages) |
-| `u` | Update page progress |
-| `g` `w` `f` `d` | Move to Reading / Oku / Finished / DNF |
-| `x` | Remove book from library lists |
-| `z` | Cycle density (compact/default/verbose) |
-| `r` | Refresh from API |
-| `s` | Sync all statuses |
-| `?` | Show help modal |
-| `q` | Quit |
+### Global
 
-**Search panel:**
+- `h` / `l` or `←` / `→`: move between panes
+- `j` / `k`: move in lists
+- `?`: help
+- `q`: quit
 
-| Key | Action |
-|-----|--------|
-| `i` / `a` | Enter insert mode |
-| Type + `Enter` | Search (insert mode) |
-| `Esc` | Insert -> normal, then normal -> library |
-| `h` / `l` (`←` / `→`) | Move focus between panes (normal mode) |
-| `m` | Cycle mode: Book -> Author -> Genre |
-| `1` / `2` / `3` | Set mode: Book / Author / Genre |
-| `z` | Cycle density (compact/default/verbose) |
-| `Enter` on result | Add to Reading |
-| `g` `w` `f` `d` | Assign status to result |
-| `?` | Show help modal |
+### Library Panes
 
-## How Caching Works
+- `Enter`: toggle selected book between `Reading` and `Oku`
+- `+` / `-`: quick page update (`+10` / `-10`)
+- `u`: custom page update
+- `g` / `w` / `f` / `d`: set status (reading / want / finished / dnf)
+- `x`: remove from lists
+- `z`: cycle density (compact/default/verbose)
+- `r`: refresh
+- `s`: sync all
+- `/`: focus search input
 
-Oku tries to be a good API citizen. It caches aggressively and only hits Hardcover when it needs to:
+### Search Input
 
-- **Cache-first** for all status lists
-- **Auto-refresh** when the cache is empty or older than **6 hours**
-- **Manual refresh** with `--refresh` on any list command, or `oku sync` for everything
-- **Clean replacement** on sync -- no stale leftovers
-- **Orphan pruning** -- cached books not referenced by any list are cleaned up after 30 days
+- `i` or `a`: enter insert mode
+- `Esc`: insert -> normal (no forced pane jump)
+- `Enter`: run search
+- `m`: cycle mode (`book -> author -> genre`)
+- `1` / `2` / `3`: set mode directly
+- In normal mode, `h/l` navigates panes (does not type)
 
-Under the hood, the API client talks to `https://api.hardcover.app/v1/graphql` with a ~1 req/sec throttle, 30s timeout, and automatic retries on transient errors (`429`, `5xx`, deadline exceeded). User cancellations are respected and not retried.
+### Search Results
 
-## Configuration
+- `Enter`: add selected result to reading
+- `g` / `w` / `f` / `d`: add result with selected status
+- `Esc`: back to search input
 
-Config lives at `~/.config/oku/config.toml` (or `$XDG_CONFIG_HOME/oku/config.toml`).
+## Data Shown
+
+CLI/TUI details include:
+
+- title, authors, progress, pages
+- rating and rating counts
+- review/user popularity counts
+- release date
+- slug and IDs in verbose views
+
+Search supports intent-based discovery:
+
+- `book`: title-weighted
+- `author`: author-weighted
+- `genre`: genre/tag-weighted
+
+## Cache + API Behavior
+
+- Cache-first reads from SQLite
+- Auto-refresh if cache is empty or stale (6h)
+- `--refresh` forces API refresh for list commands
+- `oku sync` refreshes all statuses
+- API client uses timeout, retry, and throttling (~1 req/sec)
+
+## Config + Data Paths
+
+- Config: `~/.config/oku/config.toml` (or `$XDG_CONFIG_HOME/oku/config.toml`)
+- Data: `~/.local/share/oku/` (or `$XDG_DATA_HOME/oku/`)
+- DB file: `~/.local/share/oku/oku.db` (XDG equivalent)
+
+Example config:
 
 ```toml
 editor = "nvim"
@@ -143,40 +154,9 @@ use_fzf = false
 default_list = "reading"
 ```
 
-Data and cache are stored under `~/.local/share/oku/` (or `$XDG_DATA_HOME/oku/`).
-
-## Architecture
-
-For anyone poking around the code:
-
-```
-cmd/oku/          Entrypoint
-internal/
-  cli/            Cobra commands + TUI
-  app/            Business logic, orchestration
-  api/            Hardcover GraphQL client
-  store/          SQLite cache and state
-  auth/           Token resolution + keychain
-  config/         Config loading and XDG paths
-  model/          Domain types, statuses, page parsing
-  picker/         Interactive list picker (fzf-style)
-```
-
-The flow is straightforward: CLI/TUI -> `app` -> `store` + `api`. The app layer owns the logic, the store owns the cache, and the API client handles Hardcover.
-
 ## Development
 
 ```bash
 go test ./...
-go vet ./...
 go build ./cmd/oku
 ```
-
-Smoke test checklist:
-
-1. `oku auth set-token`
-2. `oku sync`
-3. `oku search "east of eden"`
-4. `oku tui`
-5. `oku update --page 50`
-6. Check your progress on [hardcover.app](https://hardcover.app) to confirm it synced
