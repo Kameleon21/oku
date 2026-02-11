@@ -35,25 +35,19 @@ type APIUserBook struct {
 
 // APIBook represents a book from the API.
 type APIBook struct {
-	ID                     int               `json:"id"`
-	Title                  string            `json:"title"`
-	Pages                  int               `json:"pages"`
-	Slug                   string            `json:"slug"`
-	Rating                 float64           `json:"rating"`
-	RatingsCount           int               `json:"ratings_count"`
-	ReviewsCount           int               `json:"reviews_count"`
-	UsersCount             int               `json:"users_count"`
-	UsersReadCount         int               `json:"users_read_count"`
-	ReleaseDate            *string           `json:"release_date"`
-	FeaturedSeries         *APISeries        `json:"featured_series"`
-	FeaturedSeriesPosition int               `json:"featured_series_position"`
-	Contributions          []APIContribution `json:"contributions"`
-	Image                  *APIImage         `json:"image"`
-}
-
-// APISeries represents a series reference on the book object.
-type APISeries struct {
-	Name string `json:"name"`
+	ID             int               `json:"id"`
+	Title          string            `json:"title"`
+	Pages          int               `json:"pages"`
+	Slug           string            `json:"slug"`
+	Rating         float64           `json:"rating"`
+	RatingsCount   int               `json:"ratings_count"`
+	ReviewsCount   int               `json:"reviews_count"`
+	UsersCount     int               `json:"users_count"`
+	UsersReadCount int               `json:"users_read_count"`
+	ReleaseDate    *string           `json:"release_date"`
+	SeriesNames    []string          `json:"series_names"`
+	Contributions  []APIContribution `json:"contributions"`
+	Image          *APIImage         `json:"image"`
 }
 
 // APIContribution represents an author contribution to a book.

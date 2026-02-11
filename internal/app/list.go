@@ -92,16 +92,15 @@ func (a *App) syncStatus(ctx context.Context, status model.Status) error {
 
 func convertAPIUserBook(ab apiUserBookAlias) model.UserBook {
 	book := model.Book{
-		ID:                     ab.Book.ID,
-		Title:                  ab.Book.Title,
-		Pages:                  ab.Book.Pages,
-		Slug:                   ab.Book.Slug,
-		Rating:                 ab.Book.Rating,
-		RatingsCount:           ab.Book.RatingsCount,
-		ReviewsCount:           ab.Book.ReviewsCount,
-		UsersCount:             ab.Book.UsersCount,
-		UsersReadCount:         ab.Book.UsersReadCount,
-		FeaturedSeriesPosition: ab.Book.FeaturedSeriesPosition,
+		ID:             ab.Book.ID,
+		Title:          ab.Book.Title,
+		Pages:          ab.Book.Pages,
+		Slug:           ab.Book.Slug,
+		Rating:         ab.Book.Rating,
+		RatingsCount:   ab.Book.RatingsCount,
+		ReviewsCount:   ab.Book.ReviewsCount,
+		UsersCount:     ab.Book.UsersCount,
+		UsersReadCount: ab.Book.UsersReadCount,
 	}
 	if ab.Book.Image != nil {
 		book.ImageURL = ab.Book.Image.URL
@@ -109,8 +108,8 @@ func convertAPIUserBook(ab apiUserBookAlias) model.UserBook {
 	if ab.Book.ReleaseDate != nil {
 		book.ReleaseDate = strings.TrimSpace(*ab.Book.ReleaseDate)
 	}
-	if ab.Book.FeaturedSeries != nil {
-		book.FeaturedSeries = strings.TrimSpace(ab.Book.FeaturedSeries.Name)
+	if len(ab.Book.SeriesNames) > 0 {
+		book.FeaturedSeries = strings.TrimSpace(ab.Book.SeriesNames[0])
 	}
 	for _, c := range ab.Book.Contributions {
 		book.Authors = append(book.Authors, c.Author.Name)
