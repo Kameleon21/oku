@@ -144,7 +144,9 @@ type dashboardModel struct {
 	infoMsg   string
 	errMsg    string
 
-	searchMode searchInputMode
+	searchLoading      bool
+	searchLoadingQuery string
+	searchMode         searchInputMode
 
 	showHelp bool
 }
@@ -269,6 +271,8 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case searchLoadedMsg:
 		m.loading = false
+		m.searchLoading = false
+		m.searchLoadingQuery = ""
 		if msg.err != nil {
 			m.errMsg = msg.err.Error()
 			m.infoMsg = ""
@@ -285,7 +289,11 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.focus = focusSearchResults
 		}
 		m.errMsg = ""
-		m.infoMsg = fmt.Sprintf("Loaded %d results", len(items))
+		if len(items) == 0 {
+			m.infoMsg = fmt.Sprintf("No results for %q", msg.query)
+		} else {
+			m.infoMsg = fmt.Sprintf("Loaded %d results", len(items))
+		}
 		return m, nil
 	case backgroundCheckMsg:
 		if m.dirty && !m.loading && time.Since(m.lastMutationAt) >= backgroundSyncWindow {
@@ -341,14 +349,7 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.searchInput.CursorEnd()
 					return m, nil
 				case "enter":
-					query := strings.TrimSpace(m.searchInput.Value())
-					if query == "" {
-						m.errMsg = "search query cannot be empty"
-						return m, nil
-					}
-					m.loading = true
-					m.errMsg = ""
-					return m, searchCmd(m.app, query)
+					return m, m.submitSearch()
 				case "esc":
 					m.focus = focusReading
 					m.searchInput.Blur()
@@ -370,14 +371,7 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showHelp = true
 				return m, nil
 			case "enter":
-				query := strings.TrimSpace(m.searchInput.Value())
-				if query == "" {
-					m.errMsg = "search query cannot be empty"
-					return m, nil
-				}
-				m.loading = true
-				m.errMsg = ""
-				return m, searchCmd(m.app, query)
+				return m, m.submitSearch()
 			case "esc":
 				m.enterSearchNormalMode()
 				return m, nil
@@ -489,6 +483,26 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m dashboardModel) hasSearchResults() bool {
 	return len(m.searchList.Items()) > 0
+}
+
+func (m *dashboardModel) submitSearch() tea.Cmd {
+	if m.searchLoading {
+		return nil
+	}
+
+	query := strings.TrimSpace(m.searchInput.Value())
+	if query == "" {
+		m.errMsg = "search query cannot be empty"
+		return nil
+	}
+
+	m.loading = true
+	m.searchLoading = true
+	m.searchLoadingQuery = query
+	m.errMsg = ""
+	m.infoMsg = fmt.Sprintf("Searching for: %q...", query)
+	m.searchList.Title = "Search Results (loading...)"
+	return searchCmd(m.app, query)
 }
 
 func (m *dashboardModel) enterSearchNormalMode() {
@@ -684,7 +698,7 @@ func (m dashboardModel) renderLibrary() string {
 	var rightContent string
 	switch m.focus {
 	case focusSearchInput, focusSearchResults:
-		rightContent = m.searchList.View()
+		rightContent = m.searchPanelView()
 	default:
 		rightContent = m.detailsView()
 	}
@@ -754,6 +768,28 @@ func (m dashboardModel) searchInputWithModeBadge() string {
 		mode = keyStyle.Render("[INSERT]")
 	}
 	return mode + " " + m.searchInput.View()
+}
+
+func (m dashboardModel) searchPanelView() string {
+	if m.searchLoading {
+		query := m.searchLoadingQuery
+		if strings.TrimSpace(query) == "" {
+			query = m.lastQuery
+		}
+		if strings.TrimSpace(query) == "" {
+			query = "..."
+		}
+		return "\n  " + m.spin.View() + " Searching for " + fmt.Sprintf("%q", query)
+	}
+
+	if len(m.searchList.Items()) == 0 {
+		if strings.TrimSpace(m.lastQuery) == "" {
+			return dimStyleTUI.Render("  Type a query and press Enter to search")
+		}
+		return dimStyleTUI.Render(fmt.Sprintf("  No results for %q", m.lastQuery))
+	}
+
+	return m.searchList.View()
 }
 
 func (m dashboardModel) renderHelpModal() string {
