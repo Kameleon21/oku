@@ -108,9 +108,6 @@ func convertAPIUserBook(ab apiUserBookAlias) model.UserBook {
 	if ab.Book.ReleaseDate != nil {
 		book.ReleaseDate = strings.TrimSpace(*ab.Book.ReleaseDate)
 	}
-	if len(ab.Book.SeriesNames) > 0 {
-		book.FeaturedSeries = strings.TrimSpace(ab.Book.SeriesNames[0])
-	}
 	for _, c := range ab.Book.Contributions {
 		book.Authors = append(book.Authors, c.Author.Name)
 	}

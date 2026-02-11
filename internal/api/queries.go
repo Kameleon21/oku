@@ -106,7 +106,6 @@ func userBooksQuery(statusID int, extended bool) string {
         users_count
         users_read_count
         release_date
-        series_names
         contributions {
           author {
             name

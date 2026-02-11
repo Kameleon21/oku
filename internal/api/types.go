@@ -45,7 +45,6 @@ type APIBook struct {
 	UsersCount     int               `json:"users_count"`
 	UsersReadCount int               `json:"users_read_count"`
 	ReleaseDate    *string           `json:"release_date"`
-	SeriesNames    []string          `json:"series_names"`
 	Contributions  []APIContribution `json:"contributions"`
 	Image          *APIImage         `json:"image"`
 }
