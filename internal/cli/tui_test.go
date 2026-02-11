@@ -32,6 +32,22 @@ func TestSearchInputNormalModeUsesVimPaneNavigation(t *testing.T) {
 	}
 }
 
+func TestLoadLibraryCmdWithNilAppReturnsError(t *testing.T) {
+	cmd := loadLibraryCmd(nil, false)
+	if cmd == nil {
+		t.Fatal("loadLibraryCmd() returned nil cmd")
+	}
+
+	msg := cmd()
+	loaded, ok := msg.(libraryLoadedMsg)
+	if !ok {
+		t.Fatalf("loadLibraryCmd() msg type = %T, want libraryLoadedMsg", msg)
+	}
+	if loaded.err == nil {
+		t.Fatal("expected libraryLoadedMsg error for nil app")
+	}
+}
+
 func TestSearchInputInsertModeTypingAndEsc(t *testing.T) {
 	m := newDashboardModel(nil)
 	m.focus = focusSearchInput

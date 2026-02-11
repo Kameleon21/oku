@@ -1243,6 +1243,9 @@ func (m dashboardModel) changeSelectedSearchStatus(status model.Status) (tea.Mod
 
 func loadLibraryCmd(a *app.App, refresh bool) tea.Cmd {
 	return func() tea.Msg {
+		if a == nil {
+			return libraryLoadedMsg{err: fmt.Errorf("dashboard app is not initialized")}
+		}
 		reading, err := a.ListBooks(ctx(), model.StatusCurrentlyReading, refresh)
 		if err != nil {
 			return libraryLoadedMsg{err: err}
