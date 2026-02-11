@@ -84,7 +84,7 @@ Exit codes: `0` success, `1` user/app error, `2` network/transient failure.
 
 Just run `oku` in a terminal (or `oku tui` explicitly).
 
-The dashboard has two panes -- **Reading** on the left, **Oku** on the right -- with book details along the bottom.
+The dashboard has **Reading** and **Oku** lists stacked vertically on the left, with a full-height **Output** panel on the right showing book details. Press `?` at any time to open the help modal with all keybindings.
 
 ### Keybindings
 
@@ -92,7 +92,7 @@ The dashboard has two panes -- **Reading** on the left, **Oku** on the right -- 
 
 | Key | Action |
 |-----|--------|
-| `Tab` / arrows | Switch pane |
+| `Tab` | Switch between Reading and Oku |
 | `/` | Search Hardcover |
 | `Enter` | Toggle selected book between Reading and Oku |
 | `u` | Update page progress |
@@ -100,6 +100,7 @@ The dashboard has two panes -- **Reading** on the left, **Oku** on the right -- 
 | `x` | Remove book from library lists |
 | `r` | Refresh from API |
 | `s` | Sync all statuses |
+| `?` | Show help modal |
 | `q` | Quit |
 
 **Search mode:**
@@ -109,6 +110,7 @@ The dashboard has two panes -- **Reading** on the left, **Oku** on the right -- 
 | Type + `Enter` | Search |
 | `Enter` on result | Add to Reading |
 | `g` `w` `f` `d` | Assign status to result |
+| `?` | Show help modal |
 | `Esc` | Back to library |
 
 ## How Caching Works
