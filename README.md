@@ -84,7 +84,7 @@ Exit codes: `0` success, `1` user/app error, `2` network/transient failure.
 
 Just run `oku` in a terminal (or `oku tui` explicitly).
 
-The dashboard has two panes -- **Reading** on the left, **Oku** on the right -- with book details along the bottom.
+The dashboard has **Reading** and **Oku** lists stacked vertically on the left, with a full-height **Output** panel on the right showing book details. Press `?` at any time to open the help modal with all keybindings.
 
 ### Keybindings
 
@@ -92,24 +92,28 @@ The dashboard has two panes -- **Reading** on the left, **Oku** on the right -- 
 
 | Key | Action |
 |-----|--------|
-| `Tab` / arrows | Switch pane |
-| `/` | Search Hardcover |
+| `h` / `l` (`←` / `→`) | Move focus between panes |
+| `/` | Jump to search input (insert mode) |
 | `Enter` | Toggle selected book between Reading and Oku |
 | `u` | Update page progress |
 | `g` `w` `f` `d` | Move to Reading / Oku / Finished / DNF |
 | `x` | Remove book from library lists |
 | `r` | Refresh from API |
 | `s` | Sync all statuses |
+| `?` | Show help modal |
 | `q` | Quit |
 
-**Search mode:**
+**Search panel:**
 
 | Key | Action |
 |-----|--------|
-| Type + `Enter` | Search |
+| `i` / `a` | Enter insert mode |
+| Type + `Enter` | Search (insert mode) |
+| `Esc` | Insert -> normal, then normal -> library |
+| `h` / `l` (`←` / `→`) | Move focus between panes (normal mode) |
 | `Enter` on result | Add to Reading |
 | `g` `w` `f` `d` | Assign status to result |
-| `Esc` | Back to library |
+| `?` | Show help modal |
 
 ## How Caching Works
 

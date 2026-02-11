@@ -57,6 +57,15 @@ var (
 			Padding(0, 1)
 )
 
+// ── Help Modal Style ────────────────────────────────────────────────────────
+
+var helpModalStyle = lipgloss.NewStyle().
+	Border(lipgloss.RoundedBorder()).
+	BorderForeground(colorGold).
+	Background(colorCharcoal).
+	Padding(1, 2).
+	Width(50)
+
 // ── Progress Bar ────────────────────────────────────────────────────────────
 
 // progressBar renders a Unicode block-character progress bar.
