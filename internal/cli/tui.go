@@ -44,7 +44,8 @@ const (
 )
 
 type userBookItem struct {
-	book model.UserBook
+	book    model.UserBook
+	density outputDensity
 }
 
 func (i userBookItem) Title() string {
@@ -64,7 +65,18 @@ func (i userBookItem) Description() string {
 		}
 		progress += " " + miniProgressBar(page, i.book.Book.Pages, 8)
 	}
-	return fmt.Sprintf("%s · %s", author, progress)
+
+	switch i.density {
+	case densityCompact:
+		return progress
+	case densityVerbose:
+		if meta := bookMetaLine(i.book.Book); meta != "" {
+			return fmt.Sprintf("%s · %s · %s", author, progress, meta)
+		}
+		return fmt.Sprintf("%s · %s", author, progress)
+	default:
+		return fmt.Sprintf("%s · %s", author, progress)
+	}
 }
 
 func (i userBookItem) FilterValue() string {
@@ -150,6 +162,7 @@ type dashboardModel struct {
 	searchMode         searchInputMode
 	searchQueryMode    model.SearchMode
 	recentSearches     []string
+	density            outputDensity
 
 	showHelp bool
 }
@@ -229,6 +242,7 @@ func newDashboardModel(a *app.App) dashboardModel {
 		focus:           focusReading,
 		searchMode:      searchModeNormal,
 		searchQueryMode: model.SearchModeBook,
+		density:         currentOutputDensity(),
 		readingList:     newList("Reading"),
 		okuList:         newList("Oku"),
 		searchList:      newList("Search Results"),
@@ -370,6 +384,9 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case "3":
 					m.setSearchQueryMode(model.SearchModeGenre)
 					return m, nil
+				case "z":
+					m.cycleDensity()
+					return m, nil
 				case "enter":
 					return m, m.submitSearch()
 				case "esc":
@@ -428,6 +445,9 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m.changeSelectedSearchStatus(model.StatusRead)
 			case "d":
 				return m.changeSelectedSearchStatus(model.StatusDidNotFinish)
+			case "z":
+				m.cycleDensity()
+				return m, nil
 			case "h", "H", "left":
 				m.focusPrevPane()
 				return m, nil
@@ -467,11 +487,24 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "s":
 			m.loading = true
 			return m, syncAllAndReloadCmd(m.app)
+		case "z":
+			m.cycleDensity()
+			return m, nil
 		case "enter":
 			if m.focus == focusOku {
 				return m.changeSelectedLibraryStatus(model.StatusCurrentlyReading)
 			}
 			return m.changeSelectedLibraryStatus(model.StatusWantToRead)
+		case "+", "=":
+			if b := m.selectedLibraryBook(); b != nil {
+				m.loading = true
+				return m, quickProgressCmd(m.app, b.Book.ID, +10)
+			}
+		case "-":
+			if b := m.selectedLibraryBook(); b != nil {
+				m.loading = true
+				return m, quickProgressCmd(m.app, b.Book.ID, -10)
+			}
 		case "u":
 			if b := m.selectedLibraryBook(); b != nil {
 				m.mode = modeUpdatePage
@@ -530,6 +563,30 @@ func (m *dashboardModel) submitSearch() tea.Cmd {
 	)
 	m.searchList.Title = fmt.Sprintf("%s Results (loading...)", m.searchQueryMode.Label())
 	return searchCmd(m.app, query, m.searchQueryMode)
+}
+
+func (m *dashboardModel) cycleDensity() {
+	switch m.density {
+	case densityCompact:
+		m.density = densityDefault
+	case densityDefault:
+		m.density = densityVerbose
+	default:
+		m.density = densityCompact
+	}
+	m.refreshListItems()
+	m.infoMsg = "Density: " + densityLabel(m.density)
+}
+
+func densityLabel(d outputDensity) string {
+	switch d {
+	case densityCompact:
+		return "compact"
+	case densityVerbose:
+		return "verbose"
+	default:
+		return "default"
+	}
 }
 
 func (m *dashboardModel) setSearchQueryMode(mode model.SearchMode) {
@@ -886,55 +943,62 @@ func (m dashboardModel) detailsView() string {
 	}
 	writeField("Progress", progressText)
 
-	writeField("Book ID", fmt.Sprintf("%d", b.Book.ID))
-
-	if b.Book.Pages > 0 {
-		writeField("Pages", fmt.Sprintf("%d", b.Book.Pages))
-	}
-	if b.Book.Rating > 0 {
-		rating := fmt.Sprintf("%.2f", b.Book.Rating)
-		if b.Book.RatingsCount > 0 {
-			rating += fmt.Sprintf(" (%s ratings)", formatCount(b.Book.RatingsCount))
+	if m.density != densityCompact {
+		writeField("Book ID", fmt.Sprintf("%d", b.Book.ID))
+		if b.Book.Pages > 0 {
+			writeField("Pages", fmt.Sprintf("%d", b.Book.Pages))
 		}
-		writeField("Rating", rating)
-	}
-	if b.Book.ReviewsCount > 0 {
-		writeField("Reviews", formatCount(b.Book.ReviewsCount))
-	}
-	if b.Book.UsersReadCount > 0 || b.Book.UsersCount > 0 {
-		readers := ""
-		if b.Book.UsersReadCount > 0 {
-			readers = formatCount(b.Book.UsersReadCount) + " read"
-		}
-		if b.Book.UsersCount > 0 {
-			if readers != "" {
-				readers += " · "
+		if b.Book.Rating > 0 {
+			rating := fmt.Sprintf("%.2f", b.Book.Rating)
+			if b.Book.RatingsCount > 0 {
+				rating += fmt.Sprintf(" (%s ratings)", formatCount(b.Book.RatingsCount))
 			}
-			readers += formatCount(b.Book.UsersCount) + " shelved"
+			writeField("Rating", rating)
 		}
-		writeField("Readers", readers)
-	}
-	if b.Book.ReleaseDate != "" {
-		writeField("Released", b.Book.ReleaseDate)
-	}
-	if b.Book.FeaturedSeries != "" {
-		series := b.Book.FeaturedSeries
-		if b.Book.FeaturedSeriesPosition > 0 {
-			series += fmt.Sprintf(" #%d", b.Book.FeaturedSeriesPosition)
+		if b.Book.ReviewsCount > 0 {
+			writeField("Reviews", formatCount(b.Book.ReviewsCount))
 		}
-		writeField("Series", series)
-	}
-	if b.Book.Slug != "" {
-		writeField("Slug", b.Book.Slug)
-	}
-	if len(b.UserBookReads) > 0 {
-		if b.UserBookReads[0].StartedAt != nil {
-			writeField("Started", b.UserBookReads[0].StartedAt.Format("2006-01-02"))
+		if b.Book.UsersReadCount > 0 || b.Book.UsersCount > 0 {
+			readers := ""
+			if b.Book.UsersReadCount > 0 {
+				readers = formatCount(b.Book.UsersReadCount) + " read"
+			}
+			if b.Book.UsersCount > 0 {
+				if readers != "" {
+					readers += " · "
+				}
+				readers += formatCount(b.Book.UsersCount) + " shelved"
+			}
+			writeField("Readers", readers)
 		}
-		if b.UserBookReads[0].FinishedAt != nil {
-			writeField("Finished", b.UserBookReads[0].FinishedAt.Format("2006-01-02"))
+		if b.Book.ReleaseDate != "" {
+			writeField("Released", b.Book.ReleaseDate)
+		}
+		if b.Book.FeaturedSeries != "" {
+			series := b.Book.FeaturedSeries
+			if b.Book.FeaturedSeriesPosition > 0 {
+				series += fmt.Sprintf(" #%d", b.Book.FeaturedSeriesPosition)
+			}
+			writeField("Series", series)
 		}
 	}
+
+	if m.density == densityVerbose {
+		if b.Book.Slug != "" {
+			writeField("Slug", b.Book.Slug)
+		}
+		if len(b.UserBookReads) > 0 {
+			if b.UserBookReads[0].StartedAt != nil {
+				writeField("Started", b.UserBookReads[0].StartedAt.Format("2006-01-02"))
+			}
+			if b.UserBookReads[0].FinishedAt != nil {
+				writeField("Finished", b.UserBookReads[0].FinishedAt.Format("2006-01-02"))
+			}
+		}
+	}
+
+	sb.WriteString("\n")
+	sb.WriteString(dimStyleTUI.Render("  Quick: Enter toggle  +/- page  u custom  g/w/f/d status  x remove  z density"))
 
 	return sb.String()
 }
@@ -997,12 +1061,14 @@ func (m dashboardModel) renderHelpModal() string {
 		}),
 		section("Library Actions", [][2]string{
 			{"Enter", "Toggle reading / oku"},
+			{"+ / -", "Quick page update (+/-10)"},
 			{"u", "Update page progress"},
 			{"g", "Set status: reading"},
 			{"w", "Set status: want to read"},
 			{"f", "Set status: finished"},
 			{"d", "Set status: did not finish"},
 			{"x", "Remove from library"},
+			{"z", "Cycle density: compact/default/verbose"},
 		}),
 		section("Data", [][2]string{
 			{"r", "Refresh from cache"},
@@ -1064,6 +1130,7 @@ func (m dashboardModel) libraryHelp() string {
 			{"w", "want"},
 			{"f", "finished"},
 			{"d", "dnf"},
+			{"z", "density"},
 			{"h/l", "pane"},
 			{"Esc", "back"},
 			{"?", "help"},
@@ -1073,12 +1140,14 @@ func (m dashboardModel) libraryHelp() string {
 			{"h/l", "pane"},
 			{"/", "search"},
 			{"↵", "toggle read/oku"},
+			{"+/-", "page"},
 			{"u", "update"},
 			{"g", "reading"},
 			{"w", "want"},
 			{"f", "finished"},
 			{"d", "dnf"},
 			{"x", "remove"},
+			{"z", "density"},
 			{"r", "refresh"},
 			{"s", "sync"},
 			{"?", "help"},
@@ -1109,7 +1178,8 @@ func (m *dashboardModel) refreshListItems() {
 		items := make([]list.Item, 0, len(books))
 		for _, b := range books {
 			items = append(items, userBookItem{
-				book: b,
+				book:    b,
+				density: m.density,
 			})
 		}
 		return items
@@ -1212,6 +1282,30 @@ func updateProgressCmd(a *app.App, bookID int, rawPage string) tea.Cmd {
 		}
 		return opDoneMsg{
 			info:      fmt.Sprintf("Progress updated to page %d", newPage),
+			reload:    true,
+			markDirty: true,
+		}
+	}
+}
+
+func quickProgressCmd(a *app.App, bookID int, delta int) tea.Cmd {
+	return func() tea.Msg {
+		if delta == 0 {
+			return opDoneMsg{}
+		}
+		newPage, err := a.UpdateProgress(ctx(), bookID, model.PageUpdate{
+			Delta:    delta,
+			Relative: true,
+		})
+		if err != nil {
+			return opDoneMsg{err: err}
+		}
+		sign := ""
+		if delta > 0 {
+			sign = "+"
+		}
+		return opDoneMsg{
+			info:      fmt.Sprintf("Progress %s%d → page %d", sign, delta, newPage),
 			reload:    true,
 			markDirty: true,
 		}

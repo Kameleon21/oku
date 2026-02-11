@@ -14,12 +14,17 @@ import (
 )
 
 var jsonOutput bool
+var outputView string
 
 func newRootCmd(version string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "oku",
 		Short:   "A fast CLI for Hardcover",
 		Version: version,
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			_, err := parseOutputDensity(outputView)
+			return err
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !isInteractiveTerminal(os.Stdin) || !isInteractiveTerminal(os.Stdout) {
 				return cmd.Help()
@@ -31,6 +36,7 @@ func newRootCmd(version string) *cobra.Command {
 	cmd.SilenceUsage = true
 
 	cmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output as JSON")
+	cmd.PersistentFlags().StringVar(&outputView, "view", "default", "Output density: compact, default, verbose")
 
 	// Auth commands don't need the full app setup.
 	cmd.AddCommand(newAuthCmd())

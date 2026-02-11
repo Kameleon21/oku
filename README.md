@@ -77,6 +77,7 @@ oku dnf        # did not finish
 ```
 
 Add `--json` to any CLI command for machine-readable output.
+Use `--view compact|default|verbose` for text density in list/active output.
 
 Exit codes: `0` success, `1` user/app error, `2` network/transient failure.
 
@@ -95,9 +96,11 @@ The dashboard has **Reading** and **Oku** lists stacked vertically on the left, 
 | `h` / `l` (`←` / `→`) | Move focus between panes |
 | `/` | Jump to search input (insert mode) |
 | `Enter` | Toggle selected book between Reading and Oku |
+| `+` / `-` | Quick page update (+/- 10 pages) |
 | `u` | Update page progress |
 | `g` `w` `f` `d` | Move to Reading / Oku / Finished / DNF |
 | `x` | Remove book from library lists |
+| `z` | Cycle density (compact/default/verbose) |
 | `r` | Refresh from API |
 | `s` | Sync all statuses |
 | `?` | Show help modal |
@@ -113,6 +116,7 @@ The dashboard has **Reading** and **Oku** lists stacked vertically on the left, 
 | `h` / `l` (`←` / `→`) | Move focus between panes (normal mode) |
 | `m` | Cycle mode: Book -> Author -> Genre |
 | `1` / `2` / `3` | Set mode: Book / Author / Genre |
+| `z` | Cycle density (compact/default/verbose) |
 | `Enter` on result | Add to Reading |
 | `g` `w` `f` `d` | Assign status to result |
 | `?` | Show help modal |
