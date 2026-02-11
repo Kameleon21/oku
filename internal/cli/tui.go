@@ -103,6 +103,7 @@ type libraryLoadedMsg struct {
 type searchLoadedMsg struct {
 	results []model.SearchResult
 	query   string
+	mode    model.SearchMode
 	err     error
 }
 
@@ -147,6 +148,8 @@ type dashboardModel struct {
 	searchLoading      bool
 	searchLoadingQuery string
 	searchMode         searchInputMode
+	searchQueryMode    model.SearchMode
+	recentSearches     []string
 
 	showHelp bool
 }
@@ -206,6 +209,8 @@ func newDashboardModel(a *app.App) dashboardModel {
 	searchIn.Prompt = "/ "
 	searchIn.PromptStyle = lipgloss.NewStyle().Foreground(colorGold).Bold(true)
 	searchIn.TextStyle = lipgloss.NewStyle().Foreground(colorLightGray)
+	searchIn.ShowSuggestions = true
+	searchIn.SetSuggestions(defaultSearchSuggestions(model.SearchModeBook))
 
 	pageIn := textinput.New()
 	pageIn.Placeholder = "370 or +10 or -5"
@@ -219,16 +224,17 @@ func newDashboardModel(a *app.App) dashboardModel {
 	s.Style = lipgloss.NewStyle().Foreground(colorGold)
 
 	return dashboardModel{
-		app:         a,
-		mode:        modeLibrary,
-		focus:       focusReading,
-		searchMode:  searchModeNormal,
-		readingList: newList("Reading"),
-		okuList:     newList("Oku"),
-		searchList:  newList("Search Results"),
-		searchInput: searchIn,
-		pageInput:   pageIn,
-		spin:        s,
+		app:             a,
+		mode:            modeLibrary,
+		focus:           focusReading,
+		searchMode:      searchModeNormal,
+		searchQueryMode: model.SearchModeBook,
+		readingList:     newList("Reading"),
+		okuList:         newList("Oku"),
+		searchList:      newList("Search Results"),
+		searchInput:     searchIn,
+		pageInput:       pageIn,
+		spin:            s,
 	}
 }
 
@@ -267,6 +273,7 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.readingBooks = msg.reading
 		m.okuBooks = msg.oku
 		m.refreshListItems()
+		m.updateSearchSuggestions()
 		m.errMsg = ""
 		return m, nil
 	case searchLoadedMsg:
@@ -278,22 +285,25 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.infoMsg = ""
 			return m, nil
 		}
+		m.searchQueryMode = msg.mode
 		m.lastQuery = msg.query
 		items := make([]list.Item, 0, len(msg.results))
 		for _, r := range msg.results {
 			items = append(items, searchResultItem{result: r})
 		}
 		m.searchList.SetItems(items)
-		m.searchList.Title = fmt.Sprintf("Search Results (%d)", len(items))
+		m.searchList.Title = fmt.Sprintf("%s Results (%d)", m.searchQueryMode.Label(), len(items))
 		if len(items) > 0 {
 			m.focus = focusSearchResults
 		}
 		m.errMsg = ""
 		if len(items) == 0 {
-			m.infoMsg = fmt.Sprintf("No results for %q", msg.query)
+			m.infoMsg = fmt.Sprintf("%s mode: no results for %q", strings.ToLower(m.searchQueryMode.Label()), msg.query)
 		} else {
-			m.infoMsg = fmt.Sprintf("Loaded %d results", len(items))
+			m.infoMsg = fmt.Sprintf("%s mode: loaded %d results", strings.ToLower(m.searchQueryMode.Label()), len(items))
 		}
+		m.addRecentSearchQuery(msg.query)
+		m.updateSearchSuggestions()
 		return m, nil
 	case backgroundCheckMsg:
 		if m.dirty && !m.loading && time.Since(m.lastMutationAt) >= backgroundSyncWindow {
@@ -347,6 +357,18 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case "a":
 					m.enterSearchInsertMode()
 					m.searchInput.CursorEnd()
+					return m, nil
+				case "m":
+					m.setSearchQueryMode(m.searchQueryMode.Next())
+					return m, nil
+				case "1":
+					m.setSearchQueryMode(model.SearchModeBook)
+					return m, nil
+				case "2":
+					m.setSearchQueryMode(model.SearchModeAuthor)
+					return m, nil
+				case "3":
+					m.setSearchQueryMode(model.SearchModeGenre)
 					return m, nil
 				case "enter":
 					return m, m.submitSearch()
@@ -436,6 +458,7 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.focus = focusSearchInput
 			m.enterSearchInsertMode()
 			m.searchInput.SetValue("")
+			m.updateSearchSuggestions()
 			m.errMsg = ""
 			return m, nil
 		case "r":
@@ -500,9 +523,122 @@ func (m *dashboardModel) submitSearch() tea.Cmd {
 	m.searchLoading = true
 	m.searchLoadingQuery = query
 	m.errMsg = ""
-	m.infoMsg = fmt.Sprintf("Searching for: %q...", query)
-	m.searchList.Title = "Search Results (loading...)"
-	return searchCmd(m.app, query)
+	m.infoMsg = fmt.Sprintf("%s mode (%s): searching for %q...",
+		strings.ToLower(m.searchQueryMode.Label()),
+		m.searchQueryMode.Description(),
+		query,
+	)
+	m.searchList.Title = fmt.Sprintf("%s Results (loading...)", m.searchQueryMode.Label())
+	return searchCmd(m.app, query, m.searchQueryMode)
+}
+
+func (m *dashboardModel) setSearchQueryMode(mode model.SearchMode) {
+	if mode == "" {
+		mode = model.SearchModeBook
+	}
+	if m.searchQueryMode == mode {
+		return
+	}
+	m.searchQueryMode = mode
+	m.searchList.Title = fmt.Sprintf("%s Results", mode.Label())
+	m.infoMsg = fmt.Sprintf("Search mode: %s (%s)", strings.ToLower(mode.Label()), mode.Description())
+	m.searchInput.Placeholder = searchPlaceholderForMode(mode)
+	m.updateSearchSuggestions()
+}
+
+func (m *dashboardModel) addRecentSearchQuery(query string) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return
+	}
+	next := []string{query}
+	for _, q := range m.recentSearches {
+		if strings.EqualFold(q, query) {
+			continue
+		}
+		next = append(next, q)
+		if len(next) >= 8 {
+			break
+		}
+	}
+	m.recentSearches = next
+}
+
+func (m *dashboardModel) updateSearchSuggestions() {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, 12)
+
+	push := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return
+		}
+		key := strings.ToLower(s)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, s)
+	}
+
+	for _, s := range defaultSearchSuggestions(m.searchQueryMode) {
+		push(s)
+	}
+	for _, q := range m.recentSearches {
+		push(q)
+	}
+	if m.searchQueryMode == model.SearchModeAuthor {
+		for _, b := range append(append([]model.UserBook(nil), m.readingBooks...), m.okuBooks...) {
+			for _, a := range b.Book.Authors {
+				push(a)
+			}
+		}
+	}
+
+	if len(out) > 12 {
+		out = out[:12]
+	}
+	m.searchInput.SetSuggestions(out)
+}
+
+func defaultSearchSuggestions(mode model.SearchMode) []string {
+	switch mode {
+	case model.SearchModeAuthor:
+		return []string{
+			"Ursula K. Le Guin",
+			"Octavia Butler",
+			"Neal Ford",
+			"Fyodor Dostoevsky",
+			"James Clear",
+		}
+	case model.SearchModeGenre:
+		return []string{
+			"science fiction",
+			"classics",
+			"philosophy",
+			"software architecture",
+			"psychology",
+		}
+	default:
+		return []string{
+			"east of eden",
+			"dune",
+			"atomic habits",
+			"clean code",
+			"the brothers karamazov",
+		}
+	}
+}
+
+func searchPlaceholderForMode(mode model.SearchMode) string {
+	switch mode {
+	case model.SearchModeAuthor:
+		return "Search by author name..."
+	case model.SearchModeGenre:
+		return "Search by genre or tag..."
+	default:
+		return "Search books..."
+	}
 }
 
 func (m *dashboardModel) enterSearchNormalMode() {
@@ -808,7 +944,8 @@ func (m dashboardModel) searchInputWithModeBadge() string {
 	if m.searchMode == searchModeInsert {
 		mode = keyStyle.Render("[INSERT]")
 	}
-	return mode + " " + m.searchInput.View()
+	queryMode := keyStyle.Render("[" + m.searchQueryMode.Label() + "]")
+	return mode + " " + queryMode + " " + m.searchInput.View()
 }
 
 func (m dashboardModel) searchPanelView() string {
@@ -820,12 +957,17 @@ func (m dashboardModel) searchPanelView() string {
 		if strings.TrimSpace(query) == "" {
 			query = "..."
 		}
-		return "\n  " + m.spin.View() + " Searching for " + fmt.Sprintf("%q", query)
+		return "\n  " + m.spin.View() + " " + strings.ToLower(m.searchQueryMode.Label()) +
+			" search (" + m.searchQueryMode.Description() + ") for " + fmt.Sprintf("%q", query)
 	}
 
 	if len(m.searchList.Items()) == 0 {
 		if strings.TrimSpace(m.lastQuery) == "" {
-			return dimStyleTUI.Render("  Type a query and press Enter to search")
+			return dimStyleTUI.Render(
+				fmt.Sprintf("  %s mode (%s). Type a query and press Enter.",
+					strings.ToLower(m.searchQueryMode.Label()), m.searchQueryMode.Description(),
+				),
+			)
 		}
 		return dimStyleTUI.Render(fmt.Sprintf("  No results for %q", m.lastQuery))
 	}
@@ -871,6 +1013,8 @@ func (m dashboardModel) renderHelpModal() string {
 			{"i / a", "Enter insert mode"},
 			{"Esc", "Insert -> normal / back"},
 			{"h/l or ←/→", "Pane nav in normal mode"},
+			{"m", "Cycle mode: book/author/genre"},
+			{"1/2/3", "Set mode: book/author/genre"},
 			{"g/w/f/d", "Add result with status"},
 			{"Esc (results)", "Back to search input"},
 		}),
@@ -907,6 +1051,8 @@ func (m dashboardModel) libraryHelp() string {
 		return renderHelpBar([][2]string{
 			{"↵", "search"},
 			{"i/a", "insert"},
+			{"m", "mode"},
+			{"1/2/3", "book/author/genre"},
 			{"h/l", "pane"},
 			{"Esc", "back"},
 			{"?", "help"},
@@ -1042,12 +1188,13 @@ func loadLibraryCmd(a *app.App, refresh bool) tea.Cmd {
 	}
 }
 
-func searchCmd(a *app.App, query string) tea.Cmd {
+func searchCmd(a *app.App, query string, mode model.SearchMode) tea.Cmd {
 	return func() tea.Msg {
-		results, err := a.SearchBooks(ctx(), query, 10)
+		results, err := a.SearchBooks(ctx(), query, 10, mode)
 		return searchLoadedMsg{
 			results: results,
 			query:   query,
+			mode:    mode,
 			err:     err,
 		}
 	}

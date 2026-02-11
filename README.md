@@ -58,7 +58,7 @@ oku config edit                               Open config in your editor
 oku config show                               Print current config
 oku list <reading|oku|finished|dnf> [--refresh]
 oku now [--refresh]                           What are you reading right now?
-oku search <query> [--limit N]                Search Hardcover
+oku search <query> [--limit N] [--mode M]     Search Hardcover (book/author/genre)
 oku set-active --book <id>                    Add a book to your active list
 oku open                                      Pick a currently-reading book and add it to active list
 oku update --page <N|+N|-N> [--book <id>]     Update page progress
@@ -111,6 +111,8 @@ The dashboard has **Reading** and **Oku** lists stacked vertically on the left, 
 | Type + `Enter` | Search (insert mode) |
 | `Esc` | Insert -> normal, then normal -> library |
 | `h` / `l` (`←` / `→`) | Move focus between panes (normal mode) |
+| `m` | Cycle mode: Book -> Author -> Genre |
+| `1` / `2` / `3` | Set mode: Book / Author / Genre |
 | `Enter` on result | Add to Reading |
 | `g` `w` `f` `d` | Assign status to result |
 | `?` | Show help modal |
