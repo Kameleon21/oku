@@ -27,7 +27,33 @@ func (c *Client) GetMe(ctx context.Context) (int, string, error) {
 
 // ListUserBooks returns the user's books filtered by status ID.
 func (c *Client) ListUserBooks(ctx context.Context, statusID int) ([]APIUserBook, error) {
-	q := fmt.Sprintf(`query {
+	q := userBooksQuery(statusID, true)
+
+	req := graphql.NewRequest(q)
+
+	var resp UserBooksResponse
+	if err := c.do(ctx, req, &resp); err != nil {
+		// Schema can differ between API versions; fall back to a minimal stable query.
+		if isSchemaFieldError(err) {
+			q = userBooksQuery(statusID, false)
+			req = graphql.NewRequest(q)
+			if err := c.do(ctx, req, &resp); err != nil {
+				return nil, fmt.Errorf("ListUserBooks: %w", err)
+			}
+		} else {
+			return nil, fmt.Errorf("ListUserBooks: %w", err)
+		}
+	}
+	if len(resp.Me) == 0 {
+		return nil, nil
+	}
+
+	return resp.Me[0].UserBooks, nil
+}
+
+func userBooksQuery(statusID int, extended bool) string {
+	if !extended {
+		return fmt.Sprintf(`query {
   me {
     user_books(where: { status_id: { _eq: %d } }) {
       id
@@ -55,18 +81,57 @@ func (c *Client) ListUserBooks(ctx context.Context, statusID int) ([]APIUserBook
     }
   }
 }`, statusID)
-
-	req := graphql.NewRequest(q)
-
-	var resp UserBooksResponse
-	if err := c.do(ctx, req, &resp); err != nil {
-		return nil, fmt.Errorf("ListUserBooks: %w", err)
-	}
-	if len(resp.Me) == 0 {
-		return nil, nil
 	}
 
-	return resp.Me[0].UserBooks, nil
+	return fmt.Sprintf(`query {
+  me {
+    user_books(where: { status_id: { _eq: %d } }) {
+      id
+      status_id
+      updated_at
+      user_book_reads(order_by: { id: desc }, limit: 1) {
+        id
+        progress_pages
+        started_at
+        finished_at
+      }
+      book {
+        id
+        title
+        pages
+        slug
+        rating
+        ratings_count
+        reviews_count
+        users_count
+        users_read_count
+        release_date
+        featured_series_position
+        featured_series {
+          name
+        }
+        contributions {
+          author {
+            name
+          }
+        }
+        image {
+          url
+        }
+      }
+    }
+  }
+}`, statusID)
+}
+
+func isSchemaFieldError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "cannot query field") ||
+		strings.Contains(msg, "unknown field") ||
+		strings.Contains(msg, "field ") && strings.Contains(msg, " not found")
 }
 
 // SearchBooks searches for books by query string and returns parsed results.

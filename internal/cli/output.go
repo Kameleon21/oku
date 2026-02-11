@@ -39,6 +39,9 @@ func printBooks(books []model.UserBook) {
 			fmt.Printf("   %s\n", author)
 		}
 		fmt.Printf("   %s\n", progress)
+		if meta := bookMetaLine(ub.Book); meta != "" {
+			fmt.Printf("   %s\n", dimStyle.Render(meta))
+		}
 	}
 }
 
@@ -89,6 +92,50 @@ func printActiveBooks(books []model.UserBook) {
 		fmt.Printf("      %s  %s\n",
 			pageStyle.Render(ub.Progress()),
 			statusStyle.Render(ub.StatusID.Label()))
+		if meta := bookMetaLine(ub.Book); meta != "" {
+			fmt.Printf("      %s\n", dimStyle.Render(meta))
+		}
+	}
+}
+
+func bookMetaLine(b model.Book) string {
+	parts := make([]string, 0, 4)
+
+	if b.Rating > 0 {
+		rating := fmt.Sprintf("★ %.2f", b.Rating)
+		if b.RatingsCount > 0 {
+			rating += fmt.Sprintf(" (%s ratings)", formatCount(b.RatingsCount))
+		}
+		parts = append(parts, rating)
+	}
+
+	if b.UsersReadCount > 0 {
+		parts = append(parts, fmt.Sprintf("%s readers", formatCount(b.UsersReadCount)))
+	}
+
+	if b.ReleaseDate != "" {
+		parts = append(parts, "released "+b.ReleaseDate)
+	}
+
+	if b.FeaturedSeries != "" {
+		series := "series: " + b.FeaturedSeries
+		if b.FeaturedSeriesPosition > 0 {
+			series += fmt.Sprintf(" #%d", b.FeaturedSeriesPosition)
+		}
+		parts = append(parts, series)
+	}
+
+	return strings.Join(parts, " · ")
+}
+
+func formatCount(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fK", float64(n)/1_000)
+	default:
+		return fmt.Sprintf("%d", n)
 	}
 }
 
