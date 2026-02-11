@@ -127,26 +127,42 @@ func isSchemaFieldError(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "cannot query field") ||
 		strings.Contains(msg, "unknown field") ||
+		strings.Contains(msg, "unknown argument") ||
 		strings.Contains(msg, "field ") && strings.Contains(msg, " not found")
 }
 
 // SearchBooks searches for books by query string and returns parsed results.
-func (c *Client) SearchBooks(ctx context.Context, query string, perPage int) ([]model.SearchResult, error) {
+func (c *Client) SearchBooks(ctx context.Context, query string, perPage int, mode model.SearchMode) ([]model.SearchResult, error) {
 	// Escape double quotes and backslashes in user input for safe embedding in the query string.
 	sanitized := strings.ReplaceAll(query, `\`, `\\`)
 	sanitized = strings.ReplaceAll(sanitized, `"`, `\"`)
 
+	config := searchConfigForMode(mode)
+
 	q := fmt.Sprintf(`query {
-  search(query: "%s", query_type: "Book", per_page: %d, page: 1) {
+  search(query: "%s", query_type: "Book", per_page: %d, page: 1%s%s) {
     results
   }
-}`, sanitized, perPage)
+}`, sanitized, perPage, config.fieldsArg, config.weightsArg)
 
 	req := graphql.NewRequest(q)
 
 	var resp SearchResponse
 	if err := c.do(ctx, req, &resp); err != nil {
-		return nil, fmt.Errorf("SearchBooks: %w", err)
+		// If a mode-specific search field is unsupported, transparently fall back.
+		if isSchemaFieldError(err) {
+			q = fmt.Sprintf(`query {
+  search(query: "%s", query_type: "Book", per_page: %d, page: 1) {
+    results
+  }
+}`, sanitized, perPage)
+			req = graphql.NewRequest(q)
+			if err := c.do(ctx, req, &resp); err != nil {
+				return nil, fmt.Errorf("SearchBooks: %w", err)
+			}
+		} else {
+			return nil, fmt.Errorf("SearchBooks: %w", err)
+		}
 	}
 
 	var tsResults TypesenseResults
@@ -171,4 +187,29 @@ func (c *Client) SearchBooks(ctx context.Context, query string, perPage int) ([]
 	}
 
 	return results, nil
+}
+
+type searchQueryConfig struct {
+	fieldsArg  string
+	weightsArg string
+}
+
+func searchConfigForMode(mode model.SearchMode) searchQueryConfig {
+	switch mode {
+	case model.SearchModeAuthor:
+		return searchQueryConfig{
+			fieldsArg:  `, fields: "author_names,title"`,
+			weightsArg: `, weights: "8,2"`,
+		}
+	case model.SearchModeGenre:
+		return searchQueryConfig{
+			fieldsArg:  `, fields: "genres,tags,title,author_names"`,
+			weightsArg: `, weights: "8,5,2,1"`,
+		}
+	default:
+		return searchQueryConfig{
+			fieldsArg:  `, fields: "title,author_names"`,
+			weightsArg: `, weights: "7,3"`,
+		}
+	}
 }

@@ -19,6 +19,35 @@ var (
 	dimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 )
 
+type outputDensity int
+
+const (
+	densityCompact outputDensity = iota
+	densityDefault
+	densityVerbose
+)
+
+func parseOutputDensity(raw string) (outputDensity, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "default":
+		return densityDefault, nil
+	case "compact":
+		return densityCompact, nil
+	case "verbose":
+		return densityVerbose, nil
+	default:
+		return densityDefault, fmt.Errorf("invalid --view value %q (valid: compact, default, verbose)", raw)
+	}
+}
+
+func currentOutputDensity() outputDensity {
+	d, err := parseOutputDensity(outputView)
+	if err != nil {
+		return densityDefault
+	}
+	return d
+}
+
 func printBooks(books []model.UserBook) {
 	if jsonOutput {
 		printJSON(books)
@@ -28,19 +57,34 @@ func printBooks(books []model.UserBook) {
 		fmt.Println(dimStyle.Render("No books found."))
 		return
 	}
+	density := currentOutputDensity()
 	for i, ub := range books {
 		num := dimStyle.Render(fmt.Sprintf("%d.", i+1))
 		title := titleStyle.Render(ub.Book.Title)
 		author := authorStyle.Render(ub.Book.AuthorString())
 		progress := pageStyle.Render(ub.Progress())
+		meta := bookMetaLine(ub.Book)
+		detail := bookDetailLine(ub.Book)
+
+		if density == densityCompact {
+			if meta != "" {
+				fmt.Printf("%s %s  %s  %s\n", num, title, progress, dimStyle.Render(meta))
+			} else {
+				fmt.Printf("%s %s  %s\n", num, title, progress)
+			}
+			continue
+		}
 
 		fmt.Printf("%s %s\n", num, title)
-		if author != "" {
+		if author != "" && density != densityCompact {
 			fmt.Printf("   %s\n", author)
 		}
 		fmt.Printf("   %s\n", progress)
-		if meta := bookMetaLine(ub.Book); meta != "" {
+		if meta != "" {
 			fmt.Printf("   %s\n", dimStyle.Render(meta))
+		}
+		if density == densityVerbose && detail != "" {
+			fmt.Printf("   %s\n", dimStyle.Render(detail))
 		}
 	}
 }
@@ -82,18 +126,35 @@ func printActiveBooks(books []model.UserBook) {
 		return
 	}
 
+	density := currentOutputDensity()
 	fmt.Println(statusStyle.Render("Active Books"))
 	for i, ub := range books {
 		num := dimStyle.Render(fmt.Sprintf("%d.", i+1))
+		progress := pageStyle.Render(ub.Progress())
+		meta := bookMetaLine(ub.Book)
+		detail := bookDetailLine(ub.Book)
+
+		if density == densityCompact {
+			if meta != "" {
+				fmt.Printf("%s %s  %s  %s\n", num, titleStyle.Render(ub.Book.Title), progress, dimStyle.Render(meta))
+			} else {
+				fmt.Printf("%s %s  %s\n", num, titleStyle.Render(ub.Book.Title), progress)
+			}
+			continue
+		}
+
 		fmt.Printf("%s %s\n", num, titleStyle.Render(ub.Book.Title))
 		if a := ub.Book.AuthorString(); a != "" {
 			fmt.Printf("      %s\n", authorStyle.Render(a))
 		}
 		fmt.Printf("      %s  %s\n",
-			pageStyle.Render(ub.Progress()),
+			progress,
 			statusStyle.Render(ub.StatusID.Label()))
-		if meta := bookMetaLine(ub.Book); meta != "" {
+		if meta != "" {
 			fmt.Printf("      %s\n", dimStyle.Render(meta))
+		}
+		if density == densityVerbose && detail != "" {
+			fmt.Printf("      %s\n", dimStyle.Render(detail))
 		}
 	}
 }
@@ -125,6 +186,20 @@ func bookMetaLine(b model.Book) string {
 		parts = append(parts, series)
 	}
 
+	return strings.Join(parts, " · ")
+}
+
+func bookDetailLine(b model.Book) string {
+	parts := make([]string, 0, 3)
+	if b.Slug != "" {
+		parts = append(parts, "slug:"+b.Slug)
+	}
+	if b.Pages > 0 {
+		parts = append(parts, fmt.Sprintf("%d pages", b.Pages))
+	}
+	if b.ID > 0 {
+		parts = append(parts, fmt.Sprintf("id:%d", b.ID))
+	}
 	return strings.Join(parts, " · ")
 }
 

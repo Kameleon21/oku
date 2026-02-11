@@ -44,7 +44,8 @@ const (
 )
 
 type userBookItem struct {
-	book model.UserBook
+	book    model.UserBook
+	density outputDensity
 }
 
 func (i userBookItem) Title() string {
@@ -64,7 +65,18 @@ func (i userBookItem) Description() string {
 		}
 		progress += " " + miniProgressBar(page, i.book.Book.Pages, 8)
 	}
-	return fmt.Sprintf("%s · %s", author, progress)
+
+	switch i.density {
+	case densityCompact:
+		return progress
+	case densityVerbose:
+		if meta := bookMetaLine(i.book.Book); meta != "" {
+			return fmt.Sprintf("%s · %s · %s", author, progress, meta)
+		}
+		return fmt.Sprintf("%s · %s", author, progress)
+	default:
+		return fmt.Sprintf("%s · %s", author, progress)
+	}
 }
 
 func (i userBookItem) FilterValue() string {
@@ -103,6 +115,7 @@ type libraryLoadedMsg struct {
 type searchLoadedMsg struct {
 	results []model.SearchResult
 	query   string
+	mode    model.SearchMode
 	err     error
 }
 
@@ -147,6 +160,9 @@ type dashboardModel struct {
 	searchLoading      bool
 	searchLoadingQuery string
 	searchMode         searchInputMode
+	searchQueryMode    model.SearchMode
+	recentSearches     []string
+	density            outputDensity
 
 	showHelp bool
 }
@@ -206,6 +222,8 @@ func newDashboardModel(a *app.App) dashboardModel {
 	searchIn.Prompt = "/ "
 	searchIn.PromptStyle = lipgloss.NewStyle().Foreground(colorGold).Bold(true)
 	searchIn.TextStyle = lipgloss.NewStyle().Foreground(colorLightGray)
+	searchIn.ShowSuggestions = true
+	searchIn.SetSuggestions(defaultSearchSuggestions(model.SearchModeBook))
 
 	pageIn := textinput.New()
 	pageIn.Placeholder = "370 or +10 or -5"
@@ -219,16 +237,18 @@ func newDashboardModel(a *app.App) dashboardModel {
 	s.Style = lipgloss.NewStyle().Foreground(colorGold)
 
 	return dashboardModel{
-		app:         a,
-		mode:        modeLibrary,
-		focus:       focusReading,
-		searchMode:  searchModeNormal,
-		readingList: newList("Reading"),
-		okuList:     newList("Oku"),
-		searchList:  newList("Search Results"),
-		searchInput: searchIn,
-		pageInput:   pageIn,
-		spin:        s,
+		app:             a,
+		mode:            modeLibrary,
+		focus:           focusReading,
+		searchMode:      searchModeNormal,
+		searchQueryMode: model.SearchModeBook,
+		density:         currentOutputDensity(),
+		readingList:     newList("Reading"),
+		okuList:         newList("Oku"),
+		searchList:      newList("Search Results"),
+		searchInput:     searchIn,
+		pageInput:       pageIn,
+		spin:            s,
 	}
 }
 
@@ -267,6 +287,7 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.readingBooks = msg.reading
 		m.okuBooks = msg.oku
 		m.refreshListItems()
+		m.updateSearchSuggestions()
 		m.errMsg = ""
 		return m, nil
 	case searchLoadedMsg:
@@ -278,22 +299,25 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.infoMsg = ""
 			return m, nil
 		}
+		m.searchQueryMode = msg.mode
 		m.lastQuery = msg.query
 		items := make([]list.Item, 0, len(msg.results))
 		for _, r := range msg.results {
 			items = append(items, searchResultItem{result: r})
 		}
 		m.searchList.SetItems(items)
-		m.searchList.Title = fmt.Sprintf("Search Results (%d)", len(items))
+		m.searchList.Title = fmt.Sprintf("%s Results (%d)", m.searchQueryMode.Label(), len(items))
 		if len(items) > 0 {
 			m.focus = focusSearchResults
 		}
 		m.errMsg = ""
 		if len(items) == 0 {
-			m.infoMsg = fmt.Sprintf("No results for %q", msg.query)
+			m.infoMsg = fmt.Sprintf("%s mode: no results for %q", strings.ToLower(m.searchQueryMode.Label()), msg.query)
 		} else {
-			m.infoMsg = fmt.Sprintf("Loaded %d results", len(items))
+			m.infoMsg = fmt.Sprintf("%s mode: loaded %d results", strings.ToLower(m.searchQueryMode.Label()), len(items))
 		}
+		m.addRecentSearchQuery(msg.query)
+		m.updateSearchSuggestions()
 		return m, nil
 	case backgroundCheckMsg:
 		if m.dirty && !m.loading && time.Since(m.lastMutationAt) >= backgroundSyncWindow {
@@ -347,6 +371,21 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case "a":
 					m.enterSearchInsertMode()
 					m.searchInput.CursorEnd()
+					return m, nil
+				case "m":
+					m.setSearchQueryMode(m.searchQueryMode.Next())
+					return m, nil
+				case "1":
+					m.setSearchQueryMode(model.SearchModeBook)
+					return m, nil
+				case "2":
+					m.setSearchQueryMode(model.SearchModeAuthor)
+					return m, nil
+				case "3":
+					m.setSearchQueryMode(model.SearchModeGenre)
+					return m, nil
+				case "z":
+					m.cycleDensity()
 					return m, nil
 				case "enter":
 					return m, m.submitSearch()
@@ -406,6 +445,9 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m.changeSelectedSearchStatus(model.StatusRead)
 			case "d":
 				return m.changeSelectedSearchStatus(model.StatusDidNotFinish)
+			case "z":
+				m.cycleDensity()
+				return m, nil
 			case "h", "H", "left":
 				m.focusPrevPane()
 				return m, nil
@@ -436,6 +478,7 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.focus = focusSearchInput
 			m.enterSearchInsertMode()
 			m.searchInput.SetValue("")
+			m.updateSearchSuggestions()
 			m.errMsg = ""
 			return m, nil
 		case "r":
@@ -444,11 +487,24 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "s":
 			m.loading = true
 			return m, syncAllAndReloadCmd(m.app)
+		case "z":
+			m.cycleDensity()
+			return m, nil
 		case "enter":
 			if m.focus == focusOku {
 				return m.changeSelectedLibraryStatus(model.StatusCurrentlyReading)
 			}
 			return m.changeSelectedLibraryStatus(model.StatusWantToRead)
+		case "+", "=":
+			if b := m.selectedLibraryBook(); b != nil {
+				m.loading = true
+				return m, quickProgressCmd(m.app, b.Book.ID, +10)
+			}
+		case "-":
+			if b := m.selectedLibraryBook(); b != nil {
+				m.loading = true
+				return m, quickProgressCmd(m.app, b.Book.ID, -10)
+			}
 		case "u":
 			if b := m.selectedLibraryBook(); b != nil {
 				m.mode = modeUpdatePage
@@ -500,9 +556,146 @@ func (m *dashboardModel) submitSearch() tea.Cmd {
 	m.searchLoading = true
 	m.searchLoadingQuery = query
 	m.errMsg = ""
-	m.infoMsg = fmt.Sprintf("Searching for: %q...", query)
-	m.searchList.Title = "Search Results (loading...)"
-	return searchCmd(m.app, query)
+	m.infoMsg = fmt.Sprintf("%s mode (%s): searching for %q...",
+		strings.ToLower(m.searchQueryMode.Label()),
+		m.searchQueryMode.Description(),
+		query,
+	)
+	m.searchList.Title = fmt.Sprintf("%s Results (loading...)", m.searchQueryMode.Label())
+	return searchCmd(m.app, query, m.searchQueryMode)
+}
+
+func (m *dashboardModel) cycleDensity() {
+	switch m.density {
+	case densityCompact:
+		m.density = densityDefault
+	case densityDefault:
+		m.density = densityVerbose
+	default:
+		m.density = densityCompact
+	}
+	m.refreshListItems()
+	m.infoMsg = "Density: " + densityLabel(m.density)
+}
+
+func densityLabel(d outputDensity) string {
+	switch d {
+	case densityCompact:
+		return "compact"
+	case densityVerbose:
+		return "verbose"
+	default:
+		return "default"
+	}
+}
+
+func (m *dashboardModel) setSearchQueryMode(mode model.SearchMode) {
+	if mode == "" {
+		mode = model.SearchModeBook
+	}
+	if m.searchQueryMode == mode {
+		return
+	}
+	m.searchQueryMode = mode
+	m.searchList.Title = fmt.Sprintf("%s Results", mode.Label())
+	m.infoMsg = fmt.Sprintf("Search mode: %s (%s)", strings.ToLower(mode.Label()), mode.Description())
+	m.searchInput.Placeholder = searchPlaceholderForMode(mode)
+	m.updateSearchSuggestions()
+}
+
+func (m *dashboardModel) addRecentSearchQuery(query string) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return
+	}
+	next := []string{query}
+	for _, q := range m.recentSearches {
+		if strings.EqualFold(q, query) {
+			continue
+		}
+		next = append(next, q)
+		if len(next) >= 8 {
+			break
+		}
+	}
+	m.recentSearches = next
+}
+
+func (m *dashboardModel) updateSearchSuggestions() {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, 12)
+
+	push := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return
+		}
+		key := strings.ToLower(s)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, s)
+	}
+
+	for _, s := range defaultSearchSuggestions(m.searchQueryMode) {
+		push(s)
+	}
+	for _, q := range m.recentSearches {
+		push(q)
+	}
+	if m.searchQueryMode == model.SearchModeAuthor {
+		for _, b := range append(append([]model.UserBook(nil), m.readingBooks...), m.okuBooks...) {
+			for _, a := range b.Book.Authors {
+				push(a)
+			}
+		}
+	}
+
+	if len(out) > 12 {
+		out = out[:12]
+	}
+	m.searchInput.SetSuggestions(out)
+}
+
+func defaultSearchSuggestions(mode model.SearchMode) []string {
+	switch mode {
+	case model.SearchModeAuthor:
+		return []string{
+			"Ursula K. Le Guin",
+			"Octavia Butler",
+			"Neal Ford",
+			"Fyodor Dostoevsky",
+			"James Clear",
+		}
+	case model.SearchModeGenre:
+		return []string{
+			"science fiction",
+			"classics",
+			"philosophy",
+			"software architecture",
+			"psychology",
+		}
+	default:
+		return []string{
+			"east of eden",
+			"dune",
+			"atomic habits",
+			"clean code",
+			"the brothers karamazov",
+		}
+	}
+}
+
+func searchPlaceholderForMode(mode model.SearchMode) string {
+	switch mode {
+	case model.SearchModeAuthor:
+		return "Search by author name..."
+	case model.SearchModeGenre:
+		return "Search by genre or tag..."
+	default:
+		return "Search books..."
+	}
 }
 
 func (m *dashboardModel) enterSearchNormalMode() {
@@ -750,55 +943,62 @@ func (m dashboardModel) detailsView() string {
 	}
 	writeField("Progress", progressText)
 
-	writeField("Book ID", fmt.Sprintf("%d", b.Book.ID))
-
-	if b.Book.Pages > 0 {
-		writeField("Pages", fmt.Sprintf("%d", b.Book.Pages))
-	}
-	if b.Book.Rating > 0 {
-		rating := fmt.Sprintf("%.2f", b.Book.Rating)
-		if b.Book.RatingsCount > 0 {
-			rating += fmt.Sprintf(" (%s ratings)", formatCount(b.Book.RatingsCount))
+	if m.density != densityCompact {
+		writeField("Book ID", fmt.Sprintf("%d", b.Book.ID))
+		if b.Book.Pages > 0 {
+			writeField("Pages", fmt.Sprintf("%d", b.Book.Pages))
 		}
-		writeField("Rating", rating)
-	}
-	if b.Book.ReviewsCount > 0 {
-		writeField("Reviews", formatCount(b.Book.ReviewsCount))
-	}
-	if b.Book.UsersReadCount > 0 || b.Book.UsersCount > 0 {
-		readers := ""
-		if b.Book.UsersReadCount > 0 {
-			readers = formatCount(b.Book.UsersReadCount) + " read"
-		}
-		if b.Book.UsersCount > 0 {
-			if readers != "" {
-				readers += " · "
+		if b.Book.Rating > 0 {
+			rating := fmt.Sprintf("%.2f", b.Book.Rating)
+			if b.Book.RatingsCount > 0 {
+				rating += fmt.Sprintf(" (%s ratings)", formatCount(b.Book.RatingsCount))
 			}
-			readers += formatCount(b.Book.UsersCount) + " shelved"
+			writeField("Rating", rating)
 		}
-		writeField("Readers", readers)
-	}
-	if b.Book.ReleaseDate != "" {
-		writeField("Released", b.Book.ReleaseDate)
-	}
-	if b.Book.FeaturedSeries != "" {
-		series := b.Book.FeaturedSeries
-		if b.Book.FeaturedSeriesPosition > 0 {
-			series += fmt.Sprintf(" #%d", b.Book.FeaturedSeriesPosition)
+		if b.Book.ReviewsCount > 0 {
+			writeField("Reviews", formatCount(b.Book.ReviewsCount))
 		}
-		writeField("Series", series)
-	}
-	if b.Book.Slug != "" {
-		writeField("Slug", b.Book.Slug)
-	}
-	if len(b.UserBookReads) > 0 {
-		if b.UserBookReads[0].StartedAt != nil {
-			writeField("Started", b.UserBookReads[0].StartedAt.Format("2006-01-02"))
+		if b.Book.UsersReadCount > 0 || b.Book.UsersCount > 0 {
+			readers := ""
+			if b.Book.UsersReadCount > 0 {
+				readers = formatCount(b.Book.UsersReadCount) + " read"
+			}
+			if b.Book.UsersCount > 0 {
+				if readers != "" {
+					readers += " · "
+				}
+				readers += formatCount(b.Book.UsersCount) + " shelved"
+			}
+			writeField("Readers", readers)
 		}
-		if b.UserBookReads[0].FinishedAt != nil {
-			writeField("Finished", b.UserBookReads[0].FinishedAt.Format("2006-01-02"))
+		if b.Book.ReleaseDate != "" {
+			writeField("Released", b.Book.ReleaseDate)
+		}
+		if b.Book.FeaturedSeries != "" {
+			series := b.Book.FeaturedSeries
+			if b.Book.FeaturedSeriesPosition > 0 {
+				series += fmt.Sprintf(" #%d", b.Book.FeaturedSeriesPosition)
+			}
+			writeField("Series", series)
 		}
 	}
+
+	if m.density == densityVerbose {
+		if b.Book.Slug != "" {
+			writeField("Slug", b.Book.Slug)
+		}
+		if len(b.UserBookReads) > 0 {
+			if b.UserBookReads[0].StartedAt != nil {
+				writeField("Started", b.UserBookReads[0].StartedAt.Format("2006-01-02"))
+			}
+			if b.UserBookReads[0].FinishedAt != nil {
+				writeField("Finished", b.UserBookReads[0].FinishedAt.Format("2006-01-02"))
+			}
+		}
+	}
+
+	sb.WriteString("\n")
+	sb.WriteString(dimStyleTUI.Render("  Quick: Enter toggle  +/- page  u custom  g/w/f/d status  x remove  z density"))
 
 	return sb.String()
 }
@@ -808,7 +1008,8 @@ func (m dashboardModel) searchInputWithModeBadge() string {
 	if m.searchMode == searchModeInsert {
 		mode = keyStyle.Render("[INSERT]")
 	}
-	return mode + " " + m.searchInput.View()
+	queryMode := keyStyle.Render("[" + m.searchQueryMode.Label() + "]")
+	return mode + " " + queryMode + " " + m.searchInput.View()
 }
 
 func (m dashboardModel) searchPanelView() string {
@@ -820,12 +1021,17 @@ func (m dashboardModel) searchPanelView() string {
 		if strings.TrimSpace(query) == "" {
 			query = "..."
 		}
-		return "\n  " + m.spin.View() + " Searching for " + fmt.Sprintf("%q", query)
+		return "\n  " + m.spin.View() + " " + strings.ToLower(m.searchQueryMode.Label()) +
+			" search (" + m.searchQueryMode.Description() + ") for " + fmt.Sprintf("%q", query)
 	}
 
 	if len(m.searchList.Items()) == 0 {
 		if strings.TrimSpace(m.lastQuery) == "" {
-			return dimStyleTUI.Render("  Type a query and press Enter to search")
+			return dimStyleTUI.Render(
+				fmt.Sprintf("  %s mode (%s). Type a query and press Enter.",
+					strings.ToLower(m.searchQueryMode.Label()), m.searchQueryMode.Description(),
+				),
+			)
 		}
 		return dimStyleTUI.Render(fmt.Sprintf("  No results for %q", m.lastQuery))
 	}
@@ -855,12 +1061,14 @@ func (m dashboardModel) renderHelpModal() string {
 		}),
 		section("Library Actions", [][2]string{
 			{"Enter", "Toggle reading / oku"},
+			{"+ / -", "Quick page update (+/-10)"},
 			{"u", "Update page progress"},
 			{"g", "Set status: reading"},
 			{"w", "Set status: want to read"},
 			{"f", "Set status: finished"},
 			{"d", "Set status: did not finish"},
 			{"x", "Remove from library"},
+			{"z", "Cycle density: compact/default/verbose"},
 		}),
 		section("Data", [][2]string{
 			{"r", "Refresh from cache"},
@@ -871,6 +1079,8 @@ func (m dashboardModel) renderHelpModal() string {
 			{"i / a", "Enter insert mode"},
 			{"Esc", "Insert -> normal / back"},
 			{"h/l or ←/→", "Pane nav in normal mode"},
+			{"m", "Cycle mode: book/author/genre"},
+			{"1/2/3", "Set mode: book/author/genre"},
 			{"g/w/f/d", "Add result with status"},
 			{"Esc (results)", "Back to search input"},
 		}),
@@ -907,6 +1117,8 @@ func (m dashboardModel) libraryHelp() string {
 		return renderHelpBar([][2]string{
 			{"↵", "search"},
 			{"i/a", "insert"},
+			{"m", "mode"},
+			{"1/2/3", "book/author/genre"},
 			{"h/l", "pane"},
 			{"Esc", "back"},
 			{"?", "help"},
@@ -918,6 +1130,7 @@ func (m dashboardModel) libraryHelp() string {
 			{"w", "want"},
 			{"f", "finished"},
 			{"d", "dnf"},
+			{"z", "density"},
 			{"h/l", "pane"},
 			{"Esc", "back"},
 			{"?", "help"},
@@ -927,12 +1140,14 @@ func (m dashboardModel) libraryHelp() string {
 			{"h/l", "pane"},
 			{"/", "search"},
 			{"↵", "toggle read/oku"},
+			{"+/-", "page"},
 			{"u", "update"},
 			{"g", "reading"},
 			{"w", "want"},
 			{"f", "finished"},
 			{"d", "dnf"},
 			{"x", "remove"},
+			{"z", "density"},
 			{"r", "refresh"},
 			{"s", "sync"},
 			{"?", "help"},
@@ -963,7 +1178,8 @@ func (m *dashboardModel) refreshListItems() {
 		items := make([]list.Item, 0, len(books))
 		for _, b := range books {
 			items = append(items, userBookItem{
-				book: b,
+				book:    b,
+				density: m.density,
 			})
 		}
 		return items
@@ -1027,6 +1243,9 @@ func (m dashboardModel) changeSelectedSearchStatus(status model.Status) (tea.Mod
 
 func loadLibraryCmd(a *app.App, refresh bool) tea.Cmd {
 	return func() tea.Msg {
+		if a == nil {
+			return libraryLoadedMsg{err: fmt.Errorf("dashboard app is not initialized")}
+		}
 		reading, err := a.ListBooks(ctx(), model.StatusCurrentlyReading, refresh)
 		if err != nil {
 			return libraryLoadedMsg{err: err}
@@ -1042,12 +1261,13 @@ func loadLibraryCmd(a *app.App, refresh bool) tea.Cmd {
 	}
 }
 
-func searchCmd(a *app.App, query string) tea.Cmd {
+func searchCmd(a *app.App, query string, mode model.SearchMode) tea.Cmd {
 	return func() tea.Msg {
-		results, err := a.SearchBooks(ctx(), query, 10)
+		results, err := a.SearchBooks(ctx(), query, 10, mode)
 		return searchLoadedMsg{
 			results: results,
 			query:   query,
+			mode:    mode,
 			err:     err,
 		}
 	}
@@ -1065,6 +1285,30 @@ func updateProgressCmd(a *app.App, bookID int, rawPage string) tea.Cmd {
 		}
 		return opDoneMsg{
 			info:      fmt.Sprintf("Progress updated to page %d", newPage),
+			reload:    true,
+			markDirty: true,
+		}
+	}
+}
+
+func quickProgressCmd(a *app.App, bookID int, delta int) tea.Cmd {
+	return func() tea.Msg {
+		if delta == 0 {
+			return opDoneMsg{}
+		}
+		newPage, err := a.UpdateProgress(ctx(), bookID, model.PageUpdate{
+			Delta:    delta,
+			Relative: true,
+		})
+		if err != nil {
+			return opDoneMsg{err: err}
+		}
+		sign := ""
+		if delta > 0 {
+			sign = "+"
+		}
+		return opDoneMsg{
+			info:      fmt.Sprintf("Progress %s%d → page %d", sign, delta, newPage),
 			reload:    true,
 			markDirty: true,
 		}
