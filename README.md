@@ -1,5 +1,7 @@
 # Oku
 
+[![Contributors](https://img.shields.io/github/contributors/Kameleon21/oku)](https://github.com/Kameleon21/oku/graphs/contributors)
+
 Terminal companion for [Hardcover](https://hardcover.app): browse your shelves, search books, and update progress without leaving the terminal.
 
 ## What You Get
@@ -160,3 +162,7 @@ default_list = "reading"
 go test ./...
 go build ./cmd/oku
 ```
+
+## Contributors
+
+[![Contributors](https://contrib.rocks/image?repo=Kameleon21/oku)](https://github.com/Kameleon21/oku/graphs/contributors)
