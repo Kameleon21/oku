@@ -4,6 +4,8 @@
 
 Terminal companion for [Hardcover](https://hardcover.app): browse your shelves, search books, and update progress without leaving the terminal.
 
+![Oku demo flow](./oku-demo.gif)
+
 ## What You Get
 
 - CLI for scripting and quick actions
