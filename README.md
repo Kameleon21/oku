@@ -21,6 +21,18 @@ Terminal companion for [Hardcover](https://hardcover.app): browse your shelves, 
 - Hardcover API token
 - Keychain support (recommended) or `HARDCOVER_TOKEN` env var
 
+## Install
+
+```bash
+go install github.com/Kameleon21/oku/cmd/oku@latest
+```
+
+If you are installing from an untagged branch:
+
+```bash
+go install github.com/Kameleon21/oku/cmd/oku@main
+```
+
 ## Quick Start
 
 ```bash
