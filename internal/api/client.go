@@ -65,10 +65,11 @@ func NewClient(token string) *Client {
 }
 
 // normalizeToken ensures the token carries the "Bearer " prefix required by the API.
+// It strips any existing bearer prefix (case-insensitive) before re-adding the canonical form.
 func normalizeToken(token string) string {
 	const prefix = "Bearer "
-	if strings.HasPrefix(token, prefix) {
-		return token
+	if strings.HasPrefix(strings.ToLower(token), "bearer ") {
+		return prefix + token[len("bearer "):]
 	}
 	return prefix + token
 }

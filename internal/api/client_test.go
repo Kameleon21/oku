@@ -19,12 +19,22 @@ func TestNormalizeToken(t *testing.T) {
 			want:  "Bearer abc123",
 		},
 		{
-			name:  "lowercase bearer is not recognised",
+			name:  "lowercase bearer is normalised",
 			input: "bearer abc123",
-			want:  "Bearer bearer abc123",
+			want:  "Bearer abc123",
 		},
 		{
-			name:  "Bearer without space is not recognised",
+			name:  "uppercase BEARER is normalised",
+			input: "BEARER abc123",
+			want:  "Bearer abc123",
+		},
+		{
+			name:  "mixed case Bearer is normalised",
+			input: "bEaReR abc123",
+			want:  "Bearer abc123",
+		},
+		{
+			name:  "Bearer without space is treated as raw token",
 			input: "BearerNoSpace",
 			want:  "Bearer BearerNoSpace",
 		},
