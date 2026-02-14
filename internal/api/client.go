@@ -55,12 +55,23 @@ func IsNetworkError(err error) bool {
 }
 
 // NewClient creates a new Hardcover API client with the given auth token.
+// The token is normalised to include a "Bearer " prefix if missing.
 func NewClient(token string) *Client {
 	httpClient := &http.Client{Timeout: requestTimeout}
 	return &Client{
 		gql:   graphql.NewClient(endpoint, graphql.WithHTTPClient(httpClient)),
-		token: token,
+		token: normalizeToken(token),
 	}
+}
+
+// normalizeToken ensures the token carries the "Bearer " prefix required by the API.
+// It strips any existing bearer prefix (case-insensitive) before re-adding the canonical form.
+func normalizeToken(token string) string {
+	const prefix = "Bearer "
+	if strings.HasPrefix(strings.ToLower(token), "bearer ") {
+		return prefix + token[len("bearer "):]
+	}
+	return prefix + token
 }
 
 // do executes a GraphQL request with auth header and rate limiting.
