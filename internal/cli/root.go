@@ -13,8 +13,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var jsonOutput bool
-var outputView string
+var (
+	jsonOutput bool
+	outputView string
+)
 
 func newRootCmd(version string) *cobra.Command {
 	cmd := &cobra.Command{
@@ -53,6 +55,10 @@ func newRootCmd(version string) *cobra.Command {
 	cmd.AddCommand(newUpdateCmd())
 	cmd.AddCommand(newStatusCmd())
 	cmd.AddCommand(newSyncCmd())
+
+	// Local-only commands (no auth required).
+	cmd.AddCommand(newTimerCmd())
+	cmd.AddCommand(newStreakCmd())
 
 	// Convenience shortcuts.
 	cmd.AddCommand(newShortcutCmd("reading", "List currently reading books", 2))
@@ -99,6 +105,25 @@ func initApp() (*app.App, error) {
 
 	client := api.NewClient(token)
 	return app.New(client, db, cfg), nil
+}
+
+// initLocalApp creates an App with only the local store (no auth/API needed).
+func initLocalApp() (*app.App, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, fmt.Errorf("load config: %w", err)
+	}
+
+	if err := config.EnsureDataDir(); err != nil {
+		return nil, fmt.Errorf("create data dir: %w", err)
+	}
+
+	db, err := store.New(config.DBPath())
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+
+	return app.New(nil, db, cfg), nil
 }
 
 // ctx returns a background context.

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Kameleon21/oku/internal/model"
+	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -12,17 +13,19 @@ func runeKey(r rune) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
 }
 
-func TestSearchInputNormalModeUsesVimPaneNavigation(t *testing.T) {
+func TestSearchInputNormalModeNavigation(t *testing.T) {
 	m := newDashboardModel(nil)
-	m.focus = focusSearchInput
+	m.section = sectionSearch
+	m.searchSub = searchSubInput
 	m.searchMode = searchModeNormal
 	m.searchInput.SetValue("dune")
 
-	updated, _ := m.updateLibraryMode(runeKey('h'))
+	// Press 'k' (up) → should go to previous section (sectionOku).
+	updated, _ := m.updateLibraryMode(runeKey('k'))
 	got := updated.(dashboardModel)
 
-	if got.focus != focusOku {
-		t.Fatalf("focus after h = %v, want %v", got.focus, focusOku)
+	if got.section != sectionOku {
+		t.Fatalf("section after k = %v, want %v", got.section, sectionOku)
 	}
 	if got.searchInput.Value() != "dune" {
 		t.Fatalf("search input changed in normal mode, got %q", got.searchInput.Value())
@@ -50,14 +53,15 @@ func TestLoadLibraryCmdWithNilAppReturnsError(t *testing.T) {
 
 func TestSearchInputInsertModeTypingAndEsc(t *testing.T) {
 	m := newDashboardModel(nil)
-	m.focus = focusSearchInput
+	m.section = sectionSearch
+	m.searchSub = searchSubInput
 	m.enterSearchInsertMode()
 
 	updated, _ := m.updateLibraryMode(runeKey('h'))
 	got := updated.(dashboardModel)
 
-	if got.focus != focusSearchInput {
-		t.Fatalf("focus after typing in insert mode = %v, want %v", got.focus, focusSearchInput)
+	if got.section != sectionSearch {
+		t.Fatalf("section after typing in insert mode = %v, want %v", got.section, sectionSearch)
 	}
 	if got.searchInput.Value() != "h" {
 		t.Fatalf("search input value = %q, want %q", got.searchInput.Value(), "h")
@@ -71,8 +75,38 @@ func TestSearchInputInsertModeTypingAndEsc(t *testing.T) {
 	if got.searchMode != searchModeNormal {
 		t.Fatalf("search mode after esc = %v, want normal", got.searchMode)
 	}
-	if got.focus != focusSearchInput {
-		t.Fatalf("focus after esc = %v, want %v", got.focus, focusSearchInput)
+	if got.section != sectionSearch {
+		t.Fatalf("section after esc = %v, want %v", got.section, sectionSearch)
+	}
+}
+
+func TestLibrarySectionVimNavigation(t *testing.T) {
+	m := newDashboardModel(nil)
+	m.section = sectionReading
+
+	updated, _ := m.updateLibraryMode(runeKey('l'))
+	got := updated.(dashboardModel)
+	if got.section != sectionOku {
+		t.Fatalf("section after l = %v, want %v", got.section, sectionOku)
+	}
+
+	updated, _ = got.updateLibraryMode(runeKey('h'))
+	got = updated.(dashboardModel)
+	if got.section != sectionReading {
+		t.Fatalf("section after h = %v, want %v", got.section, sectionReading)
+	}
+}
+
+func TestSearchInputNormalModeEscGoesBack(t *testing.T) {
+	m := newDashboardModel(nil)
+	m.section = sectionSearch
+	m.searchSub = searchSubInput
+	m.searchMode = searchModeNormal
+
+	updated, _ := m.updateLibraryMode(tea.KeyMsg{Type: tea.KeyEsc})
+	got := updated.(dashboardModel)
+	if got.section != sectionOku {
+		t.Fatalf("section after Esc = %v, want %v", got.section, sectionOku)
 	}
 }
 
@@ -121,7 +155,8 @@ func TestSearchLoadedMsgTransitionsToResults(t *testing.T) {
 	m := newDashboardModel(nil)
 	m.loading = true
 	m.searchLoading = true
-	m.focus = focusSearchInput
+	m.section = sectionSearch
+	m.searchSub = searchSubInput
 
 	updated, _ := m.updateLibraryMode(searchLoadedMsg{
 		results: []model.SearchResult{{ID: 1, Title: "Dune"}},
@@ -133,8 +168,8 @@ func TestSearchLoadedMsgTransitionsToResults(t *testing.T) {
 	if got.loading || got.searchLoading {
 		t.Fatalf("loading flags after response = loading:%v searchLoading:%v, want false/false", got.loading, got.searchLoading)
 	}
-	if got.focus != focusSearchResults {
-		t.Fatalf("focus = %v, want %v", got.focus, focusSearchResults)
+	if got.searchSub != searchSubResults {
+		t.Fatalf("searchSub = %v, want %v", got.searchSub, searchSubResults)
 	}
 	if got.lastQuery != "dune" {
 		t.Fatalf("lastQuery = %q, want dune", got.lastQuery)
@@ -147,5 +182,91 @@ func TestSearchLoadedMsgTransitionsToResults(t *testing.T) {
 	}
 	if !strings.Contains(got.infoMsg, "loaded 1 results") {
 		t.Fatalf("info message = %q, expected loaded-count feedback", got.infoMsg)
+	}
+}
+
+func TestSlashSearchPreservesExistingQuery(t *testing.T) {
+	m := newDashboardModel(nil)
+	m.section = sectionReading
+	m.searchInput.SetValue("dune")
+
+	updated, _ := m.updateLibraryMode(runeKey('/'))
+	got := updated.(dashboardModel)
+
+	if got.section != sectionSearch {
+		t.Fatalf("section after / = %v, want %v", got.section, sectionSearch)
+	}
+	if got.searchSub != searchSubInput {
+		t.Fatalf("searchSub after / = %v, want %v", got.searchSub, searchSubInput)
+	}
+	if got.searchInput.Value() != "dune" {
+		t.Fatalf("search query after / = %q, want %q", got.searchInput.Value(), "dune")
+	}
+}
+
+func TestTimerStartOpensBookSelectionFirst(t *testing.T) {
+	m := newDashboardModel(nil)
+	m.section = sectionTimer
+	m.readingBooks = []model.UserBook{
+		{Book: model.Book{ID: 1, Title: "Dune"}},
+		{Book: model.Book{ID: 2, Title: "Foundation"}},
+	}
+
+	updated, cmd := m.updateLibraryMode(runeKey('t'))
+	got := updated.(dashboardModel)
+
+	if cmd != nil {
+		t.Fatal("timer start should open selection first, got immediate command")
+	}
+	if !got.timerSelecting {
+		t.Fatal("timerSelecting = false, want true after pressing t")
+	}
+}
+
+func TestSearchResultsKStaysInResults(t *testing.T) {
+	m := newDashboardModel(nil)
+	m.section = sectionSearch
+	m.searchSub = searchSubResults
+	m.searchMode = searchModeNormal
+	m.searchList.SetItems([]list.Item{
+		searchResultItem{result: model.SearchResult{ID: 1, Title: "Dune"}},
+		searchResultItem{result: model.SearchResult{ID: 2, Title: "Dune Messiah"}},
+	})
+	m.searchList.Select(1)
+
+	updated, _ := m.updateLibraryMode(runeKey('k'))
+	got := updated.(dashboardModel)
+
+	if got.searchSub != searchSubResults {
+		t.Fatalf("searchSub after k = %v, want %v", got.searchSub, searchSubResults)
+	}
+	if got.section != sectionSearch {
+		t.Fatalf("section after k = %v, want %v", got.section, sectionSearch)
+	}
+}
+
+func TestCycleDensityRefreshesSearchResultItems(t *testing.T) {
+	m := newDashboardModel(nil)
+	m.density = densityDefault
+	m.searchBooks = []model.SearchResult{
+		{ID: 1, Title: "Dune", Authors: []string{"Frank Herbert"}, Slug: "dune"},
+	}
+	m.refreshSearchResultItems()
+
+	m.cycleDensity()
+
+	items := m.searchList.Items()
+	if len(items) != 1 {
+		t.Fatalf("search items len = %d, want 1", len(items))
+	}
+	item, ok := items[0].(searchResultItem)
+	if !ok {
+		t.Fatalf("item type = %T, want searchResultItem", items[0])
+	}
+	if item.density != densityVerbose {
+		t.Fatalf("search item density = %v, want %v", item.density, densityVerbose)
+	}
+	if !strings.Contains(item.Description(), "slug:") {
+		t.Fatalf("verbose search description = %q, expected slug details", item.Description())
 	}
 }

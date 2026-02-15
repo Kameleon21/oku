@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/Kameleon21/oku/internal/model"
@@ -179,6 +180,8 @@ func (c *Client) SearchBooks(ctx context.Context, query string, perPage int, mod
 			Authors: doc.AuthorNames,
 			Pages:   int(doc.Pages),
 			Slug:    doc.Slug,
+			Rating:  float64(doc.Rating),
+			Ratings: int(doc.Ratings),
 		}
 		if doc.Image != nil {
 			sr.ImageURL = doc.Image.URL
@@ -187,6 +190,66 @@ func (c *Client) SearchBooks(ctx context.Context, query string, perPage int, mod
 	}
 
 	return results, nil
+}
+
+// GetBookRatingsByIDs fetches rating metadata for a set of book IDs.
+func (c *Client) GetBookRatingsByIDs(ctx context.Context, ids []int) (map[int]model.Book, error) {
+	if len(ids) == 0 {
+		return map[int]model.Book{}, nil
+	}
+
+	seen := make(map[int]struct{}, len(ids))
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		parts = append(parts, strconv.Itoa(id))
+	}
+	if len(parts) == 0 {
+		return map[int]model.Book{}, nil
+	}
+
+	q := fmt.Sprintf(`query {
+  books(where: { id: { _in: [%s] } }) {
+    id
+    rating
+    ratings_count
+    reviews_count
+    users_count
+    users_read_count
+    release_date
+  }
+}`, strings.Join(parts, ","))
+
+	req := graphql.NewRequest(q)
+	var resp struct {
+		Books []APIBook `json:"books"`
+	}
+	if err := c.do(ctx, req, &resp); err != nil {
+		return nil, fmt.Errorf("GetBookRatingsByIDs: %w", err)
+	}
+
+	out := make(map[int]model.Book, len(resp.Books))
+	for _, b := range resp.Books {
+		mb := model.Book{
+			ID:             b.ID,
+			Rating:         b.Rating,
+			RatingsCount:   b.RatingsCount,
+			ReviewsCount:   b.ReviewsCount,
+			UsersCount:     b.UsersCount,
+			UsersReadCount: b.UsersReadCount,
+		}
+		if b.ReleaseDate != nil {
+			mb.ReleaseDate = *b.ReleaseDate
+		}
+		out[b.ID] = mb
+	}
+	return out, nil
 }
 
 type searchQueryConfig struct {
