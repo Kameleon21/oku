@@ -86,6 +86,14 @@ CREATE TABLE IF NOT EXISTS state (
 	key   TEXT PRIMARY KEY,
 	value TEXT NOT NULL DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS reading_sessions (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	book_id    INTEGER DEFAULT 0,
+	started_at TEXT NOT NULL,
+	ended_at   TEXT,
+	notes      TEXT DEFAULT ''
+);
 `
 	if _, err := db.Exec(ddl); err != nil {
 		return err

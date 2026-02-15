@@ -187,4 +187,6 @@ type SearchResult struct {
 	Pages    int
 	Slug     string
 	ImageURL string
+	Rating   float64
+	Ratings  int
 }

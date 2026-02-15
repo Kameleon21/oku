@@ -179,6 +179,8 @@ func (c *Client) SearchBooks(ctx context.Context, query string, perPage int, mod
 			Authors: doc.AuthorNames,
 			Pages:   int(doc.Pages),
 			Slug:    doc.Slug,
+			Rating:  float64(doc.Rating),
+			Ratings: int(doc.Ratings),
 		}
 		if doc.Image != nil {
 			sr.ImageURL = doc.Image.URL

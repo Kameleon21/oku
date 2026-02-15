@@ -20,6 +20,10 @@ var (
 	colorCharcoal  = lipgloss.Color("236") // status bar background
 	colorGreen     = lipgloss.Color("114") // info / success messages
 	colorWarmRed   = lipgloss.Color("167") // error messages
+	colorGitHubG1  = lipgloss.Color("#0e4429")
+	colorGitHubG2  = lipgloss.Color("#006d32")
+	colorGitHubG3  = lipgloss.Color("#26a641")
+	colorGitHubG4  = lipgloss.Color("#39d353")
 )
 
 // ── Panel Styles ────────────────────────────────────────────────────────────
@@ -116,6 +120,51 @@ func miniProgressBar(current, total, width int) string {
 	return strings.Repeat("█", filled) + strings.Repeat("░", empty) +
 		fmt.Sprintf(" %d%%", int(pct*100))
 }
+
+// ── Section Styles ─────────────────────────────────────────────────────────
+
+var (
+	sectionLabelStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(colorMidGray).
+				Padding(0, 0, 0, 1)
+
+	sectionLabelFocusedStyle = lipgloss.NewStyle().
+					Bold(true).
+					Foreground(colorGold).
+					Padding(0, 0, 0, 1)
+
+	sectionCountStyle = lipgloss.NewStyle().
+				Foreground(colorDimGray)
+
+	timerDisplayStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(colorCream)
+
+	timerLabelStyle = lipgloss.NewStyle().
+			Foreground(colorDimGray)
+
+	statsBarFilledStyle = lipgloss.NewStyle().
+				Foreground(colorGitHubG4)
+
+	statsBarEmptyStyle = lipgloss.NewStyle().
+				Foreground(colorDarkGray)
+
+	heatmapEmptyStyle = lipgloss.NewStyle().
+			Foreground(colorDarkGray)
+
+	heatmapLevel1Style = lipgloss.NewStyle().
+				Foreground(colorGitHubG1)
+
+	heatmapLevel2Style = lipgloss.NewStyle().
+				Foreground(colorGitHubG2)
+
+	heatmapLevel3Style = lipgloss.NewStyle().
+				Foreground(colorGitHubG3)
+
+	heatmapLevel4Style = lipgloss.NewStyle().
+				Foreground(colorGitHubG4)
+)
 
 // ── Help Bar (LazyGit-style) ────────────────────────────────────────────────
 

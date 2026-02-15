@@ -91,6 +91,8 @@ type TypesenseBookDoc struct {
 	AuthorNames []string        `json:"author_names"`
 	Pages       FlexibleInt     `json:"pages"`
 	Slug        string          `json:"slug"`
+	Rating      FlexibleFloat   `json:"rating"`
+	Ratings     FlexibleInt     `json:"ratings_count"`
 	Image       *TypesenseImage `json:"image"`
 }
 
@@ -133,6 +135,43 @@ func (v *FlexibleInt) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("parse number %q: %w", s, err)
 	}
 	*v = FlexibleInt(n)
+	return nil
+}
+
+// FlexibleFloat handles APIs that may return a number or a quoted number.
+type FlexibleFloat float64
+
+func (v *FlexibleFloat) UnmarshalJSON(data []byte) error {
+	s := strings.TrimSpace(string(data))
+	if s == "" || s == "null" {
+		*v = 0
+		return nil
+	}
+
+	// Quoted number: "4.23"
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		unquoted, err := strconv.Unquote(s)
+		if err != nil {
+			return fmt.Errorf("unquote float %q: %w", s, err)
+		}
+		if unquoted == "" {
+			*v = 0
+			return nil
+		}
+		n, err := strconv.ParseFloat(unquoted, 64)
+		if err != nil {
+			return fmt.Errorf("parse quoted float %q: %w", unquoted, err)
+		}
+		*v = FlexibleFloat(n)
+		return nil
+	}
+
+	// Raw number: 4.23
+	n, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return fmt.Errorf("parse float %q: %w", s, err)
+	}
+	*v = FlexibleFloat(n)
 	return nil
 }
 
