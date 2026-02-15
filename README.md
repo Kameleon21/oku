@@ -31,6 +31,12 @@ go install github.com/Kameleon21/oku/cmd/oku@develop
 
 ## Getting Started
 
+Oku connects to [Hardcover](https://hardcover.app), a book tracking platform. You'll need a free account and an API token.
+
+1. Create a free account at [hardcover.app](https://hardcover.app)
+2. Go to [Account Settings](https://hardcover.app/account/api) to find your API token
+3. Run the setup:
+
 ```bash
 # Save your Hardcover API token
 oku auth set-token
