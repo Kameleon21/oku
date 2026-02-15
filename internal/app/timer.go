@@ -112,7 +112,7 @@ func (a *App) TimerList(limit int) ([]model.ReadingSession, error) {
 func (a *App) GetStreak() (*model.StreakInfo, error) {
 	// Get all daily activity from the beginning of time.
 	from := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
-	to := time.Now()
+	to := time.Now().UTC()
 	activities, err := a.Store.GetDailyActivity(from, to)
 	if err != nil {
 		return nil, err
