@@ -122,7 +122,7 @@ func (i searchResultItem) Description() string {
 	if author == "" {
 		author = "Unknown author"
 	}
-	rating := ""
+	rating := "★ n/a"
 	if i.result.Rating > 0 {
 		rating = fmt.Sprintf("★ %.2f", i.result.Rating)
 		if i.result.Ratings > 0 {
@@ -134,24 +134,18 @@ func (i searchResultItem) Description() string {
 	case densityCompact:
 		return author
 	case densityDefault:
-		if rating != "" {
-			return rating + " · " + author
-		}
-		return author
+		return rating + " · " + author
 	case densityVerbose:
-		parts := make([]string, 0, 5)
-		if rating != "" {
-			parts = append(parts, rating)
-		}
-		parts = append(parts, author)
+		metaParts := make([]string, 0, 3)
 		if i.result.Pages > 0 {
-			parts = append(parts, fmt.Sprintf("%d pages", i.result.Pages))
+			metaParts = append(metaParts, fmt.Sprintf("%d pages", i.result.Pages))
 		}
-		parts = append(parts, fmt.Sprintf("ID: %d", i.result.ID))
+		metaParts = append(metaParts, fmt.Sprintf("ID: %d", i.result.ID))
 		if i.result.Slug != "" {
-			parts = append(parts, "slug:"+i.result.Slug)
+			metaParts = append(metaParts, "slug:"+i.result.Slug)
 		}
-		return strings.Join(parts, " · ")
+		meta := strings.Join(metaParts, " · ")
+		return rating + "\n" + author + "\n" + meta
 	default:
 		return fmt.Sprintf("%s | ID: %d", author, i.result.ID)
 	}
