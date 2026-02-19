@@ -1,0 +1,48 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/oku
+    binary: oku
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+homebrew_casks:
+  - repository:
+      owner: Kameleon21
+      name: homebrew-oku
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    commit_author:
+      name: Kameleon21
+      email: kamilrogozinski29@gmail.com
+    directory: Casks
+    homepage: "https://github.com/Kameleon21/oku"
+    description: "A terminal companion for Hardcover — track your reading from the CLI"
+    skip_upload: auto
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"

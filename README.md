@@ -17,7 +17,17 @@ Terminal companion for [Hardcover](https://hardcover.app): browse your shelves, 
 
 ## Install
 
-Stable release:
+macOS (Homebrew cask):
+
+```bash
+brew tap Kameleon21/oku
+brew install --cask oku
+```
+
+Linux / Windows:
+
+- Download a prebuilt binary from [GitHub Releases](https://github.com/Kameleon21/oku/releases/latest).
+- Or install from source with Go:
 
 ```bash
 go install github.com/Kameleon21/oku/cmd/oku@latest
@@ -72,15 +82,15 @@ Use `--json` for JSON output and `--view compact|default|verbose` to control det
 
 Oku uses vim-style keybindings throughout. Arrow keys also work.
 
-| Key | Action |
-|-----|--------|
-| `h/l` | Move between panes |
-| `j/k` | Navigate lists |
-| `/` | Search |
+| Key     | Action                 |
+| ------- | ---------------------- |
+| `h/l`   | Move between panes     |
+| `j/k`   | Navigate lists         |
+| `/`     | Search                 |
 | `Enter` | Select / toggle status |
-| `+/-` | Quick page update |
-| `?` | Help |
-| `q` | Quit |
+| `+/-`   | Quick page update      |
+| `?`     | Help                   |
+| `q`     | Quit                   |
 
 ## Config
 
