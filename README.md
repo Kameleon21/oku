@@ -82,15 +82,15 @@ Use `--json` for JSON output and `--view compact|default|verbose` to control det
 
 Oku uses vim-style keybindings throughout. Arrow keys also work.
 
-| Key | Action |
-|-----|--------|
-| `h/l` | Move between panes |
-| `j/k` | Navigate lists |
-| `/` | Search |
+| Key     | Action                 |
+| ------- | ---------------------- |
+| `h/l`   | Move between panes     |
+| `j/k`   | Navigate lists         |
+| `/`     | Search                 |
 | `Enter` | Select / toggle status |
-| `+/-` | Quick page update |
-| `?` | Help |
-| `q` | Quit |
+| `+/-`   | Quick page update      |
+| `?`     | Help                   |
+| `q`     | Quit                   |
 
 ## Config
 
