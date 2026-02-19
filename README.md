@@ -17,14 +17,17 @@ Terminal companion for [Hardcover](https://hardcover.app): browse your shelves, 
 
 ## Install
 
-Stable release:
+macOS (Homebrew cask):
 
 ```bash
 brew tap Kameleon21/oku
 brew install --cask oku
 ```
 
-Go install (alternative):
+Linux / Windows:
+
+- Download a prebuilt binary from [GitHub Releases](https://github.com/Kameleon21/oku/releases/latest).
+- Or install from source with Go:
 
 ```bash
 go install github.com/Kameleon21/oku/cmd/oku@latest
