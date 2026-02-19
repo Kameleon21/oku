@@ -20,6 +20,13 @@ Terminal companion for [Hardcover](https://hardcover.app): browse your shelves, 
 Stable release:
 
 ```bash
+brew tap Kameleon21/oku
+brew install --cask oku
+```
+
+Go install (alternative):
+
+```bash
 go install github.com/Kameleon21/oku/cmd/oku@latest
 ```
 
