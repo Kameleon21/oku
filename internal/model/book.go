@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -103,10 +104,57 @@ type UserBook struct {
 	ID            int
 	BookID        int
 	StatusID      Status
+	Rating        float64
+	Review        string
+	ReviewedAt    *time.Time
 	CurrentPage   int
 	Book          Book
 	UserBookReads []UserBookRead
 	UpdatedAt     time.Time
+}
+
+// ValidateRating validates a user rating value.
+// Allowed values are 0 (unrated) or 0.5 increments from 0.5 to 5.0.
+func ValidateRating(r float64) error {
+	if r == 0 {
+		return nil
+	}
+	if r < 0.5 || r > 5.0 {
+		return fmt.Errorf("rating must be 0 or between 0.5 and 5.0")
+	}
+	scaled := r * 2
+	if math.Abs(scaled-math.Round(scaled)) > 1e-9 {
+		return fmt.Errorf("rating must be in 0.5 increments")
+	}
+	return nil
+}
+
+// StarString renders a 5-slot rating string.
+func StarString(rating float64) string {
+	if rating <= 0 {
+		return "☆☆☆☆☆"
+	}
+	if rating > 5 {
+		rating = 5
+	}
+
+	full := int(math.Floor(rating))
+	half := 0
+	if rating-float64(full) >= 0.5 {
+		half = 1
+	}
+	empty := 5 - full - half
+	if empty < 0 {
+		empty = 0
+	}
+
+	var b strings.Builder
+	b.WriteString(strings.Repeat("★", full))
+	if half == 1 {
+		b.WriteString("½")
+	}
+	b.WriteString(strings.Repeat("☆", empty))
+	return b.String()
 }
 
 // Progress returns current page / total pages as a string.

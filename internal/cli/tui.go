@@ -10,6 +10,7 @@ import (
 	"github.com/Kameleon21/oku/internal/model"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -23,6 +24,7 @@ type viewMode int
 const (
 	modeLibrary viewMode = iota
 	modeUpdatePage
+	modeReviewRating
 )
 
 const (
@@ -55,6 +57,13 @@ type searchInputMode int
 const (
 	searchModeNormal searchInputMode = iota
 	searchModeInsert
+)
+
+type dashboardReviewFocus int
+
+const (
+	dashboardReviewFocusRating dashboardReviewFocus = iota
+	dashboardReviewFocusText
 )
 
 type sectionDef struct {
@@ -210,20 +219,25 @@ type dashboardModel struct {
 	width  int
 	height int
 
-	readingList list.Model
-	okuList     list.Model
-	searchList  list.Model
-	searchInput textinput.Model
-	pageInput   textinput.Model
-	spin        spinner.Model
+	readingList       list.Model
+	okuList           list.Model
+	searchList        list.Model
+	searchInput       textinput.Model
+	pageInput         textinput.Model
+	reviewRatingInput textinput.Model
+	reviewTextInput   textarea.Model
+	spin              spinner.Model
 
 	readingBooks []model.UserBook
 	okuBooks     []model.UserBook
 	searchBooks  []model.SearchResult
 
-	pendingBookID  int
-	dirty          bool
-	lastMutationAt time.Time
+	pendingBookID    int
+	reviewBook       *model.UserBook
+	reviewFocus      dashboardReviewFocus
+	reviewSubmitting bool
+	dirty            bool
+	lastMutationAt   time.Time
 
 	lastQuery string
 	infoMsg   string
@@ -315,24 +329,39 @@ func newDashboardModel(a *app.App) dashboardModel {
 	pageIn.PromptStyle = lipgloss.NewStyle().Foreground(colorGold).Bold(true)
 	pageIn.TextStyle = lipgloss.NewStyle().Foreground(colorLightGray)
 
+	reviewRatingIn := textinput.New()
+	reviewRatingIn.Placeholder = "4.5"
+	reviewRatingIn.CharLimit = 4
+	reviewRatingIn.Prompt = "Rating: "
+	reviewRatingIn.PromptStyle = lipgloss.NewStyle().Foreground(colorGold).Bold(true)
+	reviewRatingIn.TextStyle = lipgloss.NewStyle().Foreground(colorLightGray)
+
+	reviewTextIn := textarea.New()
+	reviewTextIn.Placeholder = "Write your review..."
+	reviewTextIn.SetWidth(60)
+	reviewTextIn.SetHeight(8)
+	reviewTextIn.ShowLineNumbers = false
+
 	s := spinner.New()
 	s.Spinner = spinner.MiniDot
 	s.Style = lipgloss.NewStyle().Foreground(colorGold)
 
 	return dashboardModel{
-		app:             a,
-		mode:            modeLibrary,
-		section:         sectionReading,
-		searchMode:      searchModeNormal,
-		searchSub:       searchSubInput,
-		searchQueryMode: model.SearchModeBook,
-		density:         currentOutputDensity(),
-		readingList:     newList("Reading"),
-		okuList:         newList("Oku"),
-		searchList:      newList("Search Results"),
-		searchInput:     searchIn,
-		pageInput:       pageIn,
-		spin:            s,
+		app:               a,
+		mode:              modeLibrary,
+		section:           sectionReading,
+		searchMode:        searchModeNormal,
+		searchSub:         searchSubInput,
+		searchQueryMode:   model.SearchModeBook,
+		density:           currentOutputDensity(),
+		readingList:       newList("Reading"),
+		okuList:           newList("Oku"),
+		searchList:        newList("Search Results"),
+		searchInput:       searchIn,
+		pageInput:         pageIn,
+		reviewRatingInput: reviewRatingIn,
+		reviewTextInput:   reviewTextIn,
+		spin:              s,
 	}
 }
 
@@ -354,6 +383,8 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m.mode {
 	case modeUpdatePage:
 		return m.updatePageMode(msg)
+	case modeReviewRating:
+		return m.updateReviewRatingMode(msg)
 	default:
 		return m.updateLibraryMode(msg)
 	}
@@ -605,6 +636,11 @@ func (m dashboardModel) handleLibraryKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.pageInput.SetValue("")
 			m.pageInput.Placeholder = fmt.Sprintf("Update %s", b.Book.Title)
 			m.pageInput.Focus()
+			return m, nil
+		}
+	case "v":
+		if b := m.selectedLibraryBook(); b != nil {
+			m.openReviewRatingModal(*b)
 			return m, nil
 		}
 	case "g":
@@ -893,6 +929,102 @@ func (m dashboardModel) updatePageMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// ── Review/rating mode ─────────────────────────────────────────────────────
+
+func (m dashboardModel) updateReviewRatingMode(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spin, cmd = m.spin.Update(msg)
+		return m, cmd
+	case timerTickMsg:
+		return m, timerTickCmd()
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		m.resize()
+		textareaWidth := max(40, m.width/2)
+		m.reviewTextInput.SetWidth(textareaWidth)
+		return m, nil
+	case backgroundCheckMsg:
+		if m.dirty && !m.loading && time.Since(m.lastMutationAt) >= backgroundSyncWindow {
+			m.loading = true
+			m.dirty = false
+			return m, tea.Batch(loadLibraryCmd(m.app, true), backgroundCheckCmd())
+		}
+		return m, backgroundCheckCmd()
+	case opDoneMsg:
+		m.loading = false
+		m.reviewSubmitting = false
+		if msg.err != nil {
+			m.errMsg = msg.err.Error()
+			m.infoMsg = ""
+			return m, nil
+		}
+
+		m.errMsg = ""
+		m.infoMsg = msg.info
+		if msg.markDirty {
+			m.dirty = true
+			m.lastMutationAt = time.Now()
+		}
+		m.closeReviewRatingModal()
+		if msg.reload {
+			m.loading = true
+			return m, loadLibraryCmd(m.app, false)
+		}
+		return m, nil
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c":
+			return m, tea.Quit
+		case "esc":
+			m.closeReviewRatingModal()
+			m.infoMsg = "Review update cancelled"
+			return m, nil
+		case "tab":
+			if m.reviewFocus == dashboardReviewFocusRating {
+				m.focusReviewTextField()
+			} else {
+				m.focusReviewRatingField()
+			}
+			return m, nil
+		case "shift+tab":
+			if m.reviewFocus == dashboardReviewFocusText {
+				m.focusReviewRatingField()
+			} else {
+				m.focusReviewTextField()
+			}
+			return m, nil
+		case "ctrl+s":
+			if m.reviewSubmitting || m.reviewBook == nil {
+				return m, nil
+			}
+			rating, err := parseReviewRatingInput(m.reviewRatingInput.Value())
+			if err != nil {
+				m.errMsg = err.Error()
+				return m, nil
+			}
+			m.errMsg = ""
+			m.loading = true
+			m.reviewSubmitting = true
+			review := m.reviewTextInput.Value()
+			bookID := m.reviewBook.Book.ID
+			m.infoMsg = reviewSavePendingMessage(review)
+			m.closeReviewRatingModal()
+			return m, submitReviewRatingCmd(m.app, bookID, rating, review)
+		}
+	}
+
+	var cmd tea.Cmd
+	if m.reviewFocus == dashboardReviewFocusRating {
+		m.reviewRatingInput, cmd = m.reviewRatingInput.Update(msg)
+	} else {
+		m.reviewTextInput, cmd = m.reviewTextInput.Update(msg)
+	}
+	return m, cmd
+}
+
 // ── View ───────────────────────────────────────────────────────────────────
 
 func (m dashboardModel) View() string {
@@ -932,6 +1064,9 @@ func (m dashboardModel) View() string {
 		body = statusBar + "\n" + m.renderLayout() + "\n" + m.contextHelpBar()
 	}
 
+	if m.mode == modeReviewRating {
+		return m.overlayModal(m.reviewRatingOverlay())
+	}
 	if m.showHelp {
 		return m.overlayModal(m.renderHelpModal())
 	}
@@ -1305,6 +1440,83 @@ func (m dashboardModel) searchPanelView() string {
 	return m.searchList.View()
 }
 
+func (m *dashboardModel) openReviewRatingModal(book model.UserBook) {
+	b := book
+	m.reviewBook = &b
+	m.mode = modeReviewRating
+	m.showHelp = false
+	m.reviewSubmitting = false
+
+	if b.Rating > 0 {
+		m.reviewRatingInput.SetValue(fmt.Sprintf("%.1f", b.Rating))
+	} else {
+		m.reviewRatingInput.SetValue("")
+	}
+	m.reviewTextInput.SetValue(b.Review)
+	m.focusReviewRatingField()
+}
+
+func (m *dashboardModel) closeReviewRatingModal() {
+	m.mode = modeLibrary
+	m.reviewBook = nil
+	m.reviewSubmitting = false
+	m.reviewRatingInput.Blur()
+	m.reviewTextInput.Blur()
+}
+
+func (m *dashboardModel) focusReviewRatingField() {
+	m.reviewFocus = dashboardReviewFocusRating
+	m.reviewRatingInput.Focus()
+	m.reviewTextInput.Blur()
+}
+
+func (m *dashboardModel) focusReviewTextField() {
+	m.reviewFocus = dashboardReviewFocusText
+	m.reviewRatingInput.Blur()
+	m.reviewTextInput.Focus()
+}
+
+func (m dashboardModel) reviewRatingOverlay() string {
+	if m.reviewBook == nil {
+		return renderModalPanel("Review / Rate Book", "No book selected", 48)
+	}
+
+	rating, err := parseReviewRatingInput(m.reviewRatingInput.Value())
+	ratingLabel := "invalid rating"
+	stars := "☆☆☆☆☆"
+	if err == nil {
+		stars = model.StarString(rating)
+		ratingLabel = fmt.Sprintf("%.1f", rating)
+	}
+
+	var sb strings.Builder
+	sb.WriteString(valueStyle.Render(m.reviewBook.Book.Title))
+	sb.WriteString("\n")
+	sb.WriteString(dimStyleTUI.Render(fallback(m.reviewBook.Book.AuthorString(), "Unknown author")))
+	sb.WriteString("\n\n")
+	sb.WriteString(m.reviewRatingInput.View())
+	sb.WriteString("  ")
+	sb.WriteString(keyStyle.Render(stars))
+	sb.WriteString(" ")
+	sb.WriteString(dimStyleTUI.Render("(" + ratingLabel + ")"))
+	sb.WriteString("\n\n")
+	sb.WriteString(labelStyle.Render("Review"))
+	sb.WriteString("\n")
+	sb.WriteString(m.reviewTextInput.View())
+	sb.WriteString("\n\n")
+	if m.reviewSubmitting {
+		sb.WriteString(dimStyleTUI.Render("Saving..."))
+		sb.WriteString("\n")
+	}
+	sb.WriteString(dimStyleTUI.Render("Tab/Shift+Tab switch fields   Ctrl+S save   Esc cancel"))
+
+	width := max(70, m.width-10)
+	if width > 100 {
+		width = 100
+	}
+	return renderModalPanel("Review / Rate Book", sb.String(), width)
+}
+
 // ── Help ───────────────────────────────────────────────────────────────────
 
 func (m dashboardModel) renderHelpModal() string {
@@ -1332,6 +1544,7 @@ func (m dashboardModel) renderHelpModal() string {
 			{"Enter", "Toggle reading / oku"},
 			{"+ / -", "Quick page update (+/-10)"},
 			{"u", "Update page progress"},
+			{"v", "Review / rate book"},
 			{"g", "Set status: reading"},
 			{"w", "Set status: want to read"},
 			{"f", "Set status: finished"},
@@ -1363,7 +1576,7 @@ func (m dashboardModel) renderHelpModal() string {
 	)
 
 	footer := "\n" + dimStyleTUI.Render("Press ? or Esc to close")
-	return helpModalStyle.Render(body + footer)
+	return renderModalPanel("Help", body+footer, 50)
 }
 
 func (m dashboardModel) overlayModal(modal string) string {
@@ -1394,6 +1607,7 @@ func (m dashboardModel) contextHelpBar() string {
 			{"↵", "toggle"},
 			{"+/-", "page"},
 			{"u", "update"},
+			{"v", "review/rate"},
 			{"g/w/f/d", "status"},
 			{"z", "density"},
 			{"r", "refresh"},
@@ -1977,6 +2191,30 @@ func updateProgressCmd(a *app.App, bookID int, rawPage string) tea.Cmd {
 			markDirty: true,
 		}
 	}
+}
+
+func submitReviewRatingCmd(a *app.App, bookID int, rating float64, review string) tea.Cmd {
+	return func() tea.Msg {
+		if err := a.ReviewBook(ctx(), bookID, rating, review); err != nil {
+			return opDoneMsg{err: err}
+		}
+		info := fmt.Sprintf("Updated review and rating (%s)", model.StarString(rating))
+		if strings.TrimSpace(review) == "" {
+			info = fmt.Sprintf("Updated rating (%s)", model.StarString(rating))
+		}
+		return opDoneMsg{
+			info:      info,
+			reload:    true,
+			markDirty: true,
+		}
+	}
+}
+
+func reviewSavePendingMessage(review string) string {
+	if strings.TrimSpace(review) == "" {
+		return "Saving rating..."
+	}
+	return "Saving review..."
 }
 
 func quickProgressCmd(a *app.App, bookID int, delta int) tea.Cmd {

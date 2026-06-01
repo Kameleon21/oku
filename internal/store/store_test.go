@@ -56,11 +56,15 @@ func TestStateRoundTrip(t *testing.T) {
 
 func TestUpsertAndListBooks(t *testing.T) {
 	s := testStore(t)
+	reviewedAt := time.Now().UTC().Truncate(time.Second)
 
 	ub := model.UserBook{
-		ID:       100,
-		BookID:   1,
-		StatusID: model.StatusCurrentlyReading,
+		ID:         100,
+		BookID:     1,
+		StatusID:   model.StatusCurrentlyReading,
+		Rating:     4.5,
+		Review:     "Strong recommendation",
+		ReviewedAt: &reviewedAt,
 		Book: model.Book{
 			ID:      1,
 			Title:   "Project Hail Mary",
@@ -87,6 +91,15 @@ func TestUpsertAndListBooks(t *testing.T) {
 	}
 	if len(books[0].Book.Authors) != 1 || books[0].Book.Authors[0] != "Andy Weir" {
 		t.Fatalf("unexpected authors: %v", books[0].Book.Authors)
+	}
+	if books[0].Rating != 4.5 {
+		t.Fatalf("expected rating 4.5, got %v", books[0].Rating)
+	}
+	if books[0].Review != "Strong recommendation" {
+		t.Fatalf("unexpected review: %q", books[0].Review)
+	}
+	if books[0].ReviewedAt == nil {
+		t.Fatal("expected reviewed_at to round-trip")
 	}
 
 	// Get by book ID.

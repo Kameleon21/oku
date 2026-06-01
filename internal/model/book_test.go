@@ -6,11 +6,11 @@ import (
 
 func TestParsePage(t *testing.T) {
 	tests := []struct {
-		input    string
-		wantAbs  int
-		wantDel  int
-		wantRel  bool
-		wantErr  bool
+		input   string
+		wantAbs int
+		wantDel int
+		wantRel bool
+		wantErr bool
 	}{
 		{"123", 123, 0, false, false},
 		{"0", 0, 0, false, false},
@@ -128,6 +128,55 @@ func TestStatusString(t *testing.T) {
 		t.Run(tt.want, func(t *testing.T) {
 			if got := tt.status.String(); got != tt.want {
 				t.Errorf("Status(%d).String() = %q, want %q", tt.status, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateRating(t *testing.T) {
+	tests := []struct {
+		name    string
+		rating  float64
+		wantErr bool
+	}{
+		{name: "zero unrated", rating: 0, wantErr: false},
+		{name: "half", rating: 0.5, wantErr: false},
+		{name: "whole", rating: 4, wantErr: false},
+		{name: "max", rating: 5, wantErr: false},
+		{name: "quarter invalid", rating: 4.25, wantErr: true},
+		{name: "too high", rating: 5.5, wantErr: true},
+		{name: "negative", rating: -1, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateRating(tt.rating)
+			if tt.wantErr && err == nil {
+				t.Fatalf("ValidateRating(%v) expected error", tt.rating)
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("ValidateRating(%v) unexpected error: %v", tt.rating, err)
+			}
+		})
+	}
+}
+
+func TestStarString(t *testing.T) {
+	tests := []struct {
+		rating float64
+		want   string
+	}{
+		{rating: 0, want: "☆☆☆☆☆"},
+		{rating: 4, want: "★★★★☆"},
+		{rating: 4.5, want: "★★★★½"},
+		{rating: 5, want: "★★★★★"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			got := StarString(tt.rating)
+			if got != tt.want {
+				t.Fatalf("StarString(%v) = %q, want %q", tt.rating, got, tt.want)
 			}
 		})
 	}

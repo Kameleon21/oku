@@ -70,6 +70,9 @@ CREATE TABLE IF NOT EXISTS user_books (
 	id         INTEGER PRIMARY KEY,
 	book_id    INTEGER NOT NULL,
 	status_id  INTEGER NOT NULL DEFAULT 0,
+	rating     REAL    NOT NULL DEFAULT 0,
+	review     TEXT    NOT NULL DEFAULT '',
+	reviewed_at TEXT,
 	updated_at TEXT    NOT NULL DEFAULT '',
 	UNIQUE(book_id)
 );
@@ -114,6 +117,18 @@ CREATE TABLE IF NOT EXISTS reading_sessions (
 		{"featured_series_position", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if err := ensureColumn(db, "books", col.name, col.def); err != nil {
+			return err
+		}
+	}
+	for _, col := range []struct {
+		name string
+		def  string
+	}{
+		{"rating", "REAL NOT NULL DEFAULT 0"},
+		{"review", "TEXT NOT NULL DEFAULT ''"},
+		{"reviewed_at", "TEXT"},
+	} {
+		if err := ensureColumn(db, "user_books", col.name, col.def); err != nil {
 			return err
 		}
 	}

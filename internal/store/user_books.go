@@ -16,11 +16,25 @@ func (s *Store) UpsertUserBook(ub model.UserBook) error {
 	}
 
 	const query = `
-INSERT OR REPLACE INTO user_books (id, book_id, status_id, updated_at)
-VALUES (?, ?, ?, ?)
+INSERT OR REPLACE INTO user_books (id, book_id, status_id, rating, review, reviewed_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
 `
 	updatedAt := ub.UpdatedAt.UTC().Format(time.RFC3339)
-	_, err := s.db.Exec(query, ub.ID, ub.BookID, int(ub.StatusID), updatedAt)
+	var reviewedAt *string
+	if ub.ReviewedAt != nil {
+		formatted := ub.ReviewedAt.UTC().Format(time.RFC3339)
+		reviewedAt = &formatted
+	}
+	_, err := s.db.Exec(
+		query,
+		ub.ID,
+		ub.BookID,
+		int(ub.StatusID),
+		ub.Rating,
+		ub.Review,
+		reviewedAt,
+		updatedAt,
+	)
 	if err != nil {
 		return fmt.Errorf("upsert user_book %d: %w", ub.ID, err)
 	}
@@ -31,10 +45,10 @@ VALUES (?, ?, ?, ?)
 // with the books table to populate the embedded Book struct.
 func (s *Store) ListUserBooks(status model.Status) ([]model.UserBook, error) {
 	const query = `
-SELECT ub.id, ub.book_id, ub.status_id, ub.updated_at,
-       b.id, b.title, b.authors, b.pages, b.slug, b.image_url,
-       b.rating, b.ratings_count, b.reviews_count, b.users_count, b.users_read_count,
-       b.release_date, b.featured_series, b.featured_series_position
+	SELECT ub.id, ub.book_id, ub.status_id, ub.updated_at, ub.rating, ub.review, ub.reviewed_at,
+	       b.id, b.title, b.authors, b.pages, b.slug, b.image_url,
+	       b.rating, b.ratings_count, b.reviews_count, b.users_count, b.users_read_count,
+	       b.release_date, b.featured_series, b.featured_series_position
 FROM user_books ub
 JOIN books b ON b.id = ub.book_id
 WHERE ub.status_id = ?
@@ -50,9 +64,10 @@ ORDER BY ub.updated_at DESC
 	for rows.Next() {
 		var ub model.UserBook
 		var updatedAt string
+		var reviewedAt sql.NullString
 		var authors string
 		err := rows.Scan(
-			&ub.ID, &ub.BookID, &ub.StatusID, &updatedAt,
+			&ub.ID, &ub.BookID, &ub.StatusID, &updatedAt, &ub.Rating, &ub.Review, &reviewedAt,
 			&ub.Book.ID, &ub.Book.Title, &authors, &ub.Book.Pages, &ub.Book.Slug, &ub.Book.ImageURL,
 			&ub.Book.Rating, &ub.Book.RatingsCount, &ub.Book.ReviewsCount, &ub.Book.UsersCount, &ub.Book.UsersReadCount,
 			&ub.Book.ReleaseDate, &ub.Book.FeaturedSeries, &ub.Book.FeaturedSeriesPosition,
@@ -63,6 +78,11 @@ ORDER BY ub.updated_at DESC
 		ub.Book.Authors = splitAuthors(authors)
 		if t, err := time.Parse(time.RFC3339, updatedAt); err == nil {
 			ub.UpdatedAt = t
+		}
+		if reviewedAt.Valid {
+			if t, err := time.Parse(time.RFC3339, reviewedAt.String); err == nil {
+				ub.ReviewedAt = &t
+			}
 		}
 		// Attach latest reading progress.
 		if read, err := s.GetLatestRead(ub.ID); err == nil && read != nil {
@@ -77,19 +97,20 @@ ORDER BY ub.updated_at DESC
 // with the books table. Returns nil, nil when not found.
 func (s *Store) GetUserBookByBookID(bookID int) (*model.UserBook, error) {
 	const query = `
-SELECT ub.id, ub.book_id, ub.status_id, ub.updated_at,
-       b.id, b.title, b.authors, b.pages, b.slug, b.image_url,
-       b.rating, b.ratings_count, b.reviews_count, b.users_count, b.users_read_count,
-       b.release_date, b.featured_series, b.featured_series_position
+	SELECT ub.id, ub.book_id, ub.status_id, ub.updated_at, ub.rating, ub.review, ub.reviewed_at,
+	       b.id, b.title, b.authors, b.pages, b.slug, b.image_url,
+	       b.rating, b.ratings_count, b.reviews_count, b.users_count, b.users_read_count,
+	       b.release_date, b.featured_series, b.featured_series_position
 FROM user_books ub
 JOIN books b ON b.id = ub.book_id
 WHERE ub.book_id = ?
 `
 	var ub model.UserBook
 	var updatedAt string
+	var reviewedAt sql.NullString
 	var authors string
 	err := s.db.QueryRow(query, bookID).Scan(
-		&ub.ID, &ub.BookID, &ub.StatusID, &updatedAt,
+		&ub.ID, &ub.BookID, &ub.StatusID, &updatedAt, &ub.Rating, &ub.Review, &reviewedAt,
 		&ub.Book.ID, &ub.Book.Title, &authors, &ub.Book.Pages, &ub.Book.Slug, &ub.Book.ImageURL,
 		&ub.Book.Rating, &ub.Book.RatingsCount, &ub.Book.ReviewsCount, &ub.Book.UsersCount, &ub.Book.UsersReadCount,
 		&ub.Book.ReleaseDate, &ub.Book.FeaturedSeries, &ub.Book.FeaturedSeriesPosition,
@@ -103,6 +124,11 @@ WHERE ub.book_id = ?
 	ub.Book.Authors = splitAuthors(authors)
 	if t, err := time.Parse(time.RFC3339, updatedAt); err == nil {
 		ub.UpdatedAt = t
+	}
+	if reviewedAt.Valid {
+		if t, err := time.Parse(time.RFC3339, reviewedAt.String); err == nil {
+			ub.ReviewedAt = &t
+		}
 	}
 
 	// Attach latest reading progress.

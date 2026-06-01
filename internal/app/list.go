@@ -126,6 +126,17 @@ func convertAPIUserBook(ab apiUserBookAlias) model.UserBook {
 		Book:      book,
 		UpdatedAt: updatedAt,
 	}
+	if ab.Rating != nil {
+		ub.Rating = *ab.Rating
+	}
+	if ab.ReviewRaw != nil {
+		ub.Review = *ab.ReviewRaw
+	}
+	if ab.ReviewedAt != nil {
+		if t, ok := parseAPITime(*ab.ReviewedAt); ok {
+			ub.ReviewedAt = &t
+		}
+	}
 
 	for _, r := range ab.UserBookReads {
 		read := model.UserBookRead{

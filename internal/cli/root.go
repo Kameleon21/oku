@@ -53,6 +53,8 @@ func newRootCmd(version string) *cobra.Command {
 	cmd.AddCommand(newOpenCmd())
 	cmd.AddCommand(newTUICmd())
 	cmd.AddCommand(newUpdateCmd())
+	cmd.AddCommand(newRateCmd())
+	cmd.AddCommand(newReviewCmd())
 	cmd.AddCommand(newStatusCmd())
 	cmd.AddCommand(newSyncCmd())
 
