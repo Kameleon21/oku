@@ -270,3 +270,65 @@ func TestCycleDensityRefreshesSearchResultItems(t *testing.T) {
 		t.Fatalf("verbose search description = %q, expected slug details", item.Description())
 	}
 }
+
+func TestParseReviewRatingInput(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		want    float64
+		wantErr bool
+	}{
+		{name: "empty is unrated", raw: "", want: 0},
+		{name: "whole", raw: "4", want: 4},
+		{name: "half", raw: "4.5", want: 4.5},
+		{name: "invalid increment", raw: "4.3", wantErr: true},
+		{name: "not numeric", raw: "abc", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseReviewRatingInput(tt.raw)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("parseReviewRatingInput(%q) expected error", tt.raw)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseReviewRatingInput(%q) unexpected error: %v", tt.raw, err)
+			}
+			if got != tt.want {
+				t.Fatalf("parseReviewRatingInput(%q) = %v, want %v", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestReviewSaveClosesModalAndShowsPendingState(t *testing.T) {
+	m := newDashboardModel(nil)
+	m.loaded = true
+	m.openReviewRatingModal(model.UserBook{
+		Book: model.Book{ID: 42, Title: "Dune"},
+	})
+	m.reviewRatingInput.SetValue("3")
+	m.reviewTextInput.SetValue("Strong first half.")
+
+	updated, cmd := m.updateReviewRatingMode(tea.KeyMsg{Type: tea.KeyCtrlS})
+	got := updated.(dashboardModel)
+
+	if cmd == nil {
+		t.Fatal("expected save command")
+	}
+	if got.mode != modeLibrary {
+		t.Fatalf("mode after save = %v, want library", got.mode)
+	}
+	if got.reviewBook != nil {
+		t.Fatal("review modal should be closed after save starts")
+	}
+	if !got.loading {
+		t.Fatal("loading should be true while save is in flight")
+	}
+	if got.infoMsg != "Saving review..." {
+		t.Fatalf("infoMsg = %q, want Saving review...", got.infoMsg)
+	}
+}

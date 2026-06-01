@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/machinebox/graphql"
@@ -58,8 +59,143 @@ func (c *Client) UpdateUserBookStatus(ctx context.Context, userBookID int, statu
 	if r.Error != nil {
 		return fmt.Errorf("UpdateUserBookStatus: API error: %s", *r.Error)
 	}
+	if r.ID == nil {
+		return fmt.Errorf("UpdateUserBookStatus: no updated record returned")
+	}
 
 	return nil
+}
+
+// UpdateUserBookRating updates a user-book rating.
+func (c *Client) UpdateUserBookRating(ctx context.Context, userBookID int, rating float64) error {
+	req := graphql.NewRequest(`mutation($id: Int!, $rating: numeric!) {
+  update_user_book(id: $id, object: { rating: $rating }) {
+    id
+    error
+  }
+}`)
+	req.Var("id", userBookID)
+	req.Var("rating", rating)
+
+	var resp UpdateUserBookResponse
+	if err := c.do(ctx, req, &resp); err != nil {
+		return fmt.Errorf("UpdateUserBookRating: %w", err)
+	}
+
+	r := resp.UpdateUserBook
+	if r.Error != nil {
+		return fmt.Errorf("UpdateUserBookRating: API error: %s", *r.Error)
+	}
+	if r.ID == nil {
+		return fmt.Errorf("UpdateUserBookRating: no updated record returned")
+	}
+
+	return nil
+}
+
+// UpdateUserBookReviewAndRating updates review text, reviewed timestamp, and rating.
+func (c *Client) UpdateUserBookReviewAndRating(
+	ctx context.Context,
+	userBookID int,
+	rating float64,
+	review string,
+	reviewedAt string,
+) error {
+	review = strings.TrimSpace(review)
+	if review == "" {
+		return c.UpdateUserBookRating(ctx, userBookID, rating)
+	}
+
+	attempts := []bool{true, false}
+	var lastErr error
+	for _, includeReviewedAt := range attempts {
+		if err := c.updateUserBookReviewAndRatingAttempt(
+			ctx,
+			userBookID,
+			rating,
+			reviewTextToSlate(review),
+			reviewedAt,
+			includeReviewedAt,
+		); err != nil {
+			if !isSchemaFieldError(err) {
+				return err
+			}
+			lastErr = err
+			continue
+		}
+		return nil
+	}
+	return lastErr
+}
+
+func (c *Client) updateUserBookReviewAndRatingAttempt(
+	ctx context.Context,
+	userBookID int,
+	rating float64,
+	reviewSlate []map[string]any,
+	reviewedAt string,
+	includeReviewedAt bool,
+) error {
+	req := graphql.NewRequest(updateUserBookReviewMutation(includeReviewedAt))
+	req.Var("id", userBookID)
+	req.Var("rating", rating)
+	req.Var("reviewSlate", reviewSlate)
+	if includeReviewedAt {
+		req.Var("reviewedAt", reviewedAt)
+	}
+
+	var resp UpdateUserBookResponse
+	if err := c.do(ctx, req, &resp); err != nil {
+		return fmt.Errorf("UpdateUserBookReviewAndRating: %w", err)
+	}
+
+	r := resp.UpdateUserBook
+	if r.Error != nil {
+		return fmt.Errorf("UpdateUserBookReviewAndRating: API error: %s", *r.Error)
+	}
+	if r.ID == nil {
+		return fmt.Errorf("UpdateUserBookReviewAndRating: no updated record returned")
+	}
+
+	return nil
+}
+
+func updateUserBookReviewMutation(includeReviewedAt bool) string {
+	if includeReviewedAt {
+		return `mutation($id: Int!, $rating: numeric!, $reviewSlate: jsonb!, $reviewedAt: date!) {
+  update_user_book(
+    id: $id,
+    object: { rating: $rating, review_slate: $reviewSlate, reviewed_at: $reviewedAt }
+  ) {
+    id
+    error
+  }
+}`
+	}
+
+	return `mutation($id: Int!, $rating: numeric!, $reviewSlate: jsonb!) {
+  update_user_book(
+    id: $id,
+    object: { rating: $rating, review_slate: $reviewSlate }
+  ) {
+    id
+    error
+  }
+}`
+}
+
+func reviewTextToSlate(review string) []map[string]any {
+	paragraphs := strings.Split(strings.ReplaceAll(review, "\r\n", "\n"), "\n")
+	out := make([]map[string]any, 0, len(paragraphs))
+	for _, p := range paragraphs {
+		out = append(out, map[string]any{
+			"type": "paragraph",
+			"children": []map[string]any{
+				{"text": p},
+			},
+		})
+	}
+	return out
 }
 
 // UpdateReadProgress updates the progress pages on an existing user book read.

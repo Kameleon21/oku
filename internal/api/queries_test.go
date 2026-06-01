@@ -1,6 +1,7 @@
 package api
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Kameleon21/oku/internal/model"
@@ -16,8 +17,8 @@ func TestSearchConfigForMode(t *testing.T) {
 		{
 			name:        "book default",
 			mode:        model.SearchModeBook,
-			wantFields:  `, fields: "title,author_names"`,
-			wantWeights: `, weights: "7,3"`,
+			wantFields:  "",
+			wantWeights: "",
 		},
 		{
 			name:        "author",
@@ -34,8 +35,8 @@ func TestSearchConfigForMode(t *testing.T) {
 		{
 			name:        "unknown falls back to book",
 			mode:        model.SearchMode("x"),
-			wantFields:  `, fields: "title,author_names"`,
-			wantWeights: `, weights: "7,3"`,
+			wantFields:  "",
+			wantWeights: "",
 		},
 	}
 
@@ -47,5 +48,23 @@ func TestSearchConfigForMode(t *testing.T) {
 					tt.mode, got, tt.wantFields, tt.wantWeights)
 			}
 		})
+	}
+}
+
+func TestUserBooksQueryIncludesReviewFieldsInExtendedMode(t *testing.T) {
+	q := userBooksQuery(2, true)
+	for _, field := range []string{"rating", "review_raw", "reviewed_at", "updated_at"} {
+		if !strings.Contains(q, field) {
+			t.Fatalf("extended query missing field %q", field)
+		}
+	}
+}
+
+func TestUserBooksQueryOmitsReviewFieldsInFallbackMode(t *testing.T) {
+	q := userBooksQuery(2, false)
+	for _, field := range []string{"review_raw", "reviewed_at"} {
+		if strings.Contains(q, field) {
+			t.Fatalf("fallback query should not contain %q", field)
+		}
 	}
 }

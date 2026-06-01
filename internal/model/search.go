@@ -48,7 +48,7 @@ func (m SearchMode) Description() string {
 	case SearchModeGenre:
 		return "genre/tag-weighted"
 	default:
-		return "book-title weighted"
+		return "Hardcover default"
 	}
 }
 
