@@ -89,6 +89,9 @@ func userBooksQuery(statusID int, extended bool) string {
     user_books(where: { status_id: { _eq: %d } }) {
       id
       status_id
+      rating
+      review_raw
+      reviewed_at
       updated_at
       user_book_reads(order_by: { id: desc }, limit: 1) {
         id
@@ -270,9 +273,6 @@ func searchConfigForMode(mode model.SearchMode) searchQueryConfig {
 			weightsArg: `, weights: "8,5,2,1"`,
 		}
 	default:
-		return searchQueryConfig{
-			fieldsArg:  `, fields: "title,author_names"`,
-			weightsArg: `, weights: "7,3"`,
-		}
+		return searchQueryConfig{}
 	}
 }

@@ -34,16 +34,22 @@ func TestParseAPITimeSupportsCommonLayouts(t *testing.T) {
 func TestConvertAPIUserBookMapsExtendedFields(t *testing.T) {
 	releaseDate := " 2024-01-05 "
 	updatedAt := "2025-02-03T04:05:06Z"
+	reviewedAt := "2025-02-10T09:30:00Z"
 	startedAt := "2025-01-01"
 	finishedAt := "2025-01-09T12:00:00Z"
+	rating := 4.5
+	review := "Great read.\nWould recommend."
 
 	contrib := api.APIContribution{}
 	contrib.Author.Name = "Neal Ford"
 
 	ab := api.APIUserBook{
-		ID:        77,
-		StatusID:  int(model.StatusCurrentlyReading),
-		UpdatedAt: &updatedAt,
+		ID:         77,
+		StatusID:   int(model.StatusCurrentlyReading),
+		Rating:     &rating,
+		ReviewRaw:  &review,
+		ReviewedAt: &reviewedAt,
+		UpdatedAt:  &updatedAt,
 		Book: api.APIBook{
 			ID:             99,
 			Title:          "Software Architecture",
@@ -93,10 +99,23 @@ func TestConvertAPIUserBookMapsExtendedFields(t *testing.T) {
 	if got.Book.UsersCount != 4567 || got.Book.UsersReadCount != 3456 {
 		t.Fatalf("reader counts not mapped: users=%d read=%d", got.Book.UsersCount, got.Book.UsersReadCount)
 	}
+	if got.Rating != 4.5 {
+		t.Fatalf("user rating = %v, want 4.5", got.Rating)
+	}
+	if got.Review != review {
+		t.Fatalf("user review = %q, want %q", got.Review, review)
+	}
+	if got.ReviewedAt == nil {
+		t.Fatal("reviewed_at should be parsed")
+	}
 
 	wantUpdated, _ := time.Parse(time.RFC3339, updatedAt)
 	if !got.UpdatedAt.Equal(wantUpdated.UTC()) {
 		t.Fatalf("updated_at = %s, want %s", got.UpdatedAt, wantUpdated.UTC())
+	}
+	wantReviewed, _ := time.Parse(time.RFC3339, reviewedAt)
+	if got.ReviewedAt == nil || !got.ReviewedAt.Equal(wantReviewed.UTC()) {
+		t.Fatalf("reviewed_at = %v, want %s", got.ReviewedAt, wantReviewed.UTC())
 	}
 	if len(got.UserBookReads) != 1 {
 		t.Fatalf("read entries = %d, want 1", len(got.UserBookReads))
@@ -113,12 +132,14 @@ func TestConvertAPIUserBookMapsExtendedFields(t *testing.T) {
 func TestConvertAPIUserBookFallsBackWhenTimesInvalid(t *testing.T) {
 	invalidUpdatedAt := "not-a-time"
 	invalidStartedAt := "bad"
+	invalidReviewedAt := "bad-review-time"
 
 	before := time.Now().UTC()
 	ab := api.APIUserBook{
-		ID:        1,
-		StatusID:  int(model.StatusWantToRead),
-		UpdatedAt: &invalidUpdatedAt,
+		ID:         1,
+		StatusID:   int(model.StatusWantToRead),
+		ReviewedAt: &invalidReviewedAt,
+		UpdatedAt:  &invalidUpdatedAt,
 		Book: api.APIBook{
 			ID:    2,
 			Title: "Book",
@@ -138,5 +159,8 @@ func TestConvertAPIUserBookFallsBackWhenTimesInvalid(t *testing.T) {
 	}
 	if got.UserBookReads[0].StartedAt != nil {
 		t.Fatalf("started_at should stay nil on parse failure, got %v", got.UserBookReads[0].StartedAt)
+	}
+	if got.ReviewedAt != nil {
+		t.Fatalf("reviewed_at should stay nil on parse failure, got %v", got.ReviewedAt)
 	}
 }

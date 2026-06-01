@@ -28,6 +28,9 @@ type UserBooksResponse struct {
 type APIUserBook struct {
 	ID            int               `json:"id"`
 	StatusID      int               `json:"status_id"`
+	Rating        *float64          `json:"rating"`
+	ReviewRaw     *string           `json:"review_raw"`
+	ReviewedAt    *string           `json:"reviewed_at"`
 	UpdatedAt     *string           `json:"updated_at"`
 	UserBookReads []APIUserBookRead `json:"user_book_reads"`
 	Book          APIBook           `json:"book"`

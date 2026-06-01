@@ -70,6 +70,23 @@ var helpModalStyle = lipgloss.NewStyle().
 	Padding(1, 2).
 	Width(50)
 
+var modalTitleStyle = lipgloss.NewStyle().
+	Bold(true).
+	Foreground(colorCream)
+
+func renderModalPanel(title, content string, width int) string {
+	style := helpModalStyle
+	if width > 0 {
+		style = style.Width(width)
+	}
+
+	body := content
+	if strings.TrimSpace(title) != "" {
+		body = modalTitleStyle.Render(title) + "\n\n" + content
+	}
+	return style.Render(body)
+}
+
 // ── Progress Bar ────────────────────────────────────────────────────────────
 
 // progressBar renders a Unicode block-character progress bar.
@@ -151,7 +168,7 @@ var (
 				Foreground(colorDarkGray)
 
 	heatmapEmptyStyle = lipgloss.NewStyle().
-			Foreground(colorDarkGray)
+				Foreground(colorDarkGray)
 
 	heatmapLevel1Style = lipgloss.NewStyle().
 				Foreground(colorGitHubG1)
