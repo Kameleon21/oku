@@ -109,6 +109,25 @@ go test ./...
 go build ./cmd/oku
 ```
 
+### Branch and release flow
+
+Feature branches are merged into `develop` first. `Master` is the release branch and keeps the released history.
+
+To release:
+
+```bash
+git checkout Master
+git pull origin Master
+git merge origin/develop
+go test ./...
+goreleaser release --snapshot --clean
+git tag vX.Y.Z
+git push origin Master
+git push origin vX.Y.Z
+```
+
+Pushing a `v*` tag runs the GoReleaser workflow, publishes the GitHub release, and updates the Homebrew cask.
+
 ## Contributors
 
 [![Contributors](https://contrib.rocks/image?repo=Kameleon21/oku)](https://github.com/Kameleon21/oku/graphs/contributors)
