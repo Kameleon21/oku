@@ -144,7 +144,7 @@ func (c *Client) SearchBooks(ctx context.Context, query string, perPage int, mod
 	config := searchConfigForMode(mode)
 
 	q := fmt.Sprintf(`query {
-  search(query: "%s", query_type: "Book", per_page: %d, page: 1%s%s) {
+  search(query: "%s", per_page: %d, page: 1%s%s) {
     results
   }
 }`, sanitized, perPage, config.fieldsArg, config.weightsArg)
@@ -153,10 +153,10 @@ func (c *Client) SearchBooks(ctx context.Context, query string, perPage int, mod
 
 	var resp SearchResponse
 	if err := c.do(ctx, req, &resp); err != nil {
-		// If a mode-specific search field is unsupported, transparently fall back.
-		if isSchemaFieldError(err) {
+		// If a search-specific argument/value is unsupported, transparently fall back.
+		if isSearchFallbackError(err) {
 			q = fmt.Sprintf(`query {
-  search(query: "%s", query_type: "Book", per_page: %d, page: 1) {
+  search(query: "%s", per_page: %d, page: 1) {
     results
   }
 }`, sanitized, perPage)
@@ -193,6 +193,18 @@ func (c *Client) SearchBooks(ctx context.Context, query string, perPage int, mod
 	}
 
 	return results, nil
+}
+
+func isSearchFallbackError(err error) bool {
+	if isSchemaFieldError(err) {
+		return true
+	}
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "book does not exist") ||
+		strings.Contains(msg, "query_type") && strings.Contains(msg, "does not exist")
 }
 
 // GetBookRatingsByIDs fetches rating metadata for a set of book IDs.
