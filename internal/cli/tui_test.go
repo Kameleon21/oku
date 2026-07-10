@@ -51,6 +51,44 @@ func TestLoadLibraryCmdWithNilAppReturnsError(t *testing.T) {
 	}
 }
 
+func TestLoadCachedLibraryCmdWithNilAppReturnsError(t *testing.T) {
+	cmd := loadCachedLibraryCmd(nil)
+	if cmd == nil {
+		t.Fatal("loadCachedLibraryCmd() returned nil cmd")
+	}
+
+	msg := cmd()
+	loaded, ok := msg.(libraryLoadedMsg)
+	if !ok {
+		t.Fatalf("loadCachedLibraryCmd() msg type = %T, want libraryLoadedMsg", msg)
+	}
+	if loaded.err == nil {
+		t.Fatal("expected libraryLoadedMsg error for nil app")
+	}
+}
+
+func TestStaleCachedLibraryRendersBeforeRefresh(t *testing.T) {
+	m := newDashboardModel(nil)
+	updated, cmd := m.updateLibraryMode(libraryLoadedMsg{
+		reading:      []model.UserBook{{Book: model.Book{ID: 1, Title: "Dune"}}},
+		needsRefresh: true,
+	})
+	got := updated.(dashboardModel)
+
+	if !got.loaded {
+		t.Fatal("cached library should mark dashboard loaded")
+	}
+	if !got.loading {
+		t.Fatal("stale cache should start a background refresh")
+	}
+	if len(got.readingBooks) != 1 || got.readingBooks[0].Book.Title != "Dune" {
+		t.Fatalf("cached reading books = %#v, want Dune", got.readingBooks)
+	}
+	if cmd == nil {
+		t.Fatal("stale cache should return a refresh command")
+	}
+}
+
 func TestSearchInputInsertModeTypingAndEsc(t *testing.T) {
 	m := newDashboardModel(nil)
 	m.section = sectionSearch
