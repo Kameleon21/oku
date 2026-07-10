@@ -167,9 +167,10 @@ func (i searchResultItem) FilterValue() string {
 // ── Messages ───────────────────────────────────────────────────────────────
 
 type libraryLoadedMsg struct {
-	reading []model.UserBook
-	oku     []model.UserBook
-	err     error
+	reading      []model.UserBook
+	oku          []model.UserBook
+	needsRefresh bool
+	err          error
 }
 
 type searchLoadedMsg struct {
@@ -370,7 +371,7 @@ func newDashboardModel(a *app.App) dashboardModel {
 func (m dashboardModel) Init() tea.Cmd {
 	return tea.Batch(
 		m.spin.Tick,
-		loadLibraryCmd(m.app, false),
+		loadCachedLibraryCmd(m.app),
 		loadLocalDataCmd(m.app),
 		backgroundCheckCmd(),
 		timerTickCmd(),
@@ -420,6 +421,10 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshListItems()
 		m.updateSearchSuggestions()
 		m.errMsg = ""
+		if msg.needsRefresh {
+			m.loading = true
+			return m, loadLibraryCmd(m.app, true)
+		}
 		return m, nil
 
 	case localDataLoadedMsg:
@@ -2040,6 +2045,27 @@ func (m dashboardModel) changeSelectedSearchStatus(status model.Status) (tea.Mod
 }
 
 // ── Tea Commands ───────────────────────────────────────────────────────────
+
+func loadCachedLibraryCmd(a *app.App) tea.Cmd {
+	return func() tea.Msg {
+		if a == nil {
+			return libraryLoadedMsg{err: fmt.Errorf("dashboard app is not initialized")}
+		}
+		reading, readingStale, err := a.ListCachedBooks(model.StatusCurrentlyReading)
+		if err != nil {
+			return libraryLoadedMsg{err: err}
+		}
+		oku, okuStale, err := a.ListCachedBooks(model.StatusWantToRead)
+		if err != nil {
+			return libraryLoadedMsg{err: err}
+		}
+		return libraryLoadedMsg{
+			reading:      reading,
+			oku:          oku,
+			needsRefresh: readingStale || okuStale,
+		}
+	}
+}
 
 func loadLibraryCmd(a *app.App, refresh bool) tea.Cmd {
 	return func() tea.Msg {

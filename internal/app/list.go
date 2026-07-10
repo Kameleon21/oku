@@ -42,6 +42,21 @@ func (a *App) ListBooks(ctx context.Context, status model.Status, refresh bool) 
 	return books, err
 }
 
+// ListCachedBooks returns locally cached books and reports whether the cache
+// should be refreshed. It never performs a network request.
+func (a *App) ListCachedBooks(status model.Status) ([]model.UserBook, bool, error) {
+	books, err := a.Store.ListUserBooks(status)
+	if err != nil {
+		return nil, false, err
+	}
+
+	stale, err := a.isStatusCacheStale(status)
+	if err != nil {
+		return nil, false, err
+	}
+	return books, len(books) == 0 || stale, nil
+}
+
 func (a *App) isStatusCacheStale(status model.Status) (bool, error) {
 	val, err := a.Store.GetState(syncStateKey(status))
 	if err != nil {
