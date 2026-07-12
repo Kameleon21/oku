@@ -74,6 +74,15 @@ func (m pickerModel) Init() tea.Cmd {
 func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if msg.String() == "ctrl+c" {
+			m.quitting = true
+			return m, tea.Quit
+		}
+		// While the user types a filter, keys like "q" are input and "esc"
+		// exits filter mode — let the list handle them.
+		if m.list.FilterState() == list.Filtering {
+			break
+		}
 		switch msg.String() {
 		case "enter":
 			if item, ok := m.list.SelectedItem().(bookItem); ok {
@@ -83,7 +92,7 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.quitting = true
 			return m, tea.Quit
-		case "q", "ctrl+c", "esc":
+		case "q", "esc":
 			m.quitting = true
 			return m, tea.Quit
 		}

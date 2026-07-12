@@ -134,28 +134,8 @@ func (a *App) GetStreak() (*model.StreakInfo, error) {
 	yesterday := today.AddDate(0, 0, -1)
 	readToday := readingDays[today.Format("2006-01-02")]
 
-	// Current streak: count back from today (or yesterday if not read today).
-	current := 0
-	start := today
-	if !readToday {
-		if !readingDays[yesterday.Format("2006-01-02")] {
-			// No reading today or yesterday, streak is 0.
-			return &model.StreakInfo{
-				Total:     len(readingDays),
-				ReadToday: false,
-			}, nil
-		}
-		start = yesterday
-	}
-	for d := start; ; d = d.AddDate(0, 0, -1) {
-		if readingDays[d.Format("2006-01-02")] {
-			current++
-		} else {
-			break
-		}
-	}
-
-	// Longest streak: sort days and find max consecutive run.
+	// Longest streak: sort days and find max consecutive run. Computed before
+	// the current-streak early return so a broken streak keeps the record.
 	days := make([]time.Time, 0, len(readingDays))
 	for dateStr := range readingDays {
 		if t, err := time.Parse("2006-01-02", dateStr); err == nil {
@@ -175,6 +155,28 @@ func (a *App) GetStreak() (*model.StreakInfo, error) {
 			}
 		} else {
 			streak = 1
+		}
+	}
+
+	// Current streak: count back from today (or yesterday if not read today).
+	current := 0
+	start := today
+	if !readToday {
+		if !readingDays[yesterday.Format("2006-01-02")] {
+			// No reading today or yesterday, current streak is 0.
+			return &model.StreakInfo{
+				Longest:   longest,
+				Total:     len(readingDays),
+				ReadToday: false,
+			}, nil
+		}
+		start = yesterday
+	}
+	for d := start; ; d = d.AddDate(0, 0, -1) {
+		if readingDays[d.Format("2006-01-02")] {
+			current++
+		} else {
+			break
 		}
 	}
 

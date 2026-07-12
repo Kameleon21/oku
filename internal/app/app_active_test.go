@@ -61,6 +61,37 @@ func TestGetActiveBookIDsMigratesLegacyState(t *testing.T) {
 	if raw != "[42]" {
 		t.Fatalf("active_book_ids = %q, want [42]", raw)
 	}
+
+	legacy, err := a.Store.GetState(activeBookIDKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy != "" {
+		t.Fatalf("legacy active_book_id = %q, want deleted", legacy)
+	}
+}
+
+func TestRemovedBookDoesNotResurrectFromLegacyState(t *testing.T) {
+	a := newTestApp(t)
+	if err := a.Store.SetState(activeBookIDKey, "42"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Trigger migration, then remove the book.
+	if _, err := a.GetActiveBookIDs(); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.RemoveActiveBook(42); err != nil {
+		t.Fatal(err)
+	}
+
+	ids, err := a.GetActiveBookIDs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("GetActiveBookIDs() = %v, want empty after removal", ids)
+	}
 }
 
 func TestActiveBooksSupportMultipleWithoutPrimary(t *testing.T) {
@@ -93,11 +124,6 @@ func TestGetActiveBookIDFallsBackToSingleActiveEntry(t *testing.T) {
 	upsertReadingBook(t, a, 100, 7, "Single Active")
 
 	if err := a.AddActiveBook(7); err != nil {
-		t.Fatal(err)
-	}
-
-	// No primary set yet.
-	if err := a.Store.SetState(activeBookIDKey, ""); err != nil {
 		t.Fatal(err)
 	}
 

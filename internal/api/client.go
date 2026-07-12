@@ -3,10 +3,9 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
-	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,8 +19,6 @@ const (
 	requestTimeout = 30 * time.Second
 	maxRetries     = 3
 )
-
-var statusCodeRe = regexp.MustCompile(`status code:\s*(\d{3})`)
 
 // Client wraps the machinebox/graphql client with authentication and rate limiting.
 type Client struct {
@@ -54,12 +51,48 @@ func IsNetworkError(err error) bool {
 	return errors.As(err, &netErr)
 }
 
+// StatusError reports a non-2xx HTTP response from the API. The graphql
+// library never exposes the status itself, so statusTransport converts
+// non-2xx responses into this typed error at the transport layer.
+type StatusError struct {
+	Code int
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("unexpected HTTP status %d (%s)", e.Code, http.StatusText(e.Code))
+}
+
+// statusTransport turns non-2xx responses into *StatusError so retry and
+// classification logic can match on the status code.
+type statusTransport struct {
+	base http.RoundTripper
+}
+
+func (t *statusTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		resp.Body.Close()
+		return nil, &StatusError{Code: resp.StatusCode}
+	}
+	return resp, nil
+}
+
 // NewClient creates a new Hardcover API client with the given auth token.
 // The token is normalised to include a "Bearer " prefix if missing.
 func NewClient(token string) *Client {
-	httpClient := &http.Client{Timeout: requestTimeout}
+	return newClientWithEndpoint(endpoint, token)
+}
+
+func newClientWithEndpoint(url, token string) *Client {
+	httpClient := &http.Client{
+		Timeout:   requestTimeout,
+		Transport: &statusTransport{base: http.DefaultTransport},
+	}
 	return &Client{
-		gql:   graphql.NewClient(endpoint, graphql.WithHTTPClient(httpClient)),
+		gql:   graphql.NewClient(url, graphql.WithHTTPClient(httpClient)),
 		token: normalizeToken(token),
 	}
 }
@@ -150,13 +183,14 @@ func isRetryable(err error) bool {
 		return true
 	}
 
-	var netErr net.Error
-	if errors.As(err, &netErr) {
-		return true
+	// Check the HTTP status before the generic net.Error test: a *url.Error
+	// wrapping a StatusError satisfies net.Error, but a 4xx is not retryable.
+	if status := extractHTTPStatus(err); status != 0 {
+		return status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
 	}
 
-	status := extractHTTPStatus(err)
-	return status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
+	var netErr net.Error
+	return errors.As(err, &netErr)
 }
 
 func isNetworkish(err error) bool {
@@ -172,29 +206,18 @@ func isNetworkish(err error) bool {
 		return true
 	}
 
-	var netErr net.Error
-	if errors.As(err, &netErr) {
-		return true
+	if status := extractHTTPStatus(err); status != 0 {
+		return status == http.StatusTooManyRequests || status == http.StatusRequestTimeout || status >= http.StatusInternalServerError
 	}
 
-	status := extractHTTPStatus(err)
-	return status == http.StatusTooManyRequests || status == http.StatusRequestTimeout || status >= http.StatusInternalServerError
+	var netErr net.Error
+	return errors.As(err, &netErr)
 }
 
 func extractHTTPStatus(err error) int {
-	if err == nil {
-		return 0
+	var statusErr *StatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.Code
 	}
-
-	msg := err.Error()
-	match := statusCodeRe.FindStringSubmatch(strings.ToLower(msg))
-	if len(match) != 2 {
-		return 0
-	}
-
-	code, convErr := strconv.Atoi(match[1])
-	if convErr != nil {
-		return 0
-	}
-	return code
+	return 0
 }

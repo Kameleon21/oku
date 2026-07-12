@@ -418,6 +418,9 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.readingBooks = msg.reading
 		m.okuBooks = msg.oku
+		if m.timerSelectIdx >= len(m.readingBooks) {
+			m.timerSelectIdx = max(0, len(m.readingBooks)-1)
+		}
 		m.refreshListItems()
 		m.updateSearchSuggestions()
 		m.errMsg = ""
@@ -430,6 +433,7 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case localDataLoadedMsg:
 		m.localLoaded = true
 		if msg.err != nil {
+			m.errMsg = msg.err.Error()
 			return m, nil
 		}
 		m.streakInfo = msg.streakInfo
@@ -809,6 +813,10 @@ func (m dashboardModel) handleTimerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.errMsg = "no currently reading books available"
 				m.infoMsg = ""
 				return m, nil
+			}
+			// Background sync can shrink readingBooks while the picker is open.
+			if m.timerSelectIdx >= len(m.readingBooks) {
+				m.timerSelectIdx = len(m.readingBooks) - 1
 			}
 			selected := m.readingBooks[m.timerSelectIdx]
 			m.loading = true
@@ -2092,13 +2100,28 @@ func loadLocalDataCmd(a *app.App) tea.Cmd {
 		if a == nil {
 			return localDataLoadedMsg{err: fmt.Errorf("app not initialized")}
 		}
-		streak, _ := a.GetStreak()
-		heatmap, _ := a.GetHeatmap(26)
-		stats, _ := a.TimerStats(1)
-		sessions, _ := a.TimerList(5)
-		timer, _ := a.TimerStatus()
+		streak, err := a.GetStreak()
+		if err != nil {
+			return localDataLoadedMsg{err: err}
+		}
+		heatmap, err := a.GetHeatmap(26)
+		if err != nil {
+			return localDataLoadedMsg{err: err}
+		}
+		stats, err := a.TimerStats(1)
+		if err != nil {
+			return localDataLoadedMsg{err: err}
+		}
+		sessions, err := a.TimerList(5)
+		if err != nil {
+			return localDataLoadedMsg{err: err}
+		}
+		timer, err := a.TimerStatus()
+		if err != nil {
+			return localDataLoadedMsg{err: err}
+		}
 
-		if shouldUseDemoLocalData(streak, heatmap, stats, sessions) {
+		if shouldUseDemoLocalData() {
 			streak, heatmap, stats, sessions = demoLocalData()
 		}
 
@@ -2112,16 +2135,11 @@ func loadLocalDataCmd(a *app.App) tea.Cmd {
 	}
 }
 
-func shouldUseDemoLocalData(
-	streak *model.StreakInfo,
-	heatmap []model.DayActivity,
-	stats model.WeeklyStats,
-	sessions []model.ReadingSession,
-) bool {
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("OKU_TUI_DEMO_DATA")), "1") {
-		return true
-	}
-	return streak == nil && len(heatmap) == 0 && stats.Sessions == 0 && len(sessions) == 0
+// shouldUseDemoLocalData reports whether to show fabricated dashboard data.
+// Opt-in only (for demo recordings): an empty database is a real state and a
+// DB failure must surface as an error, never as fake numbers.
+func shouldUseDemoLocalData() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("OKU_TUI_DEMO_DATA")), "1")
 }
 
 func demoLocalData() (*model.StreakInfo, []model.DayActivity, model.WeeklyStats, []model.ReadingSession) {

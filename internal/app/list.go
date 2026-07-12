@@ -83,21 +83,13 @@ func (a *App) syncStatus(ctx context.Context, status model.Status) error {
 		return err
 	}
 
-	// Replace rows to avoid stale entries lingering in cache.
-	if err := a.Store.DeleteUserBooksByStatus(status); err != nil {
-		return err
-	}
-
+	// Replace rows atomically so a mid-sync failure keeps the previous cache.
+	books := make([]model.UserBook, 0, len(apiBooks))
 	for _, ab := range apiBooks {
-		ub := convertAPIUserBook(ab)
-		if err := a.Store.UpsertUserBook(ub); err != nil {
-			return err
-		}
-		for _, r := range ub.UserBookReads {
-			if err := a.Store.UpsertUserBookRead(r); err != nil {
-				return err
-			}
-		}
+		books = append(books, convertAPIUserBook(ab))
+	}
+	if err := a.Store.ReplaceUserBooksForStatus(status, books); err != nil {
+		return err
 	}
 
 	_ = a.Store.SetState(syncStateKey(status), time.Now().UTC().Format(time.RFC3339))

@@ -176,6 +176,106 @@ func TestUserBookReadRoundTrip(t *testing.T) {
 	}
 }
 
+func TestReplaceUserBooksForStatus(t *testing.T) {
+	s := testStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	makeBook := func(userBookID, bookID int, title string) model.UserBook {
+		return model.UserBook{
+			ID:       userBookID,
+			BookID:   bookID,
+			StatusID: model.StatusCurrentlyReading,
+			Book:     model.Book{ID: bookID, Title: title, Authors: []string{"Author"}},
+			UserBookReads: []model.UserBookRead{
+				{ID: userBookID*10 + 1, UserBookID: userBookID, ProgressPages: 10, StartedAt: &now},
+			},
+			UpdatedAt: now,
+		}
+	}
+
+	// Seed with one book, plus a book in another status that must survive.
+	if err := s.ReplaceUserBooksForStatus(model.StatusCurrentlyReading, []model.UserBook{makeBook(1, 100, "Old")}); err != nil {
+		t.Fatal(err)
+	}
+	other := model.UserBook{
+		ID: 9, BookID: 900, StatusID: model.StatusWantToRead,
+		Book: model.Book{ID: 900, Title: "Other Status"}, UpdatedAt: now,
+	}
+	if err := s.UpsertUserBook(other); err != nil {
+		t.Fatal(err)
+	}
+
+	// Replace with two different books.
+	replacement := []model.UserBook{makeBook(2, 200, "New A"), makeBook(3, 300, "New B")}
+	if err := s.ReplaceUserBooksForStatus(model.StatusCurrentlyReading, replacement); err != nil {
+		t.Fatal(err)
+	}
+
+	books, err := s.ListUserBooks(model.StatusCurrentlyReading)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(books) != 2 {
+		t.Fatalf("got %d reading books, want 2", len(books))
+	}
+	for _, ub := range books {
+		if ub.BookID == 100 {
+			t.Fatal("old book survived the replace")
+		}
+		if len(ub.UserBookReads) == 0 {
+			t.Fatalf("book %d lost its read row", ub.BookID)
+		}
+	}
+
+	// Old book's reads must be gone; other status untouched.
+	if r, err := s.GetLatestRead(1); err != nil || r != nil {
+		t.Fatalf("GetLatestRead(1) = %v, %v; want nil, nil", r, err)
+	}
+	wanted, err := s.ListUserBooks(model.StatusWantToRead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wanted) != 1 {
+		t.Fatalf("want-to-read books = %d, want 1 (other statuses untouched)", len(wanted))
+	}
+}
+
+func TestUpsertUserBookCleansUpReplacedRowReads(t *testing.T) {
+	s := testStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	ub := model.UserBook{
+		ID: 1, BookID: 100, StatusID: model.StatusCurrentlyReading,
+		Book: model.Book{ID: 100, Title: "Dune"}, UpdatedAt: now,
+	}
+	if err := s.UpsertUserBook(ub); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertUserBookRead(model.UserBookRead{ID: 11, UserBookID: 1, ProgressPages: 42, StartedAt: &now}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Same book comes back with a new user_book id (removed and re-added
+	// upstream). INSERT OR REPLACE deletes the old row on UNIQUE(book_id).
+	ub.ID = 2
+	if err := s.UpsertUserBook(ub); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.GetUserBookByBookID(100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.ID != 2 {
+		t.Fatalf("GetUserBookByBookID(100) = %+v, want row with ID 2", got)
+	}
+
+	// The replaced row's reads must not linger as orphans.
+	if r, err := s.GetLatestRead(1); err != nil || r != nil {
+		t.Fatalf("GetLatestRead(1) = %v, %v; want nil, nil (orphan cleaned up)", r, err)
+	}
+}
+
 func TestDBPathCreation(t *testing.T) {
 	dir := t.TempDir()
 	subdir := filepath.Join(dir, "sub", "path")
