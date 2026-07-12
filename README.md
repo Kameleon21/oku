@@ -111,7 +111,7 @@ go build ./cmd/oku
 
 ### Branch and release flow
 
-Feature branches are merged into `develop` first. `Master` is the release branch and keeps the released history.
+Feature branches are opened as pull requests into `develop` (CI runs `go test ./...` on every PR). `Master` is the release branch and keeps the released history.
 
 To release:
 
