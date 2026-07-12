@@ -370,3 +370,34 @@ func TestReviewSaveClosesModalAndShowsPendingState(t *testing.T) {
 		t.Fatalf("infoMsg = %q, want Saving review...", got.infoMsg)
 	}
 }
+
+func TestTimerSelectEnterClampsStaleIndex(t *testing.T) {
+	m := newDashboardModel(nil)
+	m.timerSelecting = true
+	m.timerSelectIdx = 5 // stale: list shrank while the picker was open
+	m.readingBooks = []model.UserBook{
+		{Book: model.Book{ID: 1, Title: "Dune"}},
+	}
+
+	updated, cmd := m.handleTimerKeys(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(dashboardModel)
+
+	if cmd == nil {
+		t.Fatal("enter on a valid list should start the timer")
+	}
+	if got.timerSelecting {
+		t.Fatal("timerSelecting should be false after enter")
+	}
+}
+
+func TestShouldUseDemoLocalDataIsOptInOnly(t *testing.T) {
+	t.Setenv("OKU_TUI_DEMO_DATA", "")
+	if shouldUseDemoLocalData() {
+		t.Fatal("demo data must not show without OKU_TUI_DEMO_DATA=1")
+	}
+
+	t.Setenv("OKU_TUI_DEMO_DATA", "1")
+	if !shouldUseDemoLocalData() {
+		t.Fatal("OKU_TUI_DEMO_DATA=1 should enable demo data")
+	}
+}

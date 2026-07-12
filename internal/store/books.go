@@ -11,6 +11,10 @@ import (
 // UpsertBook inserts or replaces a book record.
 // Authors are stored as a comma-separated string.
 func (s *Store) UpsertBook(b model.Book) error {
+	return upsertBook(s.db, b)
+}
+
+func upsertBook(e execer, b model.Book) error {
 	const query = `
 INSERT OR REPLACE INTO books (
 	id, title, authors, pages, slug, image_url,
@@ -19,7 +23,7 @@ INSERT OR REPLACE INTO books (
 )
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 `
-	_, err := s.db.Exec(
+	_, err := e.Exec(
 		query,
 		b.ID, b.Title, strings.Join(b.Authors, ", "), b.Pages, b.Slug, b.ImageURL,
 		b.Rating, b.RatingsCount, b.ReviewsCount, b.UsersCount, b.UsersReadCount,

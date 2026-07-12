@@ -8,11 +8,46 @@ import (
 	"github.com/Kameleon21/oku/internal/model"
 )
 
+// execer is satisfied by both *sql.DB and *sql.Tx so upserts can run
+// standalone or inside a transaction.
+type execer interface {
+	Exec(query string, args ...interface{}) (sql.Result, error)
+}
+
 // UpsertUserBook inserts or replaces a user_book record and also upserts
 // the associated book so the local books table stays in sync.
 func (s *Store) UpsertUserBook(ub model.UserBook) error {
-	if err := s.UpsertBook(ub.Book); err != nil {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if err := upsertUserBook(tx, ub); err != nil {
 		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit upsert user_book %d: %w", ub.ID, err)
+	}
+	return nil
+}
+
+func upsertUserBook(e execer, ub model.UserBook) error {
+	if err := upsertBook(e, ub.Book); err != nil {
+		return err
+	}
+
+	// INSERT OR REPLACE resolves the UNIQUE(book_id) conflict by deleting the
+	// old row (which may have a different id); delete its reads first so they
+	// are not left orphaned.
+	const cleanupReads = `
+DELETE FROM user_book_reads
+WHERE user_book_id IN (
+	SELECT id FROM user_books WHERE book_id = ? AND id != ?
+)
+`
+	if _, err := e.Exec(cleanupReads, ub.BookID, ub.ID); err != nil {
+		return fmt.Errorf("cleanup reads for book %d: %w", ub.BookID, err)
 	}
 
 	const query = `
@@ -25,7 +60,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 		formatted := ub.ReviewedAt.UTC().Format(time.RFC3339)
 		reviewedAt = &formatted
 	}
-	_, err := s.db.Exec(
+	_, err := e.Exec(
 		query,
 		ub.ID,
 		ub.BookID,
@@ -140,6 +175,10 @@ WHERE ub.book_id = ?
 
 // UpsertUserBookRead inserts or replaces a user_book_reads record.
 func (s *Store) UpsertUserBookRead(r model.UserBookRead) error {
+	return upsertUserBookRead(s.db, r)
+}
+
+func upsertUserBookRead(e execer, r model.UserBookRead) error {
 	const query = `
 INSERT OR REPLACE INTO user_book_reads (id, user_book_id, progress_pages, started_at, finished_at)
 VALUES (?, ?, ?, ?, ?)
@@ -154,7 +193,7 @@ VALUES (?, ?, ?, ?, ?)
 		finishedAt = &s
 	}
 
-	_, err := s.db.Exec(query, r.ID, r.UserBookID, r.ProgressPages, startedAt, finishedAt)
+	_, err := e.Exec(query, r.ID, r.UserBookID, r.ProgressPages, startedAt, finishedAt)
 	if err != nil {
 		return fmt.Errorf("upsert user_book_read %d: %w", r.ID, err)
 	}
@@ -221,6 +260,48 @@ WHERE user_book_id IN (
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit delete status %d: %w", status, err)
+	}
+	return nil
+}
+
+// ReplaceUserBooksForStatus atomically swaps all cached rows for a status
+// with the given books (and their reads). A failure mid-way rolls back,
+// leaving the previous cache intact.
+func (s *Store) ReplaceUserBooksForStatus(status model.Status, books []model.UserBook) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	const deleteReads = `
+DELETE FROM user_book_reads
+WHERE user_book_id IN (
+	SELECT id FROM user_books WHERE status_id = ?
+)
+`
+	if _, err := tx.Exec(deleteReads, int(status)); err != nil {
+		return fmt.Errorf("delete reads by status %d: %w", status, err)
+	}
+
+	const deleteBooks = `DELETE FROM user_books WHERE status_id = ?`
+	if _, err := tx.Exec(deleteBooks, int(status)); err != nil {
+		return fmt.Errorf("delete user_books status %d: %w", status, err)
+	}
+
+	for _, ub := range books {
+		if err := upsertUserBook(tx, ub); err != nil {
+			return err
+		}
+		for _, r := range ub.UserBookReads {
+			if err := upsertUserBookRead(tx, r); err != nil {
+				return err
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit replace status %d: %w", status, err)
 	}
 	return nil
 }
