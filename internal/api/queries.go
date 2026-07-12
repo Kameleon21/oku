@@ -136,32 +136,30 @@ func isSchemaFieldError(err error) bool {
 }
 
 // SearchBooks searches for books by query string and returns parsed results.
+// User input travels as a GraphQL variable, never interpolated into the
+// query document, so no escaping is needed.
 func (c *Client) SearchBooks(ctx context.Context, query string, perPage int, mode model.SearchMode) ([]model.SearchResult, error) {
-	// Escape double quotes and backslashes in user input for safe embedding in the query string.
-	sanitized := strings.ReplaceAll(query, `\`, `\\`)
-	sanitized = strings.ReplaceAll(sanitized, `"`, `\"`)
-
 	config := searchConfigForMode(mode)
 
-	q := fmt.Sprintf(`query {
-  search(query: "%s", per_page: %d, page: 1%s%s) {
+	newSearchRequest := func(extraArgs string) *graphql.Request {
+		q := fmt.Sprintf(`query($query: String!, $perPage: Int!) {
+  search(query: $query, per_page: $perPage, page: 1%s) {
     results
   }
-}`, sanitized, perPage, config.fieldsArg, config.weightsArg)
+}`, extraArgs)
+		req := graphql.NewRequest(q)
+		req.Var("query", query)
+		req.Var("perPage", perPage)
+		return req
+	}
 
-	req := graphql.NewRequest(q)
+	req := newSearchRequest(config.fieldsArg + config.weightsArg)
 
 	var resp SearchResponse
 	if err := c.do(ctx, req, &resp); err != nil {
 		// If a search-specific argument/value is unsupported, transparently fall back.
 		if isSearchFallbackError(err) {
-			q = fmt.Sprintf(`query {
-  search(query: "%s", per_page: %d, page: 1) {
-    results
-  }
-}`, sanitized, perPage)
-			req = graphql.NewRequest(q)
-			if err := c.do(ctx, req, &resp); err != nil {
+			if err := c.do(ctx, newSearchRequest(""), &resp); err != nil {
 				return nil, fmt.Errorf("SearchBooks: %w", err)
 			}
 		} else {

@@ -67,7 +67,11 @@ func (a *App) GetActiveBookIDs() ([]int, error) {
 			return nil, fmt.Errorf("invalid active book ID: %s", val)
 		}
 		ids = []int{id}
-		_ = a.saveActiveBookIDs(ids)
+		// Drop the legacy key once migrated, otherwise clearing the active
+		// list later resurrects this book via the fallback above.
+		if err := a.saveActiveBookIDs(ids); err == nil {
+			_ = a.Store.DeleteState(activeBookIDKey)
+		}
 		return ids, nil
 	}
 

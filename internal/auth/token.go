@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/zalando/go-keyring"
+	"golang.org/x/term"
 )
 
 const (
@@ -34,14 +35,27 @@ func SetToken(token string) error {
 	return keyring.Set(serviceName, accountName, token)
 }
 
-// PromptToken reads a token interactively from stdin.
+// PromptToken reads a token interactively from stdin. On a terminal the
+// input is not echoed so the secret stays out of the screen and scrollback.
 func PromptToken() (string, error) {
 	fmt.Print("Enter your Hardcover API token: ")
-	reader := bufio.NewReader(os.Stdin)
-	token, err := reader.ReadString('\n')
-	if err != nil {
-		return "", fmt.Errorf("failed to read token: %w", err)
+
+	var token string
+	if fd := int(os.Stdin.Fd()); term.IsTerminal(fd) {
+		raw, err := term.ReadPassword(fd)
+		fmt.Println()
+		if err != nil {
+			return "", fmt.Errorf("failed to read token: %w", err)
+		}
+		token = string(raw)
+	} else {
+		line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		if err != nil {
+			return "", fmt.Errorf("failed to read token: %w", err)
+		}
+		token = line
 	}
+
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return "", fmt.Errorf("token cannot be empty")
