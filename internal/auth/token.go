@@ -2,6 +2,7 @@ package auth
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -25,6 +26,9 @@ func GetToken() (string, error) {
 	token, err := keyring.Get(serviceName, accountName)
 	if err == nil && token != "" {
 		return token, nil
+	}
+	if err != nil && !errors.Is(err, keyring.ErrNotFound) {
+		return "", fmt.Errorf("keyring backend unavailable: %w; set %s as a workaround", err, envKey)
 	}
 
 	return "", fmt.Errorf("no API token found. Set %s or run: oku auth set-token", envKey)

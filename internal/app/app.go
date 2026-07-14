@@ -121,7 +121,11 @@ func (a *App) GetActiveBooks() ([]model.UserBook, error) {
 		if err != nil {
 			return nil, err
 		}
-		if ub == nil || ub.StatusID != model.StatusCurrentlyReading {
+		if ub == nil {
+			validIDs = append(validIDs, id)
+			continue
+		}
+		if ub.StatusID != model.StatusCurrentlyReading {
 			continue
 		}
 		books = append(books, *ub)

@@ -30,6 +30,7 @@ func (a *App) UpdateProgress(ctx context.Context, bookID int, pageUpdate model.P
 	if err != nil {
 		return 0, err
 	}
+	latestRead = unfinishedRead(latestRead)
 	if latestRead != nil {
 		currentPage = latestRead.ProgressPages
 	}
@@ -73,4 +74,11 @@ func (a *App) UpdateProgress(ctx context.Context, bookID int, pageUpdate model.P
 	}
 
 	return newPage, nil
+}
+
+func unfinishedRead(read *model.UserBookRead) *model.UserBookRead {
+	if read != nil && read.FinishedAt == nil {
+		return read
+	}
+	return nil
 }

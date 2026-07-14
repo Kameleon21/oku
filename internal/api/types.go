@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -82,9 +83,32 @@ type SearchResponse struct {
 
 // TypesenseResults represents parsed Typesense search results.
 type TypesenseResults struct {
-	Hits []struct {
-		Document TypesenseBookDoc `json:"document"`
-	} `json:"hits"`
+	Hits []TypesenseHit `json:"hits"`
+}
+
+// TypesenseHit represents one search hit.
+type TypesenseHit struct {
+	Document TypesenseBookDoc `json:"document"`
+}
+
+// UnmarshalJSON skips malformed individual hits while retaining valid results.
+func (r *TypesenseResults) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Hits []json.RawMessage `json:"hits"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	r.Hits = make([]TypesenseHit, 0, len(raw.Hits))
+	for _, rawHit := range raw.Hits {
+		var hit TypesenseHit
+		if err := json.Unmarshal(rawHit, &hit); err != nil {
+			continue
+		}
+		r.Hits = append(r.Hits, hit)
+	}
+	return nil
 }
 
 // TypesenseBookDoc represents a book document from Typesense search.
@@ -124,7 +148,7 @@ func (v *FlexibleInt) UnmarshalJSON(data []byte) error {
 			*v = 0
 			return nil
 		}
-		n, err := strconv.Atoi(unquoted)
+		n, err := parseFlexibleInt(unquoted)
 		if err != nil {
 			return fmt.Errorf("parse quoted number %q: %w", unquoted, err)
 		}
@@ -133,12 +157,24 @@ func (v *FlexibleInt) UnmarshalJSON(data []byte) error {
 	}
 
 	// Raw number: 123
-	n, err := strconv.Atoi(s)
+	n, err := parseFlexibleInt(s)
 	if err != nil {
 		return fmt.Errorf("parse number %q: %w", s, err)
 	}
 	*v = FlexibleInt(n)
 	return nil
+}
+
+func parseFlexibleInt(s string) (int, error) {
+	n, err := strconv.Atoi(s)
+	if err == nil {
+		return n, nil
+	}
+	f, floatErr := strconv.ParseFloat(s, 64)
+	if floatErr != nil || math.IsNaN(f) || math.IsInf(f, 0) || f < math.MinInt32 || f > math.MaxInt32 {
+		return 0, err
+	}
+	return int(f), nil
 }
 
 // FlexibleFloat handles APIs that may return a number or a quoted number.
