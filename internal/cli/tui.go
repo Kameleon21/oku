@@ -240,9 +240,10 @@ type dashboardModel struct {
 	dirty            bool
 	lastMutationAt   time.Time
 
-	lastQuery string
-	infoMsg   string
-	errMsg    string
+	lastQuery      string
+	lastSearchMode model.SearchMode
+	infoMsg        string
+	errMsg         string
 
 	searchLoading      bool
 	searchLoadingQuery string
@@ -466,6 +467,7 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.searchQueryMode = msg.mode
 		m.lastQuery = msg.query
+		m.lastSearchMode = msg.mode
 		m.searchBooks = msg.results
 		m.refreshSearchResultItems()
 		m.searchList.Title = fmt.Sprintf("%s Results (%d)", m.searchQueryMode.Label(), len(msg.results))
@@ -1730,7 +1732,8 @@ func (m *dashboardModel) submitSearch() tea.Cmd {
 	}
 
 	// Reuse in-memory results for the same query instead of refetching.
-	if strings.EqualFold(query, strings.TrimSpace(m.lastQuery)) && len(m.searchList.Items()) > 0 {
+	if strings.EqualFold(query, strings.TrimSpace(m.lastQuery)) &&
+		m.searchQueryMode == m.lastSearchMode && len(m.searchList.Items()) > 0 {
 		m.searchSub = searchSubResults
 		m.searchMode = searchModeNormal
 		m.searchInput.Blur()

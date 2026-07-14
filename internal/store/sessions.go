@@ -80,15 +80,15 @@ LIMIT ?
 // Only completed sessions (ended_at IS NOT NULL) are counted.
 func (s *Store) GetDailyActivity(from, to time.Time) ([]model.DayActivity, error) {
 	const query = `
-SELECT date(started_at) as day,
+SELECT date(started_at, 'localtime') as day,
        SUM(
            CAST((julianday(ended_at) - julianday(started_at)) * 1440 AS INTEGER)
        ) as minutes
 FROM reading_sessions
 WHERE ended_at IS NOT NULL
-  AND date(started_at) >= date(?)
-  AND date(started_at) <= date(?)
-GROUP BY date(started_at)
+  AND date(started_at, 'localtime') >= date(?)
+  AND date(started_at, 'localtime') <= date(?)
+GROUP BY date(started_at, 'localtime')
 ORDER BY day
 `
 	fromStr := from.Format("2006-01-02")
@@ -107,7 +107,7 @@ ORDER BY day
 		if err := rows.Scan(&dayStr, &minutes); err != nil {
 			return nil, fmt.Errorf("scan daily activity: %w", err)
 		}
-		if t, err := time.Parse("2006-01-02", dayStr); err == nil {
+		if t, err := time.ParseInLocation("2006-01-02", dayStr, time.Local); err == nil {
 			if minutes < 0 {
 				minutes = 0
 			}
@@ -123,8 +123,8 @@ func (s *Store) GetWeeklyStats(from, to time.Time) (model.WeeklyStats, error) {
 SELECT started_at, ended_at
 FROM reading_sessions
 WHERE ended_at IS NOT NULL
-  AND date(started_at) >= date(?)
-  AND date(started_at) <= date(?)
+  AND date(started_at, 'localtime') >= date(?)
+  AND date(started_at, 'localtime') <= date(?)
 ORDER BY started_at
 `
 	fromStr := from.Format("2006-01-02")
@@ -156,7 +156,7 @@ ORDER BY started_at
 
 		// time.Weekday: Sun=0, Mon=1, ..., Sat=6
 		// We want Mon=0, ..., Sun=6
-		dayIdx := (int(startTime.Weekday()) + 6) % 7
+		dayIdx := (int(startTime.In(time.Local).Weekday()) + 6) % 7
 		stats.Days[dayIdx] += minutes
 		stats.Total += minutes
 		stats.Sessions++

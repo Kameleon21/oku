@@ -11,6 +11,13 @@ import (
 	"github.com/machinebox/graphql"
 )
 
+// AuthError reports that the API response did not contain an authenticated user.
+type AuthError struct{}
+
+func (e *AuthError) Error() string {
+	return "authentication failed: run `oku auth set-token` or check your Hardcover token"
+}
+
 // GetMe returns the authenticated user's ID and username.
 func (c *Client) GetMe(ctx context.Context) (int, string, error) {
 	req := graphql.NewRequest(`query { me { id, username } }`)
@@ -20,7 +27,7 @@ func (c *Client) GetMe(ctx context.Context) (int, string, error) {
 		return 0, "", fmt.Errorf("GetMe: %w", err)
 	}
 	if len(resp.Me) == 0 {
-		return 0, "", fmt.Errorf("GetMe: empty response")
+		return 0, "", fmt.Errorf("GetMe: %w", &AuthError{})
 	}
 
 	return resp.Me[0].ID, resp.Me[0].Username, nil
@@ -46,7 +53,7 @@ func (c *Client) ListUserBooks(ctx context.Context, statusID int) ([]APIUserBook
 		}
 	}
 	if len(resp.Me) == 0 {
-		return nil, nil
+		return nil, fmt.Errorf("ListUserBooks: %w", &AuthError{})
 	}
 
 	return resp.Me[0].UserBooks, nil

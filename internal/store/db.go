@@ -16,16 +16,22 @@ type Store struct {
 // New opens (or creates) the SQLite database at dbPath, runs migrations,
 // and returns a ready-to-use Store.
 func New(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	separator := "?"
+	if strings.Contains(dbPath, "?") {
+		separator = "&"
+	}
+	dsn := dbPath + separator + "_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
 
-	// Enable WAL mode and foreign keys for better concurrent access.
-	for _, pragma := range []string{
-		"PRAGMA journal_mode=WAL",
-		"PRAGMA foreign_keys=ON",
-	} {
+	// NOTE: do not SetMaxOpenConns(1) — several queries (e.g. ListUserBooks →
+	// GetLatestRead) run while iterating another query's rows, which deadlocks
+	// on a single-connection pool. busy_timeout above handles writer contention.
+
+	// Enable WAL mode for better concurrent access.
+	for _, pragma := range []string{"PRAGMA journal_mode=WAL"} {
 		if _, err := db.Exec(pragma); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("exec %s: %w", pragma, err)
