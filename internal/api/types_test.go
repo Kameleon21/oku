@@ -14,6 +14,11 @@ func TestFlexibleIntUnmarshalJSON(t *testing.T) {
 	}{
 		{name: "number", in: `123`, want: 123},
 		{name: "quoted number", in: `"456"`, want: 456},
+		{name: "float", in: `412.9`, want: 412},
+		{name: "quoted float", in: `"412.9"`, want: 412},
+		{name: "NaN", in: `"NaN"`, wantErr: true},
+		{name: "Inf", in: `"Inf"`, wantErr: true},
+		{name: "huge exponent", in: `1e300`, wantErr: true},
 		{name: "null", in: `null`, want: 0},
 		{name: "quoted empty", in: `""`, want: 0},
 		{name: "invalid", in: `"abc"`, wantErr: true},
@@ -36,6 +41,21 @@ func TestFlexibleIntUnmarshalJSON(t *testing.T) {
 				t.Fatalf("value = %d, want %d", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestTypesenseResultsSkipsMalformedHit(t *testing.T) {
+	raw := []byte(`{"hits":[
+  {"document":{"id":"bad","title":"Broken"}},
+  {"document":{"id":202,"title":"Foundation","pages":255}}
+]}`)
+
+	var results TypesenseResults
+	if err := json.Unmarshal(raw, &results); err != nil {
+		t.Fatalf("unmarshal typesense results: %v", err)
+	}
+	if len(results.Hits) != 1 || results.Hits[0].Document.ID != 202 {
+		t.Fatalf("hits = %+v, want only valid hit 202", results.Hits)
 	}
 }
 

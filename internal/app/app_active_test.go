@@ -136,6 +136,29 @@ func TestGetActiveBookIDFallsBackToSingleActiveEntry(t *testing.T) {
 	}
 }
 
+func TestGetActiveBooksKeepsUnknownID(t *testing.T) {
+	a := newTestApp(t)
+	if err := a.AddActiveBook(42); err != nil {
+		t.Fatal(err)
+	}
+
+	books, err := a.GetActiveBooks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(books) != 0 {
+		t.Fatalf("GetActiveBooks() = %v, want no cached books", books)
+	}
+
+	ids, err := a.GetActiveBookIDs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(ids, []int{42}) {
+		t.Fatalf("GetActiveBookIDs() = %v, want unknown ID preserved", ids)
+	}
+}
+
 func TestRemoveActiveBookLeavesSingleDefault(t *testing.T) {
 	a := newTestApp(t)
 	upsertReadingBook(t, a, 100, 1, "Book One")

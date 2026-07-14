@@ -17,6 +17,7 @@ const endpoint = "https://api.hardcover.app/v1/graphql"
 
 const (
 	requestTimeout = 30 * time.Second
+	attemptTimeout = 10 * time.Second
 	maxRetries     = 3
 )
 
@@ -88,7 +89,7 @@ func NewClient(token string) *Client {
 
 func newClientWithEndpoint(url, token string) *Client {
 	httpClient := &http.Client{
-		Timeout:   requestTimeout,
+		Timeout:   attemptTimeout,
 		Transport: &statusTransport{base: http.DefaultTransport},
 	}
 	return &Client{
@@ -138,6 +139,9 @@ func (c *Client) do(ctx context.Context, req *graphql.Request, resp interface{})
 		backoff := time.Duration(attempt*attempt) * 200 * time.Millisecond
 		select {
 		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return ctx.Err()
+			}
 			return &NetworkError{Err: ctx.Err()}
 		case <-time.After(backoff):
 		}

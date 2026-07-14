@@ -111,8 +111,8 @@ func (a *App) TimerList(limit int) ([]model.ReadingSession, error) {
 // GetStreak computes the current, longest, and total reading streak from session data.
 func (a *App) GetStreak() (*model.StreakInfo, error) {
 	// Get all daily activity from the beginning of time.
-	from := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
-	to := time.Now().UTC()
+	from := time.Date(2020, 1, 1, 0, 0, 0, 0, time.Local)
+	to := time.Now().In(time.Local)
 	activities, err := a.Store.GetDailyActivity(from, to)
 	if err != nil {
 		return nil, err
