@@ -103,6 +103,13 @@ CREATE TABLE IF NOT EXISTS reading_sessions (
 	ended_at   TEXT,
 	notes      TEXT DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS activity_log (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	book_id    INTEGER NOT NULL DEFAULT 0,
+	event      TEXT NOT NULL DEFAULT 'progress',
+	created_at TEXT NOT NULL
+);
 `
 	if _, err := db.Exec(ddl); err != nil {
 		return err

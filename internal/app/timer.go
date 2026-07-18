@@ -108,7 +108,8 @@ func (a *App) TimerList(limit int) ([]model.ReadingSession, error) {
 	return a.Store.ListSessions(limit)
 }
 
-// GetStreak computes the current, longest, and total reading streak from session data.
+// GetStreak computes the current, longest, and total reading streak from
+// timer sessions and logged activity (progress updates, finished books).
 func (a *App) GetStreak() (*model.StreakInfo, error) {
 	// Get all daily activity from the beginning of time.
 	from := time.Date(2020, 1, 1, 0, 0, 0, 0, time.Local)
@@ -117,17 +118,24 @@ func (a *App) GetStreak() (*model.StreakInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	if len(activities) == 0 {
-		return &model.StreakInfo{}, nil
+	activityDays, err := a.Store.GetActivityDays(from, to)
+	if err != nil {
+		return nil, err
 	}
 
-	// Build a set of reading days.
-	readingDays := make(map[string]bool, len(activities))
-	for _, a := range activities {
-		if a.Minutes > 0 {
-			readingDays[a.Date.Format("2006-01-02")] = true
+	// Build a set of reading days: timer sessions or logged activity.
+	readingDays := make(map[string]bool, len(activities)+len(activityDays))
+	for _, act := range activities {
+		if act.Minutes > 0 {
+			readingDays[act.Date.Format("2006-01-02")] = true
 		}
+	}
+	for _, d := range activityDays {
+		readingDays[d.Format("2006-01-02")] = true
+	}
+
+	if len(readingDays) == 0 {
+		return &model.StreakInfo{}, nil
 	}
 
 	today := time.Date(to.Year(), to.Month(), to.Day(), 0, 0, 0, 0, time.Local)
@@ -188,12 +196,34 @@ func (a *App) GetStreak() (*model.StreakInfo, error) {
 	}, nil
 }
 
-// GetHeatmap returns daily activity data for the given number of weeks.
+// GetHeatmap returns daily activity data for the given number of weeks,
+// including days with logged activity but no timer minutes.
 func (a *App) GetHeatmap(weeks int) ([]model.DayActivity, error) {
 	if weeks <= 0 {
 		weeks = 26
 	}
 	now := time.Now()
 	from := now.AddDate(0, 0, -weeks*7)
-	return a.Store.GetDailyActivity(from, now)
+	acts, err := a.Store.GetDailyActivity(from, now)
+	if err != nil {
+		return nil, err
+	}
+	days, err := a.Store.GetActivityDays(from, now)
+	if err != nil {
+		return nil, err
+	}
+
+	byDate := make(map[string]int, len(acts))
+	for i, act := range acts {
+		byDate[act.Date.Format("2006-01-02")] = i
+	}
+	for _, d := range days {
+		if i, ok := byDate[d.Format("2006-01-02")]; ok {
+			acts[i].HasActivity = true
+		} else {
+			acts = append(acts, model.DayActivity{Date: d, HasActivity: true})
+		}
+	}
+	sort.Slice(acts, func(i, j int) bool { return acts[i].Date.Before(acts[j].Date) })
+	return acts, nil
 }
