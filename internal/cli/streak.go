@@ -65,10 +65,10 @@ func newStreakCmd() *cobra.Command {
 
 // renderHeatmap prints a GitHub-style heatmap of reading activity.
 func renderHeatmap(activities []model.DayActivity, weeks int) {
-	// Build a map of date -> minutes.
-	actMap := make(map[string]int, len(activities))
+	// Build a map of date -> activity.
+	actMap := make(map[string]model.DayActivity, len(activities))
 	for _, a := range activities {
-		actMap[a.Date.Format("2006-01-02")] = a.Minutes
+		actMap[a.Date.Format("2006-01-02")] = a
 	}
 
 	// Find the max minutes for intensity scaling.
@@ -80,11 +80,11 @@ func renderHeatmap(activities []model.DayActivity, weeks int) {
 	}
 
 	now := time.Now()
-	// Go back `weeks` weeks from the end of the current week.
-	// Find the start: the Monday of (weeks) weeks ago.
+	// Start at the Monday of (weeks-1) weeks ago so the grid's last column
+	// is the current week.
 	weekday := (int(now.Weekday()) + 6) % 7 // Mon=0, Sun=6
 	endDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	startDate := endDate.AddDate(0, 0, -weeks*7-weekday+1)
+	startDate := endDate.AddDate(0, 0, -(weeks-1)*7-weekday)
 
 	// Render month labels.
 	monthRow := "       "
@@ -114,8 +114,8 @@ func renderHeatmap(activities []model.DayActivity, weeks int) {
 				continue
 			}
 			key := d.Format("2006-01-02")
-			mins := actMap[key]
-			row += intensityChar(mins, maxMin) + " "
+			act := actMap[key]
+			row += intensityChar(act.Minutes, maxMin, act.HasActivity) + " "
 		}
 		fmt.Println(row)
 	}
@@ -123,16 +123,20 @@ func renderHeatmap(activities []model.DayActivity, weeks int) {
 	// Legend.
 	fmt.Println()
 	fmt.Printf("  Less %s %s %s %s More\n",
-		intensityChar(0, maxMin),
-		intensityChar(maxMin/4, maxMin),
-		intensityChar(maxMin/2, maxMin),
-		intensityChar(maxMin, maxMin),
+		intensityChar(0, maxMin, false),
+		intensityChar(maxMin/4, maxMin, false),
+		intensityChar(maxMin/2, maxMin, false),
+		intensityChar(maxMin, maxMin, false),
 	)
 }
 
 // intensityChar returns a Unicode character representing reading intensity.
-func intensityChar(minutes, maxMinutes int) string {
+// Days with logged activity but no timer minutes get the lightest shade.
+func intensityChar(minutes, maxMinutes int, active bool) string {
 	if minutes <= 0 {
+		if active {
+			return "░"
+		}
 		return "·"
 	}
 	ratio := float64(minutes) / float64(maxMinutes)
@@ -148,8 +152,11 @@ func intensityChar(minutes, maxMinutes int) string {
 	}
 }
 
-func intensityCellTUI(minutes, maxMinutes int) string {
+func intensityCellTUI(minutes, maxMinutes int, active bool) string {
 	if minutes <= 0 {
+		if active {
+			return heatmapLevel1Style.Render("░")
+		}
 		return heatmapEmptyStyle.Render("·")
 	}
 	ratio := float64(minutes) / float64(maxMinutes)
@@ -167,9 +174,9 @@ func intensityCellTUI(minutes, maxMinutes int) string {
 
 // renderHeatmapTUI returns a heatmap string for the TUI (no printing to stdout).
 func renderHeatmapTUI(activities []model.DayActivity, weeks, availWidth int) string {
-	actMap := make(map[string]int, len(activities))
+	actMap := make(map[string]model.DayActivity, len(activities))
 	for _, a := range activities {
-		actMap[a.Date.Format("2006-01-02")] = a.Minutes
+		actMap[a.Date.Format("2006-01-02")] = a
 	}
 
 	maxMin := 1
@@ -191,7 +198,7 @@ func renderHeatmapTUI(activities []model.DayActivity, weeks, availWidth int) str
 	now := time.Now()
 	weekday := (int(now.Weekday()) + 6) % 7
 	endDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	startDate := endDate.AddDate(0, 0, -weeks*7-weekday+1)
+	startDate := endDate.AddDate(0, 0, -(weeks-1)*7-weekday)
 
 	var sb strings.Builder
 
@@ -222,21 +229,21 @@ func renderHeatmapTUI(activities []model.DayActivity, weeks, availWidth int) str
 				continue
 			}
 			key := d.Format("2006-01-02")
-			mins := actMap[key]
-			sb.WriteString(intensityCellTUI(mins, maxMin) + " ")
+			act := actMap[key]
+			sb.WriteString(intensityCellTUI(act.Minutes, maxMin, act.HasActivity) + " ")
 		}
 		sb.WriteString("\n")
 	}
 
 	// Legend.
 	sb.WriteString("\n  Less ")
-	sb.WriteString(intensityCellTUI(0, maxMin))
+	sb.WriteString(intensityCellTUI(0, maxMin, false))
 	sb.WriteString(" ")
-	sb.WriteString(intensityCellTUI(maxMin/4, maxMin))
+	sb.WriteString(intensityCellTUI(maxMin/4, maxMin, false))
 	sb.WriteString(" ")
-	sb.WriteString(intensityCellTUI(maxMin/2, maxMin))
+	sb.WriteString(intensityCellTUI(maxMin/2, maxMin, false))
 	sb.WriteString(" ")
-	sb.WriteString(intensityCellTUI(maxMin, maxMin))
+	sb.WriteString(intensityCellTUI(maxMin, maxMin, false))
 	sb.WriteString(" More")
 
 	return sb.String()
