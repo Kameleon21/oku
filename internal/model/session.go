@@ -30,14 +30,15 @@ type TimerState struct {
 type StreakInfo struct {
 	Current   int  // consecutive days ending today or yesterday
 	Longest   int  // longest streak ever
-	Total     int  // total days with at least one session
-	ReadToday bool // whether there's a completed session today
+	Total     int  // total days with at least one reading activity
+	ReadToday bool // whether there's any reading activity today
 }
 
 // DayActivity represents total reading minutes for a single day.
 type DayActivity struct {
-	Date    time.Time
-	Minutes int
+	Date        time.Time
+	Minutes     int
+	HasActivity bool // progress update or finished book that day (no timer minutes required)
 }
 
 // WeeklyStats holds aggregated stats for a time period.

@@ -46,6 +46,7 @@ func (a *App) UpdateProgress(ctx context.Context, bookID int, pageUpdate model.P
 		if err := a.Store.UpsertUserBookRead(*latestRead); err != nil {
 			return 0, err
 		}
+		a.logActivity(resolvedID, activityProgress)
 		return newPage, nil
 	}
 
@@ -73,6 +74,7 @@ func (a *App) UpdateProgress(ctx context.Context, bookID int, pageUpdate model.P
 		return 0, err
 	}
 
+	a.logActivity(resolvedID, activityProgress)
 	return newPage, nil
 }
 

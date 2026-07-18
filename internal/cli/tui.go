@@ -507,7 +507,7 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.reload {
 			m.loading = true
-			return m, loadLibraryCmd(m.app, false)
+			return m, tea.Batch(loadLibraryCmd(m.app, false), loadLocalDataCmd(m.app))
 		}
 		return m, nil
 
@@ -916,7 +916,7 @@ func (m dashboardModel) updatePageMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.reload {
 			m.loading = true
-			return m, loadLibraryCmd(m.app, false)
+			return m, tea.Batch(loadLibraryCmd(m.app, false), loadLocalDataCmd(m.app))
 		}
 		return m, nil
 	case tea.KeyMsg:
