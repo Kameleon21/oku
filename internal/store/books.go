@@ -19,15 +19,15 @@ func upsertBook(e execer, b model.Book) error {
 INSERT OR REPLACE INTO books (
 	id, title, authors, pages, slug, image_url,
 	rating, ratings_count, reviews_count, users_count, users_read_count,
-	release_date, featured_series, featured_series_position, updated_at
+	release_date, cached_tags, featured_series, featured_series_position, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 `
 	_, err := e.Exec(
 		query,
 		b.ID, b.Title, strings.Join(b.Authors, ", "), b.Pages, b.Slug, b.ImageURL,
 		b.Rating, b.RatingsCount, b.ReviewsCount, b.UsersCount, b.UsersReadCount,
-		b.ReleaseDate, b.FeaturedSeries, b.FeaturedSeriesPosition,
+		b.ReleaseDate, b.CachedTags, b.FeaturedSeries, b.FeaturedSeriesPosition,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert book %d: %w", b.ID, err)

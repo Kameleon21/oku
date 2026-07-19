@@ -22,5 +22,9 @@ func (a *App) SyncAll(ctx context.Context) error {
 		}
 	}
 
+	// Journals and goals feed the stats view only; their failure should not
+	// fail the core library sync.
+	_ = a.SyncStats(ctx)
+
 	return nil
 }

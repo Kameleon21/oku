@@ -108,96 +108,9 @@ func (a *App) TimerList(limit int) ([]model.ReadingSession, error) {
 	return a.Store.ListSessions(limit)
 }
 
-// GetStreak computes the current, longest, and total reading streak from
-// timer sessions and logged activity (progress updates, finished books).
-func (a *App) GetStreak() (*model.StreakInfo, error) {
-	// Get all daily activity from the beginning of time.
-	from := time.Date(2020, 1, 1, 0, 0, 0, 0, time.Local)
-	to := time.Now().In(time.Local)
-	activities, err := a.Store.GetDailyActivity(from, to)
-	if err != nil {
-		return nil, err
-	}
-	activityDays, err := a.Store.GetActivityDays(from, to)
-	if err != nil {
-		return nil, err
-	}
-
-	// Build a set of reading days: timer sessions or logged activity.
-	readingDays := make(map[string]bool, len(activities)+len(activityDays))
-	for _, act := range activities {
-		if act.Minutes > 0 {
-			readingDays[act.Date.Format("2006-01-02")] = true
-		}
-	}
-	for _, d := range activityDays {
-		readingDays[d.Format("2006-01-02")] = true
-	}
-
-	if len(readingDays) == 0 {
-		return &model.StreakInfo{}, nil
-	}
-
-	today := time.Date(to.Year(), to.Month(), to.Day(), 0, 0, 0, 0, time.Local)
-	yesterday := today.AddDate(0, 0, -1)
-	readToday := readingDays[today.Format("2006-01-02")]
-
-	// Longest streak: sort days and find max consecutive run. Computed before
-	// the current-streak early return so a broken streak keeps the record.
-	days := make([]time.Time, 0, len(readingDays))
-	for dateStr := range readingDays {
-		if t, err := time.Parse("2006-01-02", dateStr); err == nil {
-			days = append(days, t)
-		}
-	}
-	sort.Slice(days, func(i, j int) bool { return days[i].Before(days[j]) })
-
-	longest := 1
-	streak := 1
-	for i := 1; i < len(days); i++ {
-		diff := days[i].Sub(days[i-1]).Hours() / 24
-		if diff <= 1.5 { // consecutive day (accounting for DST)
-			streak++
-			if streak > longest {
-				longest = streak
-			}
-		} else {
-			streak = 1
-		}
-	}
-
-	// Current streak: count back from today (or yesterday if not read today).
-	current := 0
-	start := today
-	if !readToday {
-		if !readingDays[yesterday.Format("2006-01-02")] {
-			// No reading today or yesterday, current streak is 0.
-			return &model.StreakInfo{
-				Longest:   longest,
-				Total:     len(readingDays),
-				ReadToday: false,
-			}, nil
-		}
-		start = yesterday
-	}
-	for d := start; ; d = d.AddDate(0, 0, -1) {
-		if readingDays[d.Format("2006-01-02")] {
-			current++
-		} else {
-			break
-		}
-	}
-
-	return &model.StreakInfo{
-		Current:   current,
-		Longest:   longest,
-		Total:     len(readingDays),
-		ReadToday: readToday,
-	}, nil
-}
-
 // GetHeatmap returns daily activity data for the given number of weeks,
-// including days with logged activity but no timer minutes.
+// merging timer minutes with Hardcover reading-journal days (progress updates,
+// finished books) so the heatmap matches the hardcover.app one.
 func (a *App) GetHeatmap(weeks int) ([]model.DayActivity, error) {
 	if weeks <= 0 {
 		weeks = 26
@@ -208,7 +121,7 @@ func (a *App) GetHeatmap(weeks int) ([]model.DayActivity, error) {
 	if err != nil {
 		return nil, err
 	}
-	days, err := a.Store.GetActivityDays(from, now)
+	days, err := a.Store.GetJournalDays(from, now)
 	if err != nil {
 		return nil, err
 	}

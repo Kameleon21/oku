@@ -40,7 +40,6 @@ const (
 	sectionOku
 	sectionSearch
 	sectionStats
-	sectionStreak
 	sectionTimer
 	sectionCount // sentinel
 )
@@ -192,9 +191,7 @@ type backgroundCheckMsg struct{}
 type timerTickMsg time.Time
 
 type localDataLoadedMsg struct {
-	streakInfo     *model.StreakInfo
-	heatmapData    []model.DayActivity
-	weeklyStats    model.WeeklyStats
+	readingStats   *model.ReadingStats
 	recentSessions []model.ReadingSession
 	timerState     *model.TimerState
 	err            error
@@ -255,13 +252,13 @@ type dashboardModel struct {
 
 	showHelp bool
 
-	// Local data for streak/timer sections.
+	// Local data for stats/timer sections.
 	timerState     *model.TimerState
-	streakInfo     *model.StreakInfo
-	heatmapData    []model.DayActivity
+	readingStats   *model.ReadingStats
 	weeklyStats    model.WeeklyStats
 	recentSessions []model.ReadingSession
 	localLoaded    bool
+	statsScroll    int
 
 	timerSelecting bool
 	timerSelectIdx int
@@ -437,9 +434,10 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errMsg = msg.err.Error()
 			return m, nil
 		}
-		m.streakInfo = msg.streakInfo
-		m.heatmapData = msg.heatmapData
-		m.weeklyStats = msg.weeklyStats
+		m.readingStats = msg.readingStats
+		if msg.readingStats != nil {
+			m.weeklyStats = msg.readingStats.Weekly
+		}
 		m.recentSessions = msg.recentSessions
 		m.timerState = msg.timerState
 		return m, nil
@@ -529,6 +527,8 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleSearchKeys(msg)
 		case sectionReading, sectionOku:
 			return m.handleLibraryKeys(msg)
+		case sectionStats:
+			return m.handleStatsKeys(msg)
 		case sectionTimer:
 			return m.handleTimerKeys(msg)
 		default:
@@ -576,6 +576,37 @@ func (m dashboardModel) handleGenericKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+func (m dashboardModel) handleStatsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "j", "down":
+		content := m.statsView(m.rightPanelContentWidth())
+		_, m.statsScroll = clipLines(content, m.statsScroll+1, m.rightPanelContentHeight())
+		return m, nil
+	case "k", "up":
+		if m.statsScroll > 0 {
+			m.statsScroll--
+		}
+		return m, nil
+	case "g":
+		m.statsScroll = 0
+		return m, nil
+	case "r":
+		return m, loadLocalDataCmd(m.app)
+	case "s":
+		m.loading = true
+		return m, syncAllAndReloadCmd(m.app)
+	case "l", "right", "tab":
+		m.statsScroll = 0
+		m.nextSection()
+		return m, nil
+	case "h", "left", "shift+tab":
+		m.statsScroll = 0
+		m.prevSection()
+		return m, nil
+	}
+	return m.handleGenericKeys(msg)
 }
 
 func (m dashboardModel) handleLibraryKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1088,6 +1119,22 @@ func (m dashboardModel) View() string {
 	return body
 }
 
+// rightPanelContentWidth mirrors renderLayout's width math for the right
+// panel's content area.
+func (m dashboardModel) rightPanelContentWidth() int {
+	totalW := max(60, m.width-2)
+	leftW := max(28, totalW*2/5)
+	rightW := max(28, m.width-leftW-4)
+	return rightW - 4
+}
+
+// rightPanelContentHeight mirrors renderLayout's height math for the right
+// panel's content area.
+func (m dashboardModel) rightPanelContentHeight() int {
+	totalH := max(8, m.height-6)
+	return max(1, totalH-2)
+}
+
 // renderLayout renders the 2-column layout: left sections + right context panel.
 func (m dashboardModel) renderLayout() string {
 	totalW := max(60, m.width-2)
@@ -1131,7 +1178,6 @@ func (m dashboardModel) sectionDefinitions() []sectionDef {
 		{sectionOku, "Oku", len(m.okuBooks)},
 		{sectionSearch, "Search Titles", -1},
 		{sectionStats, "Stats", -1},
-		{sectionStreak, "Streak", -1},
 		{sectionTimer, "Timer", -1},
 	}
 }
@@ -1141,21 +1187,19 @@ func (m dashboardModel) leftSectionHeights(totalH int) map[focusSection]int {
 		sectionIntro:  3,
 		sectionSearch: 4,
 		sectionStats:  3,
-		sectionStreak: 3,
 		sectionTimer:  3,
 	}
 	minHeights := map[focusSection]int{
 		sectionIntro:  2,
 		sectionSearch: 3,
 		sectionStats:  2,
-		sectionStreak: 2,
 		sectionTimer:  2,
 	}
 	reduceOrder := []focusSection{
-		sectionStats, sectionStreak, sectionTimer, sectionIntro, sectionSearch,
+		sectionStats, sectionTimer, sectionIntro, sectionSearch,
 	}
 
-	fixedSum := heights[sectionIntro] + heights[sectionSearch] + heights[sectionStats] + heights[sectionStreak] + heights[sectionTimer]
+	fixedSum := heights[sectionIntro] + heights[sectionSearch] + heights[sectionStats] + heights[sectionTimer]
 	remaining := totalH - fixedSum
 	for remaining < 8 {
 		changed := false
@@ -1209,7 +1253,7 @@ func (m dashboardModel) leftSectionHeights(totalH int) map[focusSection]int {
 	if sum > totalH {
 		deficit := sum - totalH
 		shrinkOrder := []focusSection{
-			sectionReading, sectionOku, sectionSearch, sectionIntro, sectionStats, sectionStreak, sectionTimer,
+			sectionReading, sectionOku, sectionSearch, sectionIntro, sectionStats, sectionTimer,
 		}
 		for deficit > 0 {
 			changed := false
@@ -1304,7 +1348,7 @@ func (m dashboardModel) sectionContent(id focusSection, w, h int) string {
 	case sectionSearch:
 		return m.searchSectionContent(w)
 	default:
-		// Intro, Stats, Streak, Timer use the right pane for full details.
+		// Intro, Stats, Timer use the right pane for full details.
 		return dimStyleTUI.Render("  See Output panel")
 	}
 }
@@ -1329,9 +1373,8 @@ func (m dashboardModel) rightPanelView(w int) string {
 	case sectionSearch:
 		return m.searchPanelView()
 	case sectionStats:
-		return m.statsView(w)
-	case sectionStreak:
-		return m.streakView(w)
+		content, _ := clipLines(m.statsView(w), m.statsScroll, m.rightPanelContentHeight())
+		return content
 	case sectionTimer:
 		return m.timerView(w)
 	default:
@@ -1657,10 +1700,12 @@ func (m dashboardModel) contextHelpBar() string {
 			{"Esc", "back"},
 			{"?", "help"},
 		})
-	case sectionStreak:
+	case sectionStats:
 		return renderHelpBar([][2]string{
+			{"j/k", "scroll"},
+			{"g", "top"},
 			{"h/l", "section"},
-			{"Tab", "next"},
+			{"s", "sync"},
 			{"/", "search"},
 			{"?", "help"},
 			{"q", "quit"},
@@ -2103,15 +2148,7 @@ func loadLocalDataCmd(a *app.App) tea.Cmd {
 		if a == nil {
 			return localDataLoadedMsg{err: fmt.Errorf("app not initialized")}
 		}
-		streak, err := a.GetStreak()
-		if err != nil {
-			return localDataLoadedMsg{err: err}
-		}
-		heatmap, err := a.GetHeatmap(26)
-		if err != nil {
-			return localDataLoadedMsg{err: err}
-		}
-		stats, err := a.TimerStats(1)
+		stats, err := a.GetReadingStats()
 		if err != nil {
 			return localDataLoadedMsg{err: err}
 		}
@@ -2125,13 +2162,11 @@ func loadLocalDataCmd(a *app.App) tea.Cmd {
 		}
 
 		if shouldUseDemoLocalData() {
-			streak, heatmap, stats, sessions = demoLocalData()
+			stats, sessions = demoLocalData()
 		}
 
 		return localDataLoadedMsg{
-			streakInfo:     streak,
-			heatmapData:    heatmap,
-			weeklyStats:    stats,
+			readingStats:   stats,
 			recentSessions: sessions,
 			timerState:     timer,
 		}
@@ -2145,16 +2180,9 @@ func shouldUseDemoLocalData() bool {
 	return strings.EqualFold(strings.TrimSpace(os.Getenv("OKU_TUI_DEMO_DATA")), "1")
 }
 
-func demoLocalData() (*model.StreakInfo, []model.DayActivity, model.WeeklyStats, []model.ReadingSession) {
+func demoLocalData() (*model.ReadingStats, []model.ReadingSession) {
 	now := time.Now()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-
-	streak := &model.StreakInfo{
-		Current:   12,
-		Longest:   34,
-		Total:     143,
-		ReadToday: true,
-	}
 
 	heatmap := make([]model.DayActivity, 0, 26*7)
 	for i := 0; i < 26*7; i++ {
@@ -2207,7 +2235,39 @@ func demoLocalData() (*model.StreakInfo, []model.DayActivity, model.WeeklyStats,
 		makeSession(4, 20, 55, 105, "Atomic Habits"),
 	}
 
-	return streak, heatmap, stats, sessions
+	goalEnd := time.Date(now.Year(), 12, 31, 0, 0, 0, 0, now.Location())
+	readingStats := &model.ReadingStats{
+		Year: model.YearSummary{
+			Year:          now.Year(),
+			BooksFinished: 12,
+			PagesRead:     3748,
+			AvgRating:     3.9,
+			RatedCount:    9,
+		},
+		Goal: &model.Goal{
+			ID:       1,
+			Metric:   "books",
+			Target:   20,
+			Progress: 12,
+			State:    "active",
+			EndDate:  goalEnd,
+		},
+		Months: [12]int{3, 2, 0, 4, 1, 2, 0, 0, 0, 0, 0, 0},
+		Years: []model.LabelCount{
+			{Label: "2023", Count: 14}, {Label: "2024", Count: 21},
+			{Label: "2025", Count: 18}, {Label: fmt.Sprintf("%d", now.Year()), Count: 12},
+		},
+		Ratings: [10]int{0, 0, 0, 1, 0, 2, 1, 6, 2, 2},
+		Genres: []model.LabelCount{
+			{Label: "Fantasy", Count: 8}, {Label: "Classics", Count: 6},
+			{Label: "Sci-Fi", Count: 4}, {Label: "Philosophy", Count: 3},
+			{Label: "Nonfiction", Count: 2},
+		},
+		Heatmap: heatmap,
+		Weekly:  stats,
+	}
+
+	return readingStats, sessions
 }
 
 func searchCmd(a *app.App, query string, mode model.SearchMode) tea.Cmd {

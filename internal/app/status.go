@@ -29,7 +29,7 @@ func (a *App) ChangeStatus(ctx context.Context, bookID int, status model.Status)
 		// The remote status change is the real event, even if a later cache
 		// step fails.
 		if statusCountsAsActivity(status) {
-			a.logActivity(resolvedID, activityFinished)
+			a.logLocalJournal(journalEventFinished)
 		}
 		// Refresh status cache so we get full book metadata from API.
 		if err := a.syncStatus(ctx, status); err != nil {
@@ -43,7 +43,7 @@ func (a *App) ChangeStatus(ctx context.Context, bookID int, status model.Status)
 		return fmt.Errorf("update status: %w", err)
 	}
 	if statusCountsAsActivity(status) {
-		a.logActivity(resolvedID, activityFinished)
+		a.logLocalJournal(journalEventFinished)
 	}
 
 	// Update cache.

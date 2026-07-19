@@ -167,6 +167,12 @@ var (
 	statsBarEmptyStyle = lipgloss.NewStyle().
 				Foreground(colorDarkGray)
 
+	goldBarStyle = lipgloss.NewStyle().
+			Foreground(colorGold)
+
+	oliveBarStyle = lipgloss.NewStyle().
+			Foreground(colorOlive)
+
 	heatmapEmptyStyle = lipgloss.NewStyle().
 				Foreground(colorDarkGray)
 

@@ -60,7 +60,7 @@ func newRootCmd(version string) *cobra.Command {
 
 	// Local-only commands (no auth required).
 	cmd.AddCommand(newTimerCmd())
-	cmd.AddCommand(newStreakCmd())
+	cmd.AddCommand(newStatsCmd())
 
 	// Convenience shortcuts.
 	cmd.AddCommand(newShortcutCmd("reading", "List currently reading books", 2))
