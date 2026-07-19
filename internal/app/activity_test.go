@@ -7,16 +7,16 @@ import (
 	"github.com/Kameleon21/oku/internal/model"
 )
 
-func TestLogActivityRecordsToday(t *testing.T) {
+func TestLogLocalJournalRecordsToday(t *testing.T) {
 	pinUTC(t)
 	a := newTestApp(t)
 
-	a.logActivity(1, activityProgress)
+	a.logLocalJournal(journalEventProgress)
 
 	now := time.Now().In(time.Local)
-	days, err := a.Store.GetActivityDays(now.AddDate(0, 0, -1), now)
+	days, err := a.Store.GetJournalDays(now.AddDate(0, 0, -1), now)
 	if err != nil {
-		t.Fatalf("GetActivityDays: %v", err)
+		t.Fatalf("GetJournalDays: %v", err)
 	}
 	if len(days) != 1 {
 		t.Fatalf("got %d days, want 1", len(days))
@@ -42,5 +42,17 @@ func TestStatusCountsAsActivity(t *testing.T) {
 		if got := statusCountsAsActivity(c.status); got != c.want {
 			t.Errorf("statusCountsAsActivity(%v) = %v, want %v", c.status, got, c.want)
 		}
+	}
+}
+
+func TestAccountPrivacySettingIDUsesCachedValue(t *testing.T) {
+	a := newTestApp(t)
+	if err := a.Store.SetState(privacySettingKey, "3"); err != nil {
+		t.Fatalf("SetState: %v", err)
+	}
+
+	// a.API is nil, so any API fallback would panic — the cached value must win.
+	if got := a.accountPrivacySettingID(t.Context()); got != 3 {
+		t.Fatalf("accountPrivacySettingID = %d, want cached 3", got)
 	}
 }

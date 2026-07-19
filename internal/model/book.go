@@ -90,6 +90,7 @@ type Book struct {
 	UsersCount             int
 	UsersReadCount         int
 	ReleaseDate            string
+	CachedTags             string // raw Hardcover cached_tags JSON (genres/moods/tags)
 	FeaturedSeries         string
 	FeaturedSeriesPosition int
 }

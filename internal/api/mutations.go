@@ -259,6 +259,50 @@ func (c *Client) InsertUserBookRead(ctx context.Context, userBookID int, progres
 	return r.UserBookRead, nil
 }
 
+// InsertProgressJournal creates a "progress_updated" reading journal entry.
+// Hardcover's website builds its activity heatmap from reading_journals, which
+// the site creates on every progress update; update_user_book_read alone never
+// produces one, so API-driven updates stay invisible on the calendar without this.
+func (c *Client) InsertProgressJournal(ctx context.Context, bookID, progressPages, totalPages, privacySettingID int) error {
+	actionAt := time.Now().Format("2006-01-02")
+	req := graphql.NewRequest(`mutation($object: ReadingJournalCreateType!) {
+  insert_reading_journal(object: $object) {
+    reading_journal {
+      id
+    }
+  }
+}`)
+	req.Var("object", progressJournalObject(bookID, progressPages, totalPages, privacySettingID, actionAt))
+
+	var resp InsertReadingJournalResponse
+	if err := c.do(ctx, req, &resp); err != nil {
+		return fmt.Errorf("InsertProgressJournal: %w", err)
+	}
+	if resp.InsertReadingJournal.ReadingJournal == nil {
+		return fmt.Errorf("InsertProgressJournal: no reading_journal returned")
+	}
+
+	return nil
+}
+
+func progressJournalObject(bookID, progressPages, totalPages, privacySettingID int, actionAt string) map[string]any {
+	position := map[string]any{
+		"type":  "pages",
+		"value": progressPages,
+	}
+	if totalPages > 0 {
+		position["possible"] = totalPages
+	}
+	return map[string]any{
+		"book_id":            bookID,
+		"event":              "progress_updated",
+		"action_at":          actionAt,
+		"privacy_setting_id": privacySettingID,
+		"tags":               []any{},
+		"metadata":           map[string]any{"position": position},
+	}
+}
+
 // UpsertUserBookReads creates or updates a reading progress entry for the given user book.
 func (c *Client) UpsertUserBookReads(ctx context.Context, userBookID int, progressPages int) error {
 	q := fmt.Sprintf(`mutation {

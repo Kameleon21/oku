@@ -11,7 +11,7 @@ Terminal companion for [Hardcover](https://hardcover.app): browse your shelves, 
 - Full TUI dashboard with vim-style navigation (`h/j/k/l`)
 - CLI for scripting and quick actions
 - Search by book, author, or genre
-- Reading streaks and stats tracking
+- Reading stats pulled from Hardcover: yearly summary, goal progress, activity heatmap, ratings and genre breakdowns
 - Reading timer to log sessions
 - Local SQLite cache with auto-refresh
 
@@ -70,6 +70,7 @@ oku search <query>     Search books (--mode book|author|genre)
 oku now                Show current read
 oku reading            Show reading list
 oku update --page <N>  Update page progress
+oku stats              Show reading stats and activity heatmap
 
 oku sync               Refresh all cached data
 oku auth set-token     Set API token

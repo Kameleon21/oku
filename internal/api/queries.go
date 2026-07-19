@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Kameleon21/oku/internal/model"
 	"github.com/machinebox/graphql"
@@ -31,6 +32,25 @@ func (c *Client) GetMe(ctx context.Context) (int, string, error) {
 	}
 
 	return resp.Me[0].ID, resp.Me[0].Username, nil
+}
+
+// GetAccountPrivacySetting returns the user's default privacy setting ID
+// (1=Public, 2=Followers, 3=Private).
+func (c *Client) GetAccountPrivacySetting(ctx context.Context) (int, error) {
+	req := graphql.NewRequest(`query { me { id, account_privacy_setting_id } }`)
+
+	var resp MeResponse
+	if err := c.do(ctx, req, &resp); err != nil {
+		return 0, fmt.Errorf("GetAccountPrivacySetting: %w", err)
+	}
+	if len(resp.Me) == 0 {
+		return 0, fmt.Errorf("GetAccountPrivacySetting: %w", &AuthError{})
+	}
+	if resp.Me[0].AccountPrivacySettingID == nil {
+		return 0, fmt.Errorf("GetAccountPrivacySetting: no privacy setting returned")
+	}
+
+	return *resp.Me[0].AccountPrivacySettingID, nil
 }
 
 // ListUserBooks returns the user's books filtered by status ID.
@@ -100,7 +120,7 @@ func userBooksQuery(statusID int, extended bool) string {
       review_raw
       reviewed_at
       updated_at
-      user_book_reads(order_by: { id: desc }, limit: 1) {
+      user_book_reads(order_by: { id: desc }) {
         id
         progress_pages
         started_at
@@ -117,6 +137,7 @@ func userBooksQuery(statusID int, extended bool) string {
         users_count
         users_read_count
         release_date
+        cached_tags
         contributions {
           author {
             name
@@ -129,6 +150,59 @@ func userBooksQuery(statusID int, extended bool) string {
     }
   }
 }`, statusID)
+}
+
+// ListGoals returns the user's reading goals.
+func (c *Client) ListGoals(ctx context.Context) ([]APIGoal, error) {
+	req := graphql.NewRequest(`query {
+  me {
+    id
+    goals {
+      id
+      goal
+      metric
+      progress
+      state
+      start_date
+      end_date
+    }
+  }
+}`)
+
+	var resp MeResponse
+	if err := c.do(ctx, req, &resp); err != nil {
+		return nil, fmt.Errorf("ListGoals: %w", err)
+	}
+	if len(resp.Me) == 0 {
+		return nil, fmt.Errorf("ListGoals: %w", &AuthError{})
+	}
+
+	return resp.Me[0].Goals, nil
+}
+
+// ListReadingJournals returns the user's reading journal entries since the
+// given date (inclusive). Only the fields needed for activity aggregation are
+// fetched.
+func (c *Client) ListReadingJournals(ctx context.Context, userID int, since time.Time) ([]APIReadingJournal, error) {
+	q := fmt.Sprintf(`query {
+  reading_journals(
+    where: { user_id: { _eq: %d }, action_at: { _gte: "%s" } }
+    order_by: { action_at: asc }
+  ) {
+    id
+    action_at
+    event
+  }
+}`, userID, since.Format("2006-01-02"))
+
+	req := graphql.NewRequest(q)
+
+	var resp ReadingJournalsResponse
+	if err := c.do(ctx, req, &resp); err != nil {
+		return nil, fmt.Errorf("ListReadingJournals: %w", err)
+	}
+
+	return resp.ReadingJournals, nil
 }
 
 func isSchemaFieldError(err error) bool {

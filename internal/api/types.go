@@ -10,9 +10,34 @@ import (
 
 // MeUser represents a single user entry from the me query.
 type MeUser struct {
+	ID                      int           `json:"id"`
+	Username                string        `json:"username"`
+	AccountPrivacySettingID *int          `json:"account_privacy_setting_id"`
+	UserBooks               []APIUserBook `json:"user_books"`
+	Goals                   []APIGoal     `json:"goals"`
+}
+
+// APIGoal represents a reading goal from the API.
+type APIGoal struct {
 	ID        int           `json:"id"`
-	Username  string        `json:"username"`
-	UserBooks []APIUserBook `json:"user_books"`
+	Goal      int           `json:"goal"`
+	Metric    string        `json:"metric"`
+	Progress  FlexibleFloat `json:"progress"`
+	State     string        `json:"state"`
+	StartDate *string       `json:"start_date"`
+	EndDate   *string       `json:"end_date"`
+}
+
+// APIReadingJournal represents a reading journal entry from the API.
+type APIReadingJournal struct {
+	ID       int     `json:"id"`
+	ActionAt *string `json:"action_at"`
+	Event    string  `json:"event"`
+}
+
+// ReadingJournalsResponse is the response shape for listing reading journals.
+type ReadingJournalsResponse struct {
+	ReadingJournals []APIReadingJournal `json:"reading_journals"`
 }
 
 // MeResponse is the response shape for the me query.
@@ -49,6 +74,7 @@ type APIBook struct {
 	UsersCount     int               `json:"users_count"`
 	UsersReadCount int               `json:"users_read_count"`
 	ReleaseDate    *string           `json:"release_date"`
+	CachedTags     json.RawMessage   `json:"cached_tags"`
 	Contributions  []APIContribution `json:"contributions"`
 	Image          *APIImage         `json:"image"`
 }
@@ -248,6 +274,15 @@ type InsertUserBookReadResponse struct {
 		Error        *string          `json:"error"`
 		UserBookRead *APIUserBookRead `json:"user_book_read"`
 	} `json:"insert_user_book_read"`
+}
+
+// InsertReadingJournalResponse is the response shape for inserting a reading journal entry.
+type InsertReadingJournalResponse struct {
+	InsertReadingJournal struct {
+		ReadingJournal *struct {
+			ID int `json:"id"`
+		} `json:"reading_journal"`
+	} `json:"insert_reading_journal"`
 }
 
 // UpsertUserBookReadsResponse is the response shape for upserting user book reads.
