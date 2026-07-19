@@ -7,16 +7,16 @@ import (
 	"github.com/Kameleon21/oku/internal/model"
 )
 
-func TestLogActivityRecordsToday(t *testing.T) {
+func TestLogLocalJournalRecordsToday(t *testing.T) {
 	pinUTC(t)
 	a := newTestApp(t)
 
-	a.logActivity(1, activityProgress)
+	a.logLocalJournal(journalEventProgress)
 
 	now := time.Now().In(time.Local)
-	days, err := a.Store.GetActivityDays(now.AddDate(0, 0, -1), now)
+	days, err := a.Store.GetJournalDays(now.AddDate(0, 0, -1), now)
 	if err != nil {
-		t.Fatalf("GetActivityDays: %v", err)
+		t.Fatalf("GetJournalDays: %v", err)
 	}
 	if len(days) != 1 {
 		t.Fatalf("got %d days, want 1", len(days))

@@ -26,14 +26,6 @@ type TimerState struct {
 	StartedAt time.Time `json:"started_at"`
 }
 
-// StreakInfo holds computed streak statistics.
-type StreakInfo struct {
-	Current   int  // consecutive days ending today or yesterday
-	Longest   int  // longest streak ever
-	Total     int  // total days with at least one reading activity
-	ReadToday bool // whether there's any reading activity today
-}
-
 // DayActivity represents total reading minutes for a single day.
 type DayActivity struct {
 	Date        time.Time

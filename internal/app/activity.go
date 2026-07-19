@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	activityProgress = "progress"
-	activityFinished = "finished"
+	// Journal event names mirror Hardcover's reading_journals events.
+	journalEventProgress = "progress_updated"
+	journalEventFinished = "status_read"
 
 	privacySettingKey = "account_privacy_setting_id"
 
@@ -20,15 +21,15 @@ const (
 	privacyPublic = 1
 )
 
-// logActivity records a local activity event for streak tracking.
-// Failures are non-fatal: the remote update already succeeded, and the
-// activity log only affects streak display.
-func (a *App) logActivity(bookID int, event string) {
-	_ = a.Store.InsertActivity(bookID, event, time.Now().UTC())
+// logLocalJournal mirrors a Hardcover journal event locally so the activity
+// heatmap reflects it immediately; the server-side entry replaces it on the
+// next sync. Failures are non-fatal: the remote update already succeeded.
+func (a *App) logLocalJournal(event string) {
+	_ = a.Store.InsertLocalJournal(time.Now(), event)
 }
 
 // statusCountsAsActivity reports whether changing to the given status counts
-// as reading activity for the streak. Only finishing a book qualifies.
+// as reading activity for the heatmap. Only finishing a book qualifies.
 func statusCountsAsActivity(s model.Status) bool {
 	return s == model.StatusRead
 }

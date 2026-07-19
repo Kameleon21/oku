@@ -104,12 +104,23 @@ CREATE TABLE IF NOT EXISTS reading_sessions (
 	notes      TEXT DEFAULT ''
 );
 
-CREATE TABLE IF NOT EXISTS activity_log (
-	id         INTEGER PRIMARY KEY AUTOINCREMENT,
-	book_id    INTEGER NOT NULL DEFAULT 0,
-	event      TEXT NOT NULL DEFAULT 'progress',
-	created_at TEXT NOT NULL
+CREATE TABLE IF NOT EXISTS reading_journals (
+	id        INTEGER PRIMARY KEY,
+	action_at TEXT NOT NULL,
+	event     TEXT NOT NULL DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS goals (
+	id         INTEGER PRIMARY KEY,
+	metric     TEXT NOT NULL DEFAULT '',
+	target     INTEGER NOT NULL DEFAULT 0,
+	progress   REAL NOT NULL DEFAULT 0,
+	state      TEXT NOT NULL DEFAULT '',
+	start_date TEXT,
+	end_date   TEXT
+);
+
+DROP TABLE IF EXISTS activity_log;
 `
 	if _, err := db.Exec(ddl); err != nil {
 		return err
@@ -126,6 +137,7 @@ CREATE TABLE IF NOT EXISTS activity_log (
 		{"users_count", "INTEGER NOT NULL DEFAULT 0"},
 		{"users_read_count", "INTEGER NOT NULL DEFAULT 0"},
 		{"release_date", "TEXT NOT NULL DEFAULT ''"},
+		{"cached_tags", "TEXT NOT NULL DEFAULT ''"},
 		{"featured_series", "TEXT NOT NULL DEFAULT ''"},
 		{"featured_series_position", "INTEGER NOT NULL DEFAULT 0"},
 	} {
