@@ -47,6 +47,7 @@ func (a *App) UpdateProgress(ctx context.Context, bookID int, pageUpdate model.P
 			return 0, err
 		}
 		a.logActivity(resolvedID, activityProgress)
+		a.logRemoteProgress(ctx, resolvedID, newPage, ub.Book.Pages)
 		return newPage, nil
 	}
 
@@ -75,6 +76,7 @@ func (a *App) UpdateProgress(ctx context.Context, bookID int, pageUpdate model.P
 	}
 
 	a.logActivity(resolvedID, activityProgress)
+	a.logRemoteProgress(ctx, resolvedID, newPage, ub.Book.Pages)
 	return newPage, nil
 }
 

@@ -10,9 +10,10 @@ import (
 
 // MeUser represents a single user entry from the me query.
 type MeUser struct {
-	ID        int           `json:"id"`
-	Username  string        `json:"username"`
-	UserBooks []APIUserBook `json:"user_books"`
+	ID                      int           `json:"id"`
+	Username                string        `json:"username"`
+	AccountPrivacySettingID *int          `json:"account_privacy_setting_id"`
+	UserBooks               []APIUserBook `json:"user_books"`
 }
 
 // MeResponse is the response shape for the me query.
@@ -248,6 +249,15 @@ type InsertUserBookReadResponse struct {
 		Error        *string          `json:"error"`
 		UserBookRead *APIUserBookRead `json:"user_book_read"`
 	} `json:"insert_user_book_read"`
+}
+
+// InsertReadingJournalResponse is the response shape for inserting a reading journal entry.
+type InsertReadingJournalResponse struct {
+	InsertReadingJournal struct {
+		ReadingJournal *struct {
+			ID int `json:"id"`
+		} `json:"reading_journal"`
+	} `json:"insert_reading_journal"`
 }
 
 // UpsertUserBookReadsResponse is the response shape for upserting user book reads.

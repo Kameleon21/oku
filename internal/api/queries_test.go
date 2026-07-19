@@ -154,3 +154,41 @@ func TestSearchBooksFallsBackWhenWeightedSearchIsRejected(t *testing.T) {
 		t.Fatalf("fallback request should omit weighted fields, got: %s", requests[1])
 	}
 }
+
+func TestGetAccountPrivacySetting(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"me":[{"id":7,"account_privacy_setting_id":3}]}}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{
+		gql:   graphql.NewClient(srv.URL),
+		token: "Bearer test",
+	}
+
+	got, err := c.GetAccountPrivacySetting(t.Context())
+	if err != nil {
+		t.Fatalf("GetAccountPrivacySetting returned error: %v", err)
+	}
+	if got != 3 {
+		t.Fatalf("GetAccountPrivacySetting = %d, want 3", got)
+	}
+}
+
+func TestGetAccountPrivacySettingMissingField(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"me":[{"id":7}]}}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{
+		gql:   graphql.NewClient(srv.URL),
+		token: "Bearer test",
+	}
+
+	if _, err := c.GetAccountPrivacySetting(t.Context()); err == nil {
+		t.Fatal("GetAccountPrivacySetting should error when the field is missing")
+	}
+}

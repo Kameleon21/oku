@@ -33,6 +33,25 @@ func (c *Client) GetMe(ctx context.Context) (int, string, error) {
 	return resp.Me[0].ID, resp.Me[0].Username, nil
 }
 
+// GetAccountPrivacySetting returns the user's default privacy setting ID
+// (1=Public, 2=Followers, 3=Private).
+func (c *Client) GetAccountPrivacySetting(ctx context.Context) (int, error) {
+	req := graphql.NewRequest(`query { me { id, account_privacy_setting_id } }`)
+
+	var resp MeResponse
+	if err := c.do(ctx, req, &resp); err != nil {
+		return 0, fmt.Errorf("GetAccountPrivacySetting: %w", err)
+	}
+	if len(resp.Me) == 0 {
+		return 0, fmt.Errorf("GetAccountPrivacySetting: %w", &AuthError{})
+	}
+	if resp.Me[0].AccountPrivacySettingID == nil {
+		return 0, fmt.Errorf("GetAccountPrivacySetting: no privacy setting returned")
+	}
+
+	return *resp.Me[0].AccountPrivacySettingID, nil
+}
+
 // ListUserBooks returns the user's books filtered by status ID.
 func (c *Client) ListUserBooks(ctx context.Context, statusID int) ([]APIUserBook, error) {
 	q := userBooksQuery(statusID, true)

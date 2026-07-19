@@ -44,3 +44,15 @@ func TestStatusCountsAsActivity(t *testing.T) {
 		}
 	}
 }
+
+func TestAccountPrivacySettingIDUsesCachedValue(t *testing.T) {
+	a := newTestApp(t)
+	if err := a.Store.SetState(privacySettingKey, "3"); err != nil {
+		t.Fatalf("SetState: %v", err)
+	}
+
+	// a.API is nil, so any API fallback would panic — the cached value must win.
+	if got := a.accountPrivacySettingID(t.Context()); got != 3 {
+		t.Fatalf("accountPrivacySettingID = %d, want cached 3", got)
+	}
+}
