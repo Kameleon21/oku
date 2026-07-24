@@ -30,6 +30,7 @@ type TimerState struct {
 type DayActivity struct {
 	Date        time.Time
 	Minutes     int
+	Entries     int  // journal entries that day (progress updates, finished books, ...)
 	HasActivity bool // progress update or finished book that day (no timer minutes required)
 }
 

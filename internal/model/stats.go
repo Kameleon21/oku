@@ -36,6 +36,12 @@ type JournalEntry struct {
 	Event    string
 }
 
+// JournalDay is a calendar day with at least one journal entry.
+type JournalDay struct {
+	Date  time.Time
+	Count int
+}
+
 // YearSummary aggregates reading for a single calendar year.
 type YearSummary struct {
 	Year          int
