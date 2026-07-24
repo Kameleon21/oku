@@ -59,10 +59,11 @@ func (s *Store) InsertLocalJournal(actionAt time.Time, event string) error {
 	return nil
 }
 
-// GetJournalDays returns the distinct calendar days with at least one journal
-// entry in the given range. Date-only timestamps (midnight) are taken as-is;
-// timestamps with a time component are converted to local time first.
-func (s *Store) GetJournalDays(from, to time.Time) ([]time.Time, error) {
+// GetJournalDays returns the calendar days with at least one journal entry in
+// the given range, with the number of entries per day. Date-only timestamps
+// (midnight) are taken as-is; timestamps with a time component are converted
+// to local time first.
+func (s *Store) GetJournalDays(from, to time.Time) ([]model.JournalDay, error) {
 	const query = `
 SELECT action_at FROM reading_journals
 WHERE date(action_at) >= date(?) AND date(action_at) <= date(?)
@@ -73,8 +74,7 @@ WHERE date(action_at) >= date(?) AND date(action_at) <= date(?)
 	}
 	defer rows.Close()
 
-	seen := make(map[string]struct{})
-	var days []time.Time
+	counts := make(map[string]int)
 	for rows.Next() {
 		var raw string
 		if err := rows.Scan(&raw); err != nil {
@@ -88,16 +88,19 @@ WHERE date(action_at) >= date(?) AND date(action_at) <= date(?)
 		} else if t.Hour() != 0 || t.Minute() != 0 {
 			t = t.In(time.Local)
 		}
-		key := t.Format("2006-01-02")
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		day, _ := time.ParseInLocation("2006-01-02", key, time.Local)
-		days = append(days, day)
+		counts[t.Format("2006-01-02")]++
 	}
-	sort.Slice(days, func(i, j int) bool { return days[i].Before(days[j]) })
-	return days, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	days := make([]model.JournalDay, 0, len(counts))
+	for key, n := range counts {
+		day, _ := time.ParseInLocation("2006-01-02", key, time.Local)
+		days = append(days, model.JournalDay{Date: day, Count: n})
+	}
+	sort.Slice(days, func(i, j int) bool { return days[i].Date.Before(days[j].Date) })
+	return days, nil
 }
 
 // ReplaceGoals atomically swaps the cached reading goals.

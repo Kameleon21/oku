@@ -68,6 +68,9 @@ func TestGetHeatmapMarksJournalOnlyDays(t *testing.T) {
 	if todayAct.Minutes != 0 || !todayAct.HasActivity {
 		t.Fatalf("today = {Minutes: %d, HasActivity: %v}, want {0, true}", todayAct.Minutes, todayAct.HasActivity)
 	}
+	if todayAct.Entries != 1 {
+		t.Fatalf("today Entries = %d, want 1", todayAct.Entries)
+	}
 	if yesterdayAct == nil {
 		t.Fatal("yesterday missing from heatmap")
 	}

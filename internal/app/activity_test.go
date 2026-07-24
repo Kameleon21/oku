@@ -21,8 +21,11 @@ func TestLogLocalJournalRecordsToday(t *testing.T) {
 	if len(days) != 1 {
 		t.Fatalf("got %d days, want 1", len(days))
 	}
-	if got, want := days[0].Format("2006-01-02"), now.Format("2006-01-02"); got != want {
+	if got, want := days[0].Date.Format("2006-01-02"), now.Format("2006-01-02"); got != want {
 		t.Fatalf("day = %s, want %s", got, want)
+	}
+	if days[0].Count != 1 {
+		t.Fatalf("count = %d, want 1", days[0].Count)
 	}
 }
 

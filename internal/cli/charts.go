@@ -83,101 +83,167 @@ func renderBarChartH(rows []model.LabelCount, labelW, barW int, filled lipgloss.
 
 // ── Activity heatmap (GitHub-style) ─────────────────────────────────────────
 
-func intensityCellTUI(minutes, maxMinutes int, active bool) string {
-	if minutes <= 0 {
-		if active {
-			return heatmapLevel2Style.Render("▪")
+// heatmapPrefixW is the width of the row-label gutter ("  Mo  "); each week
+// column is heatmapWeekW chars wide (cell + space).
+const (
+	heatmapPrefixW = 6
+	heatmapWeekW   = 2
+)
+
+// heatmapLevel maps a day's activity to an intensity level 0 (none) to 4
+// (highest). Timer minutes scale relative to the busiest day; journal entries
+// use absolute buckets so a day with one progress update stays light and a
+// heavy logging day reads dark. The stronger of the two wins.
+func heatmapLevel(a model.DayActivity, maxMinutes int) int {
+	level := 0
+	if a.Minutes > 0 && maxMinutes > 0 {
+		ratio := float64(a.Minutes) / float64(maxMinutes)
+		switch {
+		case ratio > 0.75:
+			level = 4
+		case ratio > 0.5:
+			level = 3
+		case ratio > 0.25:
+			level = 2
+		default:
+			level = 1
 		}
-		return heatmapEmptyStyle.Render("·")
 	}
-	ratio := float64(minutes) / float64(maxMinutes)
+	entryLevel := 0
 	switch {
-	case ratio > 0.75:
-		return heatmapLevel4Style.Render("█")
-	case ratio > 0.5:
-		return heatmapLevel3Style.Render("▓")
-	case ratio > 0.25:
-		return heatmapLevel2Style.Render("▒")
+	case a.Entries >= 6:
+		entryLevel = 4
+	case a.Entries >= 4:
+		entryLevel = 3
+	case a.Entries >= 2:
+		entryLevel = 2
+	case a.Entries >= 1 || a.HasActivity:
+		entryLevel = 1
+	}
+	if entryLevel > level {
+		level = entryLevel
+	}
+	return level
+}
+
+// heatmapCellPlain renders an intensity level as a bare glyph (for `oku stats`).
+func heatmapCellPlain(level int) string {
+	switch level {
+	case 4:
+		return "█"
+	case 3:
+		return "▓"
+	case 2:
+		return "▒"
+	case 1:
+		return "░"
 	default:
-		return heatmapLevel1Style.Render("░")
+		return "·"
 	}
 }
 
-// renderHeatmapTUI returns a heatmap string for the TUI (no printing to stdout).
-func renderHeatmapTUI(activities []model.DayActivity, weeks, availWidth int) string {
-	actMap := make(map[string]model.DayActivity, len(activities))
-	for _, a := range activities {
-		actMap[a.Date.Format("2006-01-02")] = a
+// heatmapCellStyled renders an intensity level with TUI colors.
+func heatmapCellStyled(level int) string {
+	switch level {
+	case 4:
+		return heatmapLevel4Style.Render("█")
+	case 3:
+		return heatmapLevel3Style.Render("▓")
+	case 2:
+		return heatmapLevel2Style.Render("▒")
+	case 1:
+		return heatmapLevel1Style.Render("░")
+	default:
+		return heatmapEmptyStyle.Render("·")
+	}
+}
+
+// buildHeatmap renders a GitHub-style activity grid ending at today: month
+// labels aligned to their week columns, all seven weekday rows, and a
+// Less→More legend. cell renders one intensity level (0-4) as a single-width
+// glyph; dim styles the labels and may be nil for plain output.
+func buildHeatmap(activities []model.DayActivity, weeks int, cell func(level int) string, dim func(string) string) string {
+	if dim == nil {
+		dim = func(s string) string { return s }
 	}
 
+	actMap := make(map[string]model.DayActivity, len(activities))
 	maxMin := 1
 	for _, a := range activities {
+		actMap[a.Date.Format("2006-01-02")] = a
 		if a.Minutes > maxMin {
 			maxMin = a.Minutes
 		}
 	}
 
-	// Adapt weeks to available width: each week takes ~3 chars.
-	maxWeeks := (availWidth - 8) / 3
-	if maxWeeks < 4 {
-		maxWeeks = 4
-	}
-	if weeks > maxWeeks {
-		weeks = maxWeeks
-	}
-
 	now := time.Now()
-	weekday := (int(now.Weekday()) + 6) % 7
+	weekday := (int(now.Weekday()) + 6) % 7 // Mon=0 .. Sun=6
 	endDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	startDate := endDate.AddDate(0, 0, -(weeks-1)*7-weekday)
 
 	var sb strings.Builder
 
-	// Month labels.
-	sb.WriteString("       ")
+	// Month labels, written into a buffer so each lands on the column of the
+	// week where that month starts.
+	labels := make([]rune, heatmapPrefixW+weeks*heatmapWeekW+len("Jan"))
+	for i := range labels {
+		labels[i] = ' '
+	}
 	lastMonth := -1
+	lastEnd := -1
 	for w := 0; w < weeks; w++ {
 		d := startDate.AddDate(0, 0, w*7)
 		m := int(d.Month())
-		if m != lastMonth {
-			sb.WriteString(fmt.Sprintf("%-3s", d.Format("Jan")))
-			lastMonth = m
-		} else {
-			sb.WriteString("   ")
+		if m == lastMonth {
+			continue
 		}
+		lastMonth = m
+		pos := heatmapPrefixW + w*heatmapWeekW
+		if pos <= lastEnd {
+			continue
+		}
+		name := d.Format("Jan")
+		copy(labels[pos:], []rune(name))
+		lastEnd = pos + len(name)
 	}
+	sb.WriteString(dim(strings.TrimRight(string(labels), " ")))
 	sb.WriteString("\n")
 
-	// Rows.
 	dayLabels := [7]string{"Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"}
-	displayRows := []int{0, 2, 4, 6}
-	for _, dayIdx := range displayRows {
-		sb.WriteString(fmt.Sprintf("  %s   ", dayLabels[dayIdx]))
+	for dayIdx := 0; dayIdx < 7; dayIdx++ {
+		sb.WriteString(dim(fmt.Sprintf("  %s  ", dayLabels[dayIdx])))
 		for w := 0; w < weeks; w++ {
 			d := startDate.AddDate(0, 0, w*7+dayIdx)
 			if d.After(endDate) {
 				sb.WriteString("  ")
 				continue
 			}
-			key := d.Format("2006-01-02")
-			act := actMap[key]
-			sb.WriteString(intensityCellTUI(act.Minutes, maxMin, act.HasActivity) + " ")
+			act := actMap[d.Format("2006-01-02")]
+			sb.WriteString(cell(heatmapLevel(act, maxMin)) + " ")
 		}
 		sb.WriteString("\n")
 	}
 
-	// Legend.
-	sb.WriteString("\n  Less ")
-	sb.WriteString(intensityCellTUI(0, maxMin, false))
-	sb.WriteString(" ")
-	sb.WriteString(intensityCellTUI(maxMin/4, maxMin, false))
-	sb.WriteString(" ")
-	sb.WriteString(intensityCellTUI(maxMin/2, maxMin, false))
-	sb.WriteString(" ")
-	sb.WriteString(intensityCellTUI(maxMin, maxMin, false))
-	sb.WriteString(" More")
+	sb.WriteString("\n" + dim("  Less "))
+	for lvl := 0; lvl <= 4; lvl++ {
+		sb.WriteString(cell(lvl) + " ")
+	}
+	sb.WriteString(dim("More"))
 
 	return sb.String()
+}
+
+// renderHeatmapTUI returns a heatmap string for the TUI (no printing to stdout).
+func renderHeatmapTUI(activities []model.DayActivity, weeks, availWidth int) string {
+	// Adapt weeks to available width: gutter + 2 chars per week.
+	maxWeeks := (availWidth - heatmapPrefixW - 2) / heatmapWeekW
+	if maxWeeks < 4 {
+		maxWeeks = 4
+	}
+	if weeks > maxWeeks {
+		weeks = maxWeeks
+	}
+	return buildHeatmap(activities, weeks, heatmapCellStyled, func(s string) string { return dimStyleTUI.Render(s) })
 }
 
 // clipLines returns at most height lines of s starting at offset, clamping the

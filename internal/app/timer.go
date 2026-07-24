@@ -131,10 +131,11 @@ func (a *App) GetHeatmap(weeks int) ([]model.DayActivity, error) {
 		byDate[act.Date.Format("2006-01-02")] = i
 	}
 	for _, d := range days {
-		if i, ok := byDate[d.Format("2006-01-02")]; ok {
+		if i, ok := byDate[d.Date.Format("2006-01-02")]; ok {
+			acts[i].Entries = d.Count
 			acts[i].HasActivity = true
 		} else {
-			acts = append(acts, model.DayActivity{Date: d, HasActivity: true})
+			acts = append(acts, model.DayActivity{Date: d.Date, Entries: d.Count, HasActivity: true})
 		}
 	}
 	sort.Slice(acts, func(i, j int) bool { return acts[i].Date.Before(acts[j].Date) })
