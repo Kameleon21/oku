@@ -43,7 +43,7 @@ func newSetActiveCmd() *cobra.Command {
 			}
 			defer a.Store.Close()
 
-			if err := a.SetActiveBook(bookID); err != nil {
+			if err := a.AddActiveBook(bookID); err != nil {
 				return err
 			}
 			fmt.Printf("Added book ID %d to active list\n", bookID)

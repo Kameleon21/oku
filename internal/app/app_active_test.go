@@ -99,7 +99,7 @@ func TestActiveBooksSupportMultipleWithoutPrimary(t *testing.T) {
 	upsertReadingBook(t, a, 100, 1, "Book One")
 	upsertReadingBook(t, a, 101, 2, "Book Two")
 
-	if err := a.SetActiveBook(1); err != nil {
+	if err := a.AddActiveBook(1); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.AddActiveBook(2); err != nil {
@@ -164,7 +164,7 @@ func TestRemoveActiveBookLeavesSingleDefault(t *testing.T) {
 	upsertReadingBook(t, a, 100, 1, "Book One")
 	upsertReadingBook(t, a, 101, 2, "Book Two")
 
-	if err := a.SetActiveBook(1); err != nil {
+	if err := a.AddActiveBook(1); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.AddActiveBook(2); err != nil {
