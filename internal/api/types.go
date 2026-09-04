@@ -223,7 +223,7 @@ func (v *FlexibleFloat) UnmarshalJSON(data []byte) error {
 			*v = 0
 			return nil
 		}
-		n, err := strconv.ParseFloat(unquoted, 64)
+		n, err := parseFlexibleFloat(unquoted)
 		if err != nil {
 			return fmt.Errorf("parse quoted float %q: %w", unquoted, err)
 		}
@@ -232,12 +232,25 @@ func (v *FlexibleFloat) UnmarshalJSON(data []byte) error {
 	}
 
 	// Raw number: 4.23
-	n, err := strconv.ParseFloat(s, 64)
+	n, err := parseFlexibleFloat(s)
 	if err != nil {
 		return fmt.Errorf("parse float %q: %w", s, err)
 	}
 	*v = FlexibleFloat(n)
 	return nil
+}
+
+// parseFlexibleFloat parses a float and rejects NaN/Inf, which JSON cannot
+// represent and which would poison averages and ratings downstream.
+func parseFlexibleFloat(s string) (float64, error) {
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0, err
+	}
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, fmt.Errorf("not a finite number")
+	}
+	return f, nil
 }
 
 // InsertUserBookResponse is the response shape for inserting a user book.

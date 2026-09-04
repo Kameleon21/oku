@@ -68,6 +68,10 @@ func TestFlexibleFloatUnmarshalJSON(t *testing.T) {
 	}{
 		{name: "number", in: `4.2`, want: 4.2},
 		{name: "quoted number", in: `"3.75"`, want: 3.75},
+		{name: "NaN", in: `"NaN"`, wantErr: true},
+		{name: "Inf", in: `"Inf"`, wantErr: true},
+		{name: "negative Inf", in: `"-Infinity"`, wantErr: true},
+		{name: "huge exponent", in: `1e999`, wantErr: true},
 		{name: "null", in: `null`, want: 0},
 		{name: "quoted empty", in: `""`, want: 0},
 		{name: "invalid", in: `"abc"`, wantErr: true},
