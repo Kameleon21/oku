@@ -363,7 +363,8 @@ func (m dashboardModel) timerView(w int) string {
 	now := time.Now()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	for _, s := range m.recentSessions {
-		sessionDate := time.Date(s.StartedAt.Year(), s.StartedAt.Month(), s.StartedAt.Day(), 0, 0, 0, 0, s.StartedAt.Location())
+		started := s.StartedAt.Local()
+		sessionDate := time.Date(started.Year(), started.Month(), started.Day(), 0, 0, 0, 0, started.Location())
 		if sessionDate.Equal(today) {
 			todayCount++
 			todayMinutes += int(s.Duration().Minutes())
@@ -388,8 +389,9 @@ func (m dashboardModel) timerView(w int) string {
 			if i >= 5 {
 				break
 			}
-			dateStr := s.StartedAt.Local().Format("Jan 02")
-			sessionDate := time.Date(s.StartedAt.Year(), s.StartedAt.Month(), s.StartedAt.Day(), 0, 0, 0, 0, s.StartedAt.Location())
+			started := s.StartedAt.Local()
+			dateStr := started.Format("Jan 02")
+			sessionDate := time.Date(started.Year(), started.Month(), started.Day(), 0, 0, 0, 0, started.Location())
 			if sessionDate.Equal(today) {
 				dateStr = "Today"
 			} else if sessionDate.Equal(yesterday) {

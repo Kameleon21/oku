@@ -273,29 +273,27 @@ type dashboardModel struct {
 	searchLoading      bool
 	searchLoadingQuery string
 	searchSeq          int
-
-	searchMode      searchInputMode
-	searchSub       searchSubFocus
-	searchQueryMode model.SearchMode
-	recentSearches  []string
-	density         outputDensity
+	searchMode         searchInputMode
+	searchSub          searchSubFocus
+	searchQueryMode    model.SearchMode
+	recentSearches     []string
+	density            outputDensity
 
 	showHelp bool
 
 	// Local data for stats/timer sections.
-	timerState *model.TimerState
-	// timerBook is the running timer's book, resolved when local data loads
-	// so that View never queries the store.
-	timerBook *model.Book
-	// timerTicking reports whether the one-second tick loop is armed; it only
-	// runs while a timer is actually running.
-	timerTicking bool
-	readingStats *model.ReadingStats
-
+	timerState     *model.TimerState
+	readingStats   *model.ReadingStats
 	weeklyStats    model.WeeklyStats
 	recentSessions []model.ReadingSession
 	localLoaded    bool
 	statsScroll    int
+	// timerBook is the running timer's book, resolved when local data loads so
+	// that View never queries the store.
+	timerBook *model.Book
+	// timerTicking reports whether the one-second tick loop is armed; it only
+	// runs while a timer is actually running.
+	timerTicking bool
 
 	timerSelecting bool
 	timerSelectIdx int
@@ -418,7 +416,6 @@ func (m dashboardModel) Init() tea.Cmd {
 		loadLocalDataCmd(m.app),
 		backgroundCheckCmd(),
 	)
-
 }
 
 // ── Update ─────────────────────────────────────────────────────────────────
@@ -913,8 +910,10 @@ func (m dashboardModel) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				cmd := m.cycleDensity()
 				return m, cmd
 			case "enter":
-				return m, m.submitSearch()
+				cmd := m.submitSearch()
+				return m, cmd
 			case "l", "right", "tab":
+
 				m.nextSection()
 				m.searchInput.Blur()
 				return m, nil
@@ -941,11 +940,9 @@ func (m dashboardModel) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
-		case "?":
-			m.showHelp = true
-			return m, nil
 		case "enter":
-			return m, m.submitSearch()
+			cmd := m.submitSearch()
+			return m, cmd
 		case "esc":
 			m.enterSearchNormalMode()
 			return m, nil
@@ -977,8 +974,8 @@ func (m dashboardModel) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if r := m.selectedSearchResult(); r != nil {
 			return m.startOp(addFromSearchCmd(m.ctx, m.app, r.ID, model.StatusCurrentlyReading))
 		}
-
 	case "g":
+
 		return m.changeSelectedSearchStatus(model.StatusCurrentlyReading)
 	case "w":
 		return m.changeSelectedSearchStatus(model.StatusWantToRead)
@@ -988,10 +985,6 @@ func (m dashboardModel) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.changeSelectedSearchStatus(model.StatusDidNotFinish)
 	case "z":
 		cmd := m.cycleDensity()
-		return m, cmd
-	case "j", "down", "k", "up":
-		var cmd tea.Cmd
-		m.searchList, cmd = m.searchList.Update(msg)
 		return m, cmd
 	}
 
@@ -1458,11 +1451,10 @@ func (m dashboardModel) formatSectionLabel(id focusSection, label string, count 
 func (m dashboardModel) sectionContent(id focusSection, w, h int) string {
 	switch id {
 	case sectionReading:
-		m.readingList.SetSize(w, h)
 		return m.readingList.View()
 	case sectionOku:
-		m.okuList.SetSize(w, h)
 		return m.okuList.View()
+
 	case sectionSearch:
 		return m.searchSectionContent(w)
 	default:
