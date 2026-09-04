@@ -45,11 +45,10 @@ func (m dashboardModel) introView(w int) string {
 	if m.timerState != nil {
 		elapsed := time.Since(m.timerState.StartedAt)
 		bookTitle := ""
-		if m.timerState.BookID > 0 && m.app != nil {
-			if b, err := m.app.Store.GetBookByID(m.timerState.BookID); err == nil && b != nil {
-				bookTitle = b.Title
-			}
+		if m.timerBook != nil {
+			bookTitle = m.timerBook.Title
 		}
+
 		if bookTitle != "" {
 			writeField("Timer", fmt.Sprintf("%s (%s)", formatDuration(elapsed), bookTitle))
 		} else {
@@ -332,16 +331,14 @@ func (m dashboardModel) timerView(w int) string {
 		sb.WriteString(dimStyleTUI.Render("  Press [t] to choose a book and start."))
 	} else {
 		// Book info.
-		if m.timerState.BookID > 0 && m.app != nil {
-			if b, err := m.app.Store.GetBookByID(m.timerState.BookID); err == nil && b != nil {
-				sb.WriteString(valueStyle.Render("  " + b.Title))
-				sb.WriteString("\n")
-				if author := b.AuthorString(); author != "" {
-					sb.WriteString(dimStyleTUI.Render("  " + author))
-					sb.WriteString("\n")
-				}
+		if m.timerBook != nil {
+			sb.WriteString(valueStyle.Render("  " + m.timerBook.Title))
+			sb.WriteString("\n")
+			if author := m.timerBook.AuthorString(); author != "" {
+				sb.WriteString(dimStyleTUI.Render("  " + author))
 				sb.WriteString("\n")
 			}
+			sb.WriteString("\n")
 		}
 
 		// Large timer display.

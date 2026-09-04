@@ -202,6 +202,7 @@ func TestSearchLoadedMsgTransitionsToResults(t *testing.T) {
 	m.searchLoading = true
 	m.section = sectionSearch
 	m.searchSub = searchSubInput
+	m.searchQueryMode = model.SearchModeAuthor
 
 	updated, _ := m.Update(searchLoadedMsg{
 		results: []model.SearchResult{{ID: 1, Title: "Dune"}},
@@ -219,9 +220,10 @@ func TestSearchLoadedMsgTransitionsToResults(t *testing.T) {
 	if got.lastQuery != "dune" {
 		t.Fatalf("lastQuery = %q, want dune", got.lastQuery)
 	}
-	if got.searchQueryMode != model.SearchModeAuthor {
-		t.Fatalf("searchQueryMode = %q, want %q", got.searchQueryMode, model.SearchModeAuthor)
+	if got.lastSearchMode != model.SearchModeAuthor {
+		t.Fatalf("lastSearchMode = %q, want %q", got.lastSearchMode, model.SearchModeAuthor)
 	}
+
 	if got.searchList.Title != "AUTHOR Results (1)" {
 		t.Fatalf("searchList title = %q, want %q", got.searchList.Title, "AUTHOR Results (1)")
 	}

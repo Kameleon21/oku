@@ -177,7 +177,10 @@ type searchLoadedMsg struct {
 	results []model.SearchResult
 	query   string
 	mode    model.SearchMode
-	err     error
+	// seq stamps the search this result belongs to; anything but the latest
+	// is dropped.
+	seq int
+	err error
 }
 
 // opKind identifies which operation an opDoneMsg belongs to, so a modal can
@@ -208,6 +211,7 @@ type localDataLoadedMsg struct {
 	readingStats   *model.ReadingStats
 	recentSessions []model.ReadingSession
 	timerState     *model.TimerState
+	timerBook      *model.Book
 	err            error
 }
 
@@ -268,17 +272,26 @@ type dashboardModel struct {
 
 	searchLoading      bool
 	searchLoadingQuery string
-	searchMode         searchInputMode
-	searchSub          searchSubFocus
-	searchQueryMode    model.SearchMode
-	recentSearches     []string
-	density            outputDensity
+	searchSeq          int
+
+	searchMode      searchInputMode
+	searchSub       searchSubFocus
+	searchQueryMode model.SearchMode
+	recentSearches  []string
+	density         outputDensity
 
 	showHelp bool
 
 	// Local data for stats/timer sections.
-	timerState     *model.TimerState
-	readingStats   *model.ReadingStats
+	timerState *model.TimerState
+	// timerBook is the running timer's book, resolved when local data loads
+	// so that View never queries the store.
+	timerBook *model.Book
+	// timerTicking reports whether the one-second tick loop is armed; it only
+	// runs while a timer is actually running.
+	timerTicking bool
+	readingStats *model.ReadingStats
+
 	weeklyStats    model.WeeklyStats
 	recentSessions []model.ReadingSession
 	localLoaded    bool
@@ -404,8 +417,8 @@ func (m dashboardModel) Init() tea.Cmd {
 		loadCachedLibraryCmd(m.app),
 		loadLocalDataCmd(m.app),
 		backgroundCheckCmd(),
-		timerTickCmd(),
 	)
+
 }
 
 // ── Update ─────────────────────────────────────────────────────────────────
@@ -443,6 +456,11 @@ func (m dashboardModel) updateCommon(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case timerTickMsg:
+		if m.timerState == nil {
+			// Nothing to animate: let the tick loop stop.
+			m.timerTicking = false
+			return m, nil
+		}
 		// Just triggers a re-render for the timer display.
 		return m, timerTickCmd()
 
@@ -469,7 +487,9 @@ func (m dashboardModel) updateCommon(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.recentSessions = msg.recentSessions
 		m.timerState = msg.timerState
-		return m, nil
+		m.timerBook = msg.timerBook
+		cmd := m.startTimerTick()
+		return m, cmd
 
 	case timerOpDoneMsg:
 		m.loading = false
@@ -544,19 +564,24 @@ func (m dashboardModel) applyLibraryLoaded(msg libraryLoadedMsg) (tea.Model, tea
 	if m.timerSelectIdx >= len(m.readingBooks) {
 		m.timerSelectIdx = max(0, len(m.readingBooks)-1)
 	}
-	m.refreshListItems()
+	cmd := m.refreshListItems()
 	m.updateSearchSuggestions()
 	m.errMsg = ""
 	if reconciled {
 		m.dirty = false
 	}
 	if msg.needsRefresh {
-		return m.startOp(loadLibraryCmd(m.ctx, m.app, true))
+		refresh := m.beginLoading(loadLibraryCmd(m.ctx, m.app, true))
+		return m, tea.Batch(cmd, refresh)
 	}
-	return m, nil
+	return m, cmd
 }
 
 func (m dashboardModel) applySearchLoaded(msg searchLoadedMsg) (tea.Model, tea.Cmd) {
+	if msg.seq != m.searchSeq {
+		// A newer search superseded this one.
+		return m, nil
+	}
 	m.loading = false
 	m.searchLoading = false
 	m.searchLoadingQuery = ""
@@ -565,24 +590,28 @@ func (m dashboardModel) applySearchLoaded(msg searchLoadedMsg) (tea.Model, tea.C
 		m.infoMsg = ""
 		return m, nil
 	}
-	m.searchQueryMode = msg.mode
+	// Labels come from the mode the results were fetched with; the user may
+	// have switched modes since.
+	label := msg.mode.Label()
 	m.lastQuery = msg.query
 	m.lastSearchMode = msg.mode
 	m.searchBooks = msg.results
-	m.refreshSearchResultItems()
-	m.searchList.Title = fmt.Sprintf("%s Results (%d)", m.searchQueryMode.Label(), len(msg.results))
-	if len(msg.results) > 0 {
+	cmd := m.refreshSearchResultItems()
+	m.searchList.Title = fmt.Sprintf("%s Results (%d)", label, len(msg.results))
+	if len(msg.results) > 0 && m.section == sectionSearch {
+		// Only take focus if the user is still in the search section.
 		m.searchSub = searchSubResults
+		m.enterSearchNormalMode()
 	}
 	m.errMsg = ""
 	if len(msg.results) == 0 {
-		m.infoMsg = fmt.Sprintf("%s mode: no results for %q", strings.ToLower(m.searchQueryMode.Label()), msg.query)
+		m.infoMsg = fmt.Sprintf("%s mode: no results for %q", strings.ToLower(label), msg.query)
 	} else {
-		m.infoMsg = fmt.Sprintf("%s mode: loaded %d results", strings.ToLower(m.searchQueryMode.Label()), len(msg.results))
+		m.infoMsg = fmt.Sprintf("%s mode: loaded %d results", strings.ToLower(label), len(msg.results))
 	}
 	m.addRecentSearchQuery(msg.query)
 	m.updateSearchSuggestions()
-	return m, nil
+	return m, cmd
 }
 
 // applyOpDone applies the result of a mutating operation.
@@ -671,6 +700,16 @@ func (m *dashboardModel) startSpinner() tea.Cmd {
 	}
 	m.spinning = true
 	return m.spin.Tick
+}
+
+// startTimerTick arms the one-second tick that refreshes the elapsed time,
+// but only while a timer runs and no tick loop is armed yet.
+func (m *dashboardModel) startTimerTick() tea.Cmd {
+	if m.timerTicking || m.timerState == nil {
+		return nil
+	}
+	m.timerTicking = true
+	return timerTickCmd()
 }
 
 func (m dashboardModel) updateLibraryMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -802,8 +841,8 @@ func (m dashboardModel) handleLibraryKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.startOp(syncAllAndReloadCmd(m.ctx, m.app))
 
 	case "z":
-		m.cycleDensity()
-		return m, nil
+		cmd := m.cycleDensity()
+		return m, cmd
 	case "enter":
 		if m.section == sectionOku {
 			return m.changeSelectedLibraryStatus(model.StatusCurrentlyReading)
@@ -871,8 +910,8 @@ func (m dashboardModel) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.setSearchQueryMode(model.SearchModeGenre)
 				return m, nil
 			case "z":
-				m.cycleDensity()
-				return m, nil
+				cmd := m.cycleDensity()
+				return m, cmd
 			case "enter":
 				return m, m.submitSearch()
 			case "l", "right", "tab":
@@ -948,8 +987,8 @@ func (m dashboardModel) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "d":
 		return m.changeSelectedSearchStatus(model.StatusDidNotFinish)
 	case "z":
-		m.cycleDensity()
-		return m, nil
+		cmd := m.cycleDensity()
+		return m, cmd
 	case "j", "down", "k", "up":
 		var cmd tea.Cmd
 		m.searchList, cmd = m.searchList.Update(msg)
@@ -1885,11 +1924,12 @@ func (m *dashboardModel) submitSearch() tea.Cmd {
 		query,
 	)
 	m.searchList.Title = fmt.Sprintf("%s Results (loading...)", m.searchQueryMode.Label())
-	return m.beginLoading(searchCmd(m.ctx, m.app, query, m.searchQueryMode))
+	m.searchSeq++
+	return m.beginLoading(searchCmd(m.ctx, m.app, query, m.searchQueryMode, m.searchSeq))
 
 }
 
-func (m *dashboardModel) cycleDensity() {
+func (m *dashboardModel) cycleDensity() tea.Cmd {
 	switch m.density {
 	case densityCompact:
 		m.density = densityDefault
@@ -1898,9 +1938,9 @@ func (m *dashboardModel) cycleDensity() {
 	default:
 		m.density = densityCompact
 	}
-	m.refreshListItems()
-	m.refreshSearchResultItems()
+	cmd := tea.Batch(m.refreshListItems(), m.refreshSearchResultItems())
 	m.infoMsg = "Density: " + densityLabel(m.density)
+	return cmd
 }
 
 func densityLabel(d outputDensity) string {
@@ -2058,7 +2098,9 @@ func (m *dashboardModel) resize() {
 
 // ── List helpers ───────────────────────────────────────────────────────────
 
-func (m *dashboardModel) refreshListItems() {
+// refreshListItems rebuilds both library lists. The returned command must be
+// run: with filtering enabled, SetItems reapplies an active filter.
+func (m *dashboardModel) refreshListItems() tea.Cmd {
 	toItems := func(books []model.UserBook) []list.Item {
 		items := make([]list.Item, 0, len(books))
 		for _, b := range books {
@@ -2069,13 +2111,14 @@ func (m *dashboardModel) refreshListItems() {
 		}
 		return items
 	}
-	m.readingList.SetItems(toItems(m.readingBooks))
-	m.okuList.SetItems(toItems(m.okuBooks))
+	readingCmd := m.readingList.SetItems(toItems(m.readingBooks))
+	okuCmd := m.okuList.SetItems(toItems(m.okuBooks))
 	m.readingList.Title = fmt.Sprintf("Reading (%d)", len(m.readingBooks))
 	m.okuList.Title = fmt.Sprintf("Oku (%d)", len(m.okuBooks))
+	return tea.Batch(readingCmd, okuCmd)
 }
 
-func (m *dashboardModel) refreshSearchResultItems() {
+func (m *dashboardModel) refreshSearchResultItems() tea.Cmd {
 	m.applySearchListDensityLayout()
 
 	idx := m.searchList.Index()
@@ -2086,9 +2129,9 @@ func (m *dashboardModel) refreshSearchResultItems() {
 			density: m.density,
 		})
 	}
-	m.searchList.SetItems(items)
+	cmd := m.searchList.SetItems(items)
 	if len(items) == 0 {
-		return
+		return cmd
 	}
 	if idx < 0 {
 		idx = 0
@@ -2097,6 +2140,7 @@ func (m *dashboardModel) refreshSearchResultItems() {
 		idx = len(items) - 1
 	}
 	m.searchList.Select(idx)
+	return cmd
 }
 
 func (m *dashboardModel) applySearchListDensityLayout() {
@@ -2247,6 +2291,14 @@ func loadLocalDataCmd(a *app.App) tea.Cmd {
 			return localDataLoadedMsg{err: err}
 		}
 
+		// Resolved here, off the render path: View must not query the store.
+		var timerBook *model.Book
+		if timer != nil && timer.BookID > 0 {
+			if b, err := a.Store.GetBookByID(timer.BookID); err == nil {
+				timerBook = b
+			}
+		}
+
 		if shouldUseDemoLocalData() {
 			stats, sessions = demoLocalData()
 		}
@@ -2255,7 +2307,9 @@ func loadLocalDataCmd(a *app.App) tea.Cmd {
 			readingStats:   stats,
 			recentSessions: sessions,
 			timerState:     timer,
+			timerBook:      timerBook,
 		}
+
 	}
 }
 
@@ -2356,13 +2410,14 @@ func demoLocalData() (*model.ReadingStats, []model.ReadingSession) {
 	return readingStats, sessions
 }
 
-func searchCmd(ctx context.Context, a *app.App, query string, mode model.SearchMode) tea.Cmd {
+func searchCmd(ctx context.Context, a *app.App, query string, mode model.SearchMode, seq int) tea.Cmd {
 	return func() tea.Msg {
 		results, err := a.SearchBooks(ctx, query, 10, mode)
 		return searchLoadedMsg{
 			results: results,
 			query:   query,
 			mode:    mode,
+			seq:     seq,
 			err:     err,
 		}
 	}
