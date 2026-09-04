@@ -66,30 +66,60 @@ func TestBuildHeatmapShowsAllWeekdays(t *testing.T) {
 	}
 }
 
-func TestBuildHeatmapMonthLabelAlignsWithColumns(t *testing.T) {
-	out := buildHeatmap(nil, 26, heatmapCellPlain, nil)
-	lines := strings.Split(out, "\n")
+// heatmapMonday returns the Monday that starts the week containing d.
+func heatmapMonday(d time.Time) time.Time {
+	weekday := (int(d.Weekday()) + 6) % 7
+	return time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, d.Location()).AddDate(0, 0, -weekday)
+}
 
-	// The current month's label must sit within the grid, over the final
-	// weeks' columns (the old renderer drifted it past the right edge).
-	monthRow := lines[0]
-	name := time.Now().Format("Jan")
-	pos := strings.LastIndex(monthRow, name)
-	if pos < 0 {
-		t.Fatalf("month row %q missing current month %q", monthRow, name)
+func TestBuildHeatmapMonthLabelAlignsWithColumns(t *testing.T) {
+	const weeks = 26
+	cases := []struct {
+		name string
+		now  time.Time
+	}{
+		{"month starts on Tuesday", time.Date(2026, time.September, 4, 12, 0, 0, 0, time.Local)},
+		{"month starts on Monday", time.Date(2026, time.June, 15, 12, 0, 0, 0, time.Local)},
+		{"month starts on Sunday", time.Date(2026, time.March, 1, 12, 0, 0, 0, time.Local)},
+		{"today is the 1st", time.Date(2026, time.October, 1, 12, 0, 0, 0, time.Local)},
 	}
-	gridW := heatmapPrefixW + 26*heatmapWeekW
-	if pos >= gridW {
-		t.Errorf("label %q at col %d, beyond grid width %d", name, pos, gridW)
-	}
-	// The label's column must correspond to a week whose Monday is in the
-	// current month.
-	week := (pos - heatmapPrefixW) / heatmapWeekW
-	now := time.Now()
-	weekday := (int(now.Weekday()) + 6) % 7
-	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).
-		AddDate(0, 0, -25*7-weekday)
-	if got := start.AddDate(0, 0, week*7).Month(); got != now.Month() {
-		t.Errorf("label column maps to %s, want %s", got, now.Month())
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out := buildHeatmapAt(nil, weeks, c.now, heatmapCellPlain, nil)
+			monthRow := strings.Split(out, "\n")[0]
+			gridW := heatmapPrefixW + weeks*heatmapWeekW
+			if len([]rune(monthRow)) > gridW+len("Jan") {
+				t.Fatalf("month row wider than grid: %q", monthRow)
+			}
+
+			// Every month whose 1st lies inside the grid must be labelled on
+			// the column whose Mon–Sun span contains that 1st — including the
+			// current month, even when it started mid-week.
+			start := heatmapMonday(c.now).AddDate(0, 0, -(weeks-1)*7)
+			first := time.Date(start.Year(), start.Month(), 1, 0, 0, 0, 0, start.Location())
+			for first.Before(start) {
+				first = first.AddDate(0, 1, 0)
+			}
+			labelled := 0
+			for !first.After(c.now) {
+				week := 0
+				for col := start; heatmapMonday(first).After(col); col = col.AddDate(0, 0, 7) {
+					week++
+				}
+				pos := heatmapPrefixW + week*heatmapWeekW
+				name := first.Format("Jan")
+				if got := string([]rune(monthRow)[pos : pos+len(name)]); got != name {
+					t.Errorf("%s: want %q at col %d (week %d), month row %q", first.Format("2006-01-02"), name, pos, week, monthRow)
+				}
+				labelled++
+				first = first.AddDate(0, 1, 0)
+			}
+			if labelled == 0 {
+				t.Fatal("test covered no month boundaries")
+			}
+			if !strings.Contains(monthRow, c.now.Format("Jan")) {
+				t.Errorf("month row %q missing current month %q", monthRow, c.now.Format("Jan"))
+			}
+		})
 	}
 }
