@@ -9,12 +9,24 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	// defaultHeatmapWeeks matches the range GetReadingStats already fetches.
+	defaultHeatmapWeeks = 26
+	// maxHeatmapWeeks is a year: SyncStats only fetches a year of journals, so
+	// a wider grid adds empty columns the terminal has to fit.
+	maxHeatmapWeeks = 52
+)
+
 func newStatsCmd() *cobra.Command {
 	var weeks int
 	cmd := &cobra.Command{
 		Use:   "stats",
 		Short: "Show your Hardcover reading stats and activity heatmap",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateCount("weeks", weeks, maxHeatmapWeeks); err != nil {
+				return err
+			}
+
 			a, err := initLocalApp()
 			if err != nil {
 				return err
@@ -25,15 +37,16 @@ func newStatsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if weeks != 26 {
-				if heatmap, err := a.GetHeatmap(weeks); err == nil {
-					stats.Heatmap = heatmap
+			if weeks != defaultHeatmapWeeks {
+				heatmap, err := a.GetHeatmap(weeks)
+				if err != nil {
+					return err
 				}
+				stats.Heatmap = heatmap
 			}
 
 			if jsonOutput {
-				printJSON(stats)
-				return nil
+				return printJSON(stats)
 			}
 
 			fmt.Printf("\nReading Stats · %d\n\n", stats.Year.Year)
@@ -109,7 +122,7 @@ func newStatsCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().IntVar(&weeks, "weeks", 26, "Number of weeks to show in the heatmap")
+	cmd.Flags().IntVar(&weeks, "weeks", defaultHeatmapWeeks, fmt.Sprintf("Number of weeks to show in the heatmap (1-%d)", maxHeatmapWeeks))
 	return cmd
 }
 

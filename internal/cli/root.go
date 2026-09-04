@@ -100,7 +100,12 @@ func initApp() (*app.App, error) {
 		return nil, fmt.Errorf("create data dir: %w", err)
 	}
 
-	db, err := store.New(config.DBPath())
+	dbPath, err := config.DBPath()
+	if err != nil {
+		return nil, err
+	}
+
+	db, err := store.New(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -120,12 +125,29 @@ func initLocalApp() (*app.App, error) {
 		return nil, fmt.Errorf("create data dir: %w", err)
 	}
 
-	db, err := store.New(config.DBPath())
+	dbPath, err := config.DBPath()
+	if err != nil {
+		return nil, err
+	}
+
+	db, err := store.New(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
 	return app.New(nil, db, cfg), nil
+}
+
+// validateCount rejects count flags that are below 1 or above max (max <= 0
+// means unbounded), before they reach code that assumes a positive count.
+func validateCount(flag string, value, max int) error {
+	if value < 1 {
+		return fmt.Errorf("--%s must be at least 1 (got %d)", flag, value)
+	}
+	if max > 0 && value > max {
+		return fmt.Errorf("--%s must be at most %d (got %d)", flag, max, value)
+	}
+	return nil
 }
 
 // ctx returns a background context.

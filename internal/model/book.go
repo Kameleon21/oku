@@ -20,19 +20,33 @@ const (
 	StatusIgnored          Status = 6
 )
 
+// AllStatuses lists every Hardcover status, in status ID order.
+var AllStatuses = []Status{
+	StatusWantToRead,
+	StatusCurrentlyReading,
+	StatusRead,
+	StatusPaused,
+	StatusDidNotFinish,
+	StatusIgnored,
+}
+
 // StatusFromString maps CLI aliases to status IDs.
 func StatusFromString(s string) (Status, error) {
-	switch strings.ToLower(s) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "oku", "want", "wtr", "want-to-read":
 		return StatusWantToRead, nil
 	case "reading":
 		return StatusCurrentlyReading, nil
 	case "finished", "read", "done":
 		return StatusRead, nil
+	case "paused", "pause":
+		return StatusPaused, nil
 	case "dnf":
 		return StatusDidNotFinish, nil
+	case "ignored", "ignore":
+		return StatusIgnored, nil
 	default:
-		return 0, fmt.Errorf("unknown status: %q (valid: reading, oku, finished, dnf)", s)
+		return 0, fmt.Errorf("unknown status: %q (valid: reading, oku, finished, paused, dnf, ignored)", s)
 	}
 }
 

@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"os"
 
+	"github.com/Kameleon21/oku/internal/app"
 	"github.com/Kameleon21/oku/internal/model"
 	"github.com/spf13/cobra"
 )
@@ -11,7 +14,7 @@ func newStatusCmd() *cobra.Command {
 	var bookID int
 
 	cmd := &cobra.Command{
-		Use:   "status <reading|oku|finished|dnf>",
+		Use:   "status <reading|oku|finished|paused|dnf|ignored>",
 		Short: "Change a book's status",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -26,10 +29,16 @@ func newStatusCmd() *cobra.Command {
 			}
 			defer a.Store.Close()
 
-			if err := a.ChangeStatus(ctx(), bookID, status); err != nil {
+			// A cache-refresh failure still means the change reached
+			// Hardcover, so report success and warn instead of failing.
+			err = a.ChangeStatus(ctx(), bookID, status)
+			if err != nil && !errors.Is(err, app.ErrCacheRefresh) {
 				return err
 			}
 			fmt.Printf("Status changed to %s\n", statusStyle.Render(status.Label()))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+			}
 			return nil
 		},
 	}

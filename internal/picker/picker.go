@@ -2,7 +2,6 @@ package picker
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
@@ -40,27 +39,6 @@ func (i bookItem) FilterValue() string {
 	return i.book.Book.Title
 }
 
-// searchItem implements list.Item for search results.
-type searchItem struct {
-	result model.SearchResult
-}
-
-func (i searchItem) Title() string {
-	title := i.result.Title
-	if i.result.Pages > 0 {
-		title += fmt.Sprintf(" (%d pages)", i.result.Pages)
-	}
-	return title
-}
-
-func (i searchItem) Description() string {
-	return strings.Join(i.result.Authors, ", ")
-}
-
-func (i searchItem) FilterValue() string {
-	return i.result.Title
-}
-
 type pickerModel struct {
 	list     list.Model
 	choice   int
@@ -87,8 +65,6 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if item, ok := m.list.SelectedItem().(bookItem); ok {
 				m.choice = item.book.Book.ID
-			} else if item, ok := m.list.SelectedItem().(searchItem); ok {
-				m.choice = item.result.ID
 			}
 			m.quitting = true
 			return m, tea.Quit
@@ -118,33 +94,6 @@ func PickBook(books []model.UserBook, title string) (int, error) {
 	items := make([]list.Item, len(books))
 	for i, b := range books {
 		items[i] = bookItem{book: b}
-	}
-
-	delegate := list.NewDefaultDelegate()
-	delegate.Styles.SelectedTitle = selectedStyle
-	l := list.New(items, delegate, 60, min(len(items)*3+6, 20))
-	l.Title = title
-	l.Styles.Title = titleStyle
-	l.SetShowStatusBar(false)
-	l.SetFilteringEnabled(true)
-
-	m := pickerModel{list: l}
-	p := tea.NewProgram(m)
-
-	final, err := p.Run()
-	if err != nil {
-		return 0, fmt.Errorf("picker error: %w", err)
-	}
-
-	result := final.(pickerModel)
-	return result.choice, nil
-}
-
-// PickSearchResult presents an interactive picker for search results. Returns the book ID or 0 if cancelled.
-func PickSearchResult(results []model.SearchResult, title string) (int, error) {
-	items := make([]list.Item, len(results))
-	for i, r := range results {
-		items[i] = searchItem{result: r}
 	}
 
 	delegate := list.NewDefaultDelegate()
