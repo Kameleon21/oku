@@ -9,7 +9,13 @@ import (
 	"github.com/Kameleon21/oku/internal/model"
 )
 
-const cacheStaleAfter = 6 * time.Hour
+const (
+	cacheStaleAfter = 6 * time.Hour
+
+	// orphanBookMaxAgeDays is how long a cached book with no user_books row is
+	// kept before pruning.
+	orphanBookMaxAgeDays = 30
+)
 
 // ListBooks returns user books for the given status.
 // Serves from cache by default; if refresh is true, fetches from API first.
@@ -27,7 +33,8 @@ func (a *App) ListBooks(ctx context.Context, status model.Status, refresh bool) 
 
 	// Refresh when cache is empty or stale.
 	if !refresh {
-		stale, err := a.isStatusCacheStale(status)
+		var stale bool
+		stale, err = a.isStatusCacheStale(status)
 		if err != nil {
 			return nil, err
 		}
@@ -36,10 +43,13 @@ func (a *App) ListBooks(ctx context.Context, status model.Status, refresh bool) 
 				return nil, err
 			}
 			books, err = a.Store.ListUserBooks(status)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
-	return books, err
+	return books, nil
 }
 
 // ListCachedBooks returns locally cached books and reports whether the cache
@@ -76,8 +86,18 @@ func syncStateKey(status model.Status) string {
 	return fmt.Sprintf("last_sync_status_%d", int(status))
 }
 
-// syncStatus fetches books for a status from the API and replaces cached rows for that status.
+// syncStatus refreshes a single status and prunes books no status references
+// any more. Multi-status syncs use syncStatusOnly and prune once at the end.
 func (a *App) syncStatus(ctx context.Context, status model.Status) error {
+	if err := a.syncStatusOnly(ctx, status); err != nil {
+		return err
+	}
+	_ = a.Store.PruneOrphanBooks(orphanBookMaxAgeDays)
+	return nil
+}
+
+// syncStatusOnly fetches books for a status from the API and replaces cached rows for that status.
+func (a *App) syncStatusOnly(ctx context.Context, status model.Status) error {
 	apiBooks, err := a.API.ListUserBooks(ctx, int(status))
 	if err != nil {
 		return err
@@ -93,7 +113,6 @@ func (a *App) syncStatus(ctx context.Context, status model.Status) error {
 	}
 
 	_ = a.Store.SetState(syncStateKey(status), time.Now().UTC().Format(time.RFC3339))
-	_ = a.Store.PruneOrphanBooks(30)
 	return nil
 }
 

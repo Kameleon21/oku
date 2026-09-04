@@ -86,7 +86,12 @@ func TestStatusFromString(t *testing.T) {
 		{"read", StatusRead, false},
 		{"done", StatusRead, false},
 		{"dnf", StatusDidNotFinish, false},
+		{"paused", StatusPaused, false},
+		{"pause", StatusPaused, false},
+		{"ignored", StatusIgnored, false},
+		{"ignore", StatusIgnored, false},
 		{"Reading", StatusCurrentlyReading, false},
+		{"  reading  ", StatusCurrentlyReading, false},
 		{"READING", StatusCurrentlyReading, false},
 		{"invalid", 0, true},
 		{"", 0, true},
@@ -122,6 +127,7 @@ func TestStatusString(t *testing.T) {
 		{StatusRead, "finished"},
 		{StatusDidNotFinish, "dnf"},
 		{StatusPaused, "paused"},
+		{StatusIgnored, "ignored"},
 	}
 
 	for _, tt := range tests {
@@ -179,5 +185,20 @@ func TestStarString(t *testing.T) {
 				t.Fatalf("StarString(%v) = %q, want %q", tt.rating, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestAllStatusesRoundTripThroughStrings(t *testing.T) {
+	if len(AllStatuses) != 6 {
+		t.Fatalf("AllStatuses has %d entries, want 6", len(AllStatuses))
+	}
+	for _, status := range AllStatuses {
+		got, err := StatusFromString(status.String())
+		if err != nil {
+			t.Fatalf("StatusFromString(%q): %v", status.String(), err)
+		}
+		if got != status {
+			t.Fatalf("StatusFromString(%q) = %v, want %v", status.String(), got, status)
+		}
 	}
 }

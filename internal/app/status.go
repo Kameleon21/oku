@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/Kameleon21/oku/internal/model"
 )
@@ -32,9 +33,9 @@ func (a *App) ChangeStatus(ctx context.Context, bookID int, status model.Status)
 			a.logLocalJournal(journalEventFinished)
 		}
 		// Refresh status cache so we get full book metadata from API.
-		if err := a.syncStatus(ctx, status); err != nil {
-			return err
-		}
+		// Best-effort: the insert already happened remotely, so reporting a
+		// cache failure here would make a retry add the book twice.
+		_ = a.syncStatus(ctx, status)
 		return a.updateActiveBooksForStatus(resolvedID, status)
 	}
 
@@ -46,8 +47,10 @@ func (a *App) ChangeStatus(ctx context.Context, bookID int, status model.Status)
 		a.logLocalJournal(journalEventFinished)
 	}
 
-	// Update cache.
+	// Update cache. Touch updated_at so the book sorts as recently changed,
+	// matching what the API now holds.
 	ub.StatusID = status
+	ub.UpdatedAt = time.Now().UTC()
 	if err := a.Store.UpsertUserBook(*ub); err != nil {
 		return err
 	}
