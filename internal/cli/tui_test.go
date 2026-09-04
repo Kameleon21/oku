@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -13,8 +14,14 @@ func runeKey(r rune) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
 }
 
+// newTestDashboard builds a dashboard with no app, so every command that would
+// touch the network or the store reports an error instead.
+func newTestDashboard() dashboardModel {
+	return newDashboardModel(context.Background(), nil)
+}
+
 func TestSearchInputNormalModeNavigation(t *testing.T) {
-	m := newDashboardModel(nil)
+	m := newTestDashboard()
 	m.section = sectionSearch
 	m.searchSub = searchSubInput
 	m.searchMode = searchModeNormal
@@ -36,7 +43,7 @@ func TestSearchInputNormalModeNavigation(t *testing.T) {
 }
 
 func TestLoadLibraryCmdWithNilAppReturnsError(t *testing.T) {
-	cmd := loadLibraryCmd(nil, false)
+	cmd := loadLibraryCmd(context.Background(), nil, false)
 	if cmd == nil {
 		t.Fatal("loadLibraryCmd() returned nil cmd")
 	}
@@ -68,7 +75,7 @@ func TestLoadCachedLibraryCmdWithNilAppReturnsError(t *testing.T) {
 }
 
 func TestStaleCachedLibraryRendersBeforeRefresh(t *testing.T) {
-	m := newDashboardModel(nil)
+	m := newTestDashboard()
 	updated, cmd := m.updateLibraryMode(libraryLoadedMsg{
 		reading:      []model.UserBook{{Book: model.Book{ID: 1, Title: "Dune"}}},
 		needsRefresh: true,
@@ -90,7 +97,7 @@ func TestStaleCachedLibraryRendersBeforeRefresh(t *testing.T) {
 }
 
 func TestSearchInputInsertModeTypingAndEsc(t *testing.T) {
-	m := newDashboardModel(nil)
+	m := newTestDashboard()
 	m.section = sectionSearch
 	m.searchSub = searchSubInput
 	m.enterSearchInsertMode()
@@ -119,7 +126,7 @@ func TestSearchInputInsertModeTypingAndEsc(t *testing.T) {
 }
 
 func TestLibrarySectionVimNavigation(t *testing.T) {
-	m := newDashboardModel(nil)
+	m := newTestDashboard()
 	m.section = sectionReading
 
 	updated, _ := m.updateLibraryMode(runeKey('l'))
@@ -136,7 +143,7 @@ func TestLibrarySectionVimNavigation(t *testing.T) {
 }
 
 func TestSearchInputNormalModeEscGoesBack(t *testing.T) {
-	m := newDashboardModel(nil)
+	m := newTestDashboard()
 	m.section = sectionSearch
 	m.searchSub = searchSubInput
 	m.searchMode = searchModeNormal
@@ -149,7 +156,7 @@ func TestSearchInputNormalModeEscGoesBack(t *testing.T) {
 }
 
 func TestSubmitSearchSetsLoadingState(t *testing.T) {
-	m := newDashboardModel(nil)
+	m := newTestDashboard()
 	m.searchInput.SetValue("dune")
 	m.searchQueryMode = model.SearchModeAuthor
 
@@ -172,7 +179,7 @@ func TestSubmitSearchSetsLoadingState(t *testing.T) {
 }
 
 func TestSubmitSearchGuardAndEmptyValidation(t *testing.T) {
-	m := newDashboardModel(nil)
+	m := newTestDashboard()
 	m.searchLoading = true
 	m.searchInput.SetValue("dune")
 	if cmd := m.submitSearch(); cmd != nil {
@@ -190,7 +197,7 @@ func TestSubmitSearchGuardAndEmptyValidation(t *testing.T) {
 }
 
 func TestSearchLoadedMsgTransitionsToResults(t *testing.T) {
-	m := newDashboardModel(nil)
+	m := newTestDashboard()
 	m.loading = true
 	m.searchLoading = true
 	m.section = sectionSearch
@@ -224,7 +231,7 @@ func TestSearchLoadedMsgTransitionsToResults(t *testing.T) {
 }
 
 func TestSlashSearchPreservesExistingQuery(t *testing.T) {
-	m := newDashboardModel(nil)
+	m := newTestDashboard()
 	m.section = sectionReading
 	m.searchInput.SetValue("dune")
 
@@ -243,7 +250,7 @@ func TestSlashSearchPreservesExistingQuery(t *testing.T) {
 }
 
 func TestTimerStartOpensBookSelectionFirst(t *testing.T) {
-	m := newDashboardModel(nil)
+	m := newTestDashboard()
 	m.section = sectionTimer
 	m.readingBooks = []model.UserBook{
 		{Book: model.Book{ID: 1, Title: "Dune"}},
@@ -262,7 +269,7 @@ func TestTimerStartOpensBookSelectionFirst(t *testing.T) {
 }
 
 func TestSearchResultsKStaysInResults(t *testing.T) {
-	m := newDashboardModel(nil)
+	m := newTestDashboard()
 	m.section = sectionSearch
 	m.searchSub = searchSubResults
 	m.searchMode = searchModeNormal
@@ -284,7 +291,7 @@ func TestSearchResultsKStaysInResults(t *testing.T) {
 }
 
 func TestCycleDensityRefreshesSearchResultItems(t *testing.T) {
-	m := newDashboardModel(nil)
+	m := newTestDashboard()
 	m.density = densityDefault
 	m.searchBooks = []model.SearchResult{
 		{ID: 1, Title: "Dune", Authors: []string{"Frank Herbert"}, Slug: "dune"},
@@ -343,7 +350,7 @@ func TestParseReviewRatingInput(t *testing.T) {
 }
 
 func TestReviewSaveClosesModalAndShowsPendingState(t *testing.T) {
-	m := newDashboardModel(nil)
+	m := newTestDashboard()
 	m.loaded = true
 	m.openReviewRatingModal(model.UserBook{
 		Book: model.Book{ID: 42, Title: "Dune"},
@@ -372,7 +379,7 @@ func TestReviewSaveClosesModalAndShowsPendingState(t *testing.T) {
 }
 
 func TestTimerSelectEnterClampsStaleIndex(t *testing.T) {
-	m := newDashboardModel(nil)
+	m := newTestDashboard()
 	m.timerSelecting = true
 	m.timerSelectIdx = 5 // stale: list shrank while the picker was open
 	m.readingBooks = []model.UserBook{

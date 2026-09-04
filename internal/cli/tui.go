@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -206,7 +207,10 @@ type timerOpDoneMsg struct {
 // ── Dashboard Model ────────────────────────────────────────────────────────
 
 type dashboardModel struct {
-	app     *app.App
+	app *app.App
+	// ctx is cancelled when the program exits so in-flight API calls abort
+	// instead of outliving the store.
+	ctx     context.Context
 	version string
 
 	mode    viewMode
@@ -264,7 +268,11 @@ type dashboardModel struct {
 	timerSelectIdx int
 }
 
-func newDashboardModel(a *app.App) dashboardModel {
+func newDashboardModel(ctx context.Context, a *app.App) dashboardModel {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	delegate := list.NewDefaultDelegate()
 	delegate.ShowDescription = true
 	delegate.SetSpacing(0)
@@ -347,6 +355,7 @@ func newDashboardModel(a *app.App) dashboardModel {
 
 	return dashboardModel{
 		app:               a,
+		ctx:               ctx,
 		mode:              modeLibrary,
 		section:           sectionReading,
 		searchMode:        searchModeNormal,
@@ -424,7 +433,7 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errMsg = ""
 		if msg.needsRefresh {
 			m.loading = true
-			return m, loadLibraryCmd(m.app, true)
+			return m, loadLibraryCmd(m.ctx, m.app, true)
 		}
 		return m, nil
 
@@ -486,7 +495,7 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.dirty && !m.loading && time.Since(m.lastMutationAt) >= backgroundSyncWindow {
 			m.loading = true
 			m.dirty = false
-			return m, tea.Batch(loadLibraryCmd(m.app, true), backgroundCheckCmd())
+			return m, tea.Batch(loadLibraryCmd(m.ctx, m.app, true), backgroundCheckCmd())
 		}
 		return m, backgroundCheckCmd()
 
@@ -505,7 +514,7 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.reload {
 			m.loading = true
-			return m, tea.Batch(loadLibraryCmd(m.app, false), loadLocalDataCmd(m.app))
+			return m, tea.Batch(loadLibraryCmd(m.ctx, m.app, false), loadLocalDataCmd(m.app))
 		}
 		return m, nil
 
@@ -596,7 +605,7 @@ func (m dashboardModel) handleStatsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, loadLocalDataCmd(m.app)
 	case "s":
 		m.loading = true
-		return m, syncAllAndReloadCmd(m.app)
+		return m, syncAllAndReloadCmd(m.ctx, m.app)
 	case "l", "right", "tab":
 		m.statsScroll = 0
 		m.nextSection()
@@ -649,10 +658,10 @@ func (m dashboardModel) handleLibraryKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "r":
 		m.loading = true
-		return m, loadLibraryCmd(m.app, true)
+		return m, loadLibraryCmd(m.ctx, m.app, true)
 	case "s":
 		m.loading = true
-		return m, syncAllAndReloadCmd(m.app)
+		return m, syncAllAndReloadCmd(m.ctx, m.app)
 	case "z":
 		m.cycleDensity()
 		return m, nil
@@ -664,12 +673,12 @@ func (m dashboardModel) handleLibraryKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "+", "=":
 		if b := m.selectedLibraryBook(); b != nil {
 			m.loading = true
-			return m, quickProgressCmd(m.app, b.Book.ID, +10)
+			return m, quickProgressCmd(m.ctx, m.app, b.Book.ID, +10)
 		}
 	case "-":
 		if b := m.selectedLibraryBook(); b != nil {
 			m.loading = true
-			return m, quickProgressCmd(m.app, b.Book.ID, -10)
+			return m, quickProgressCmd(m.ctx, m.app, b.Book.ID, -10)
 		}
 	case "u":
 		if b := m.selectedLibraryBook(); b != nil {
@@ -794,7 +803,7 @@ func (m dashboardModel) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if r := m.selectedSearchResult(); r != nil {
 			m.loading = true
-			return m, addFromSearchCmd(m.app, r.ID, model.StatusCurrentlyReading)
+			return m, addFromSearchCmd(m.ctx, m.app, r.ID, model.StatusCurrentlyReading)
 		}
 	case "g":
 		return m.changeSelectedSearchStatus(model.StatusCurrentlyReading)
@@ -927,7 +936,7 @@ func (m dashboardModel) updatePageMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.dirty && !m.loading && time.Since(m.lastMutationAt) >= backgroundSyncWindow {
 			m.loading = true
 			m.dirty = false
-			return m, tea.Batch(loadLibraryCmd(m.app, true), backgroundCheckCmd())
+			return m, tea.Batch(loadLibraryCmd(m.ctx, m.app, true), backgroundCheckCmd())
 		}
 		return m, backgroundCheckCmd()
 	case opDoneMsg:
@@ -947,7 +956,7 @@ func (m dashboardModel) updatePageMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.reload {
 			m.loading = true
-			return m, tea.Batch(loadLibraryCmd(m.app, false), loadLocalDataCmd(m.app))
+			return m, tea.Batch(loadLibraryCmd(m.ctx, m.app, false), loadLocalDataCmd(m.app))
 		}
 		return m, nil
 	case tea.KeyMsg:
@@ -966,7 +975,7 @@ func (m dashboardModel) updatePageMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.loading = true
-			return m, updateProgressCmd(m.app, m.pendingBookID, raw)
+			return m, updateProgressCmd(m.ctx, m.app, m.pendingBookID, raw)
 		}
 	}
 
@@ -996,7 +1005,7 @@ func (m dashboardModel) updateReviewRatingMode(msg tea.Msg) (tea.Model, tea.Cmd)
 		if m.dirty && !m.loading && time.Since(m.lastMutationAt) >= backgroundSyncWindow {
 			m.loading = true
 			m.dirty = false
-			return m, tea.Batch(loadLibraryCmd(m.app, true), backgroundCheckCmd())
+			return m, tea.Batch(loadLibraryCmd(m.ctx, m.app, true), backgroundCheckCmd())
 		}
 		return m, backgroundCheckCmd()
 	case opDoneMsg:
@@ -1017,7 +1026,7 @@ func (m dashboardModel) updateReviewRatingMode(msg tea.Msg) (tea.Model, tea.Cmd)
 		m.closeReviewRatingModal()
 		if msg.reload {
 			m.loading = true
-			return m, loadLibraryCmd(m.app, false)
+			return m, loadLibraryCmd(m.ctx, m.app, false)
 		}
 		return m, nil
 	case tea.KeyMsg:
@@ -1058,7 +1067,7 @@ func (m dashboardModel) updateReviewRatingMode(msg tea.Msg) (tea.Model, tea.Cmd)
 			bookID := m.reviewBook.Book.ID
 			m.infoMsg = reviewSavePendingMessage(review)
 			m.closeReviewRatingModal()
-			return m, submitReviewRatingCmd(m.app, bookID, rating, review)
+			return m, submitReviewRatingCmd(m.ctx, m.app, bookID, rating, review)
 		}
 	}
 
@@ -1800,7 +1809,7 @@ func (m *dashboardModel) submitSearch() tea.Cmd {
 		query,
 	)
 	m.searchList.Title = fmt.Sprintf("%s Results (loading...)", m.searchQueryMode.Label())
-	return searchCmd(m.app, query, m.searchQueryMode)
+	return searchCmd(m.ctx, m.app, query, m.searchQueryMode)
 }
 
 func (m *dashboardModel) cycleDensity() {
@@ -2087,7 +2096,7 @@ func (m dashboardModel) changeSelectedLibraryStatus(status model.Status) (tea.Mo
 		return m, nil
 	}
 	m.loading = true
-	return m, changeStatusCmd(m.app, b.Book.ID, status)
+	return m, changeStatusCmd(m.ctx, m.app, b.Book.ID, status)
 }
 
 func (m dashboardModel) changeSelectedSearchStatus(status model.Status) (tea.Model, tea.Cmd) {
@@ -2097,7 +2106,7 @@ func (m dashboardModel) changeSelectedSearchStatus(status model.Status) (tea.Mod
 		return m, nil
 	}
 	m.loading = true
-	return m, addFromSearchCmd(m.app, r.ID, status)
+	return m, addFromSearchCmd(m.ctx, m.app, r.ID, status)
 }
 
 // ── Tea Commands ───────────────────────────────────────────────────────────
@@ -2123,16 +2132,16 @@ func loadCachedLibraryCmd(a *app.App) tea.Cmd {
 	}
 }
 
-func loadLibraryCmd(a *app.App, refresh bool) tea.Cmd {
+func loadLibraryCmd(ctx context.Context, a *app.App, refresh bool) tea.Cmd {
 	return func() tea.Msg {
 		if a == nil {
 			return libraryLoadedMsg{err: fmt.Errorf("dashboard app is not initialized")}
 		}
-		reading, err := a.ListBooks(ctx(), model.StatusCurrentlyReading, refresh)
+		reading, err := a.ListBooks(ctx, model.StatusCurrentlyReading, refresh)
 		if err != nil {
 			return libraryLoadedMsg{err: err}
 		}
-		oku, err := a.ListBooks(ctx(), model.StatusWantToRead, refresh)
+		oku, err := a.ListBooks(ctx, model.StatusWantToRead, refresh)
 		if err != nil {
 			return libraryLoadedMsg{err: err}
 		}
@@ -2270,9 +2279,9 @@ func demoLocalData() (*model.ReadingStats, []model.ReadingSession) {
 	return readingStats, sessions
 }
 
-func searchCmd(a *app.App, query string, mode model.SearchMode) tea.Cmd {
+func searchCmd(ctx context.Context, a *app.App, query string, mode model.SearchMode) tea.Cmd {
 	return func() tea.Msg {
-		results, err := a.SearchBooks(ctx(), query, 10, mode)
+		results, err := a.SearchBooks(ctx, query, 10, mode)
 		return searchLoadedMsg{
 			results: results,
 			query:   query,
@@ -2282,13 +2291,13 @@ func searchCmd(a *app.App, query string, mode model.SearchMode) tea.Cmd {
 	}
 }
 
-func updateProgressCmd(a *app.App, bookID int, rawPage string) tea.Cmd {
+func updateProgressCmd(ctx context.Context, a *app.App, bookID int, rawPage string) tea.Cmd {
 	return func() tea.Msg {
 		p, err := model.ParsePage(rawPage)
 		if err != nil {
 			return opDoneMsg{err: err}
 		}
-		newPage, err := a.UpdateProgress(ctx(), bookID, p)
+		newPage, err := a.UpdateProgress(ctx, bookID, p)
 		if err != nil {
 			return opDoneMsg{err: err}
 		}
@@ -2300,9 +2309,9 @@ func updateProgressCmd(a *app.App, bookID int, rawPage string) tea.Cmd {
 	}
 }
 
-func submitReviewRatingCmd(a *app.App, bookID int, rating float64, review string) tea.Cmd {
+func submitReviewRatingCmd(ctx context.Context, a *app.App, bookID int, rating float64, review string) tea.Cmd {
 	return func() tea.Msg {
-		if err := a.ReviewBook(ctx(), bookID, rating, review); err != nil {
+		if err := a.ReviewBook(ctx, bookID, rating, review); err != nil {
 			return opDoneMsg{err: err}
 		}
 		info := fmt.Sprintf("Updated review and rating (%s)", model.StarString(rating))
@@ -2324,12 +2333,12 @@ func reviewSavePendingMessage(review string) string {
 	return "Saving review..."
 }
 
-func quickProgressCmd(a *app.App, bookID int, delta int) tea.Cmd {
+func quickProgressCmd(ctx context.Context, a *app.App, bookID int, delta int) tea.Cmd {
 	return func() tea.Msg {
 		if delta == 0 {
 			return opDoneMsg{}
 		}
-		newPage, err := a.UpdateProgress(ctx(), bookID, model.PageUpdate{
+		newPage, err := a.UpdateProgress(ctx, bookID, model.PageUpdate{
 			Delta:    delta,
 			Relative: true,
 		})
@@ -2348,9 +2357,9 @@ func quickProgressCmd(a *app.App, bookID int, delta int) tea.Cmd {
 	}
 }
 
-func changeStatusCmd(a *app.App, bookID int, status model.Status) tea.Cmd {
+func changeStatusCmd(ctx context.Context, a *app.App, bookID int, status model.Status) tea.Cmd {
 	return func() tea.Msg {
-		if err := a.ChangeStatus(ctx(), bookID, status); err != nil {
+		if err := a.ChangeStatus(ctx, bookID, status); err != nil {
 			return opDoneMsg{err: err}
 		}
 		return opDoneMsg{
@@ -2361,9 +2370,9 @@ func changeStatusCmd(a *app.App, bookID int, status model.Status) tea.Cmd {
 	}
 }
 
-func addFromSearchCmd(a *app.App, bookID int, status model.Status) tea.Cmd {
+func addFromSearchCmd(ctx context.Context, a *app.App, bookID int, status model.Status) tea.Cmd {
 	return func() tea.Msg {
-		if err := a.ChangeStatus(ctx(), bookID, status); err != nil {
+		if err := a.ChangeStatus(ctx, bookID, status); err != nil {
 			return opDoneMsg{err: err}
 		}
 		return opDoneMsg{
@@ -2374,9 +2383,9 @@ func addFromSearchCmd(a *app.App, bookID int, status model.Status) tea.Cmd {
 	}
 }
 
-func syncAllAndReloadCmd(a *app.App) tea.Cmd {
+func syncAllAndReloadCmd(ctx context.Context, a *app.App) tea.Cmd {
 	return func() tea.Msg {
-		if err := a.SyncAll(ctx()); err != nil {
+		if err := a.SyncAll(ctx); err != nil {
 			return opDoneMsg{err: err}
 		}
 		return opDoneMsg{
@@ -2446,9 +2455,17 @@ func runDashboard() error {
 	}
 	defer a.Store.Close()
 
-	p := tea.NewProgram(newDashboardModel(a), tea.WithAltScreen())
+	// Bubble Tea runs commands in goroutines it does not track, so cancel the
+	// command context as soon as the program exits: in-flight API calls abort
+	// instead of racing the store shutdown below.
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	p := tea.NewProgram(newDashboardModel(runCtx, a), tea.WithAltScreen())
 	_, err = p.Run()
+	cancel()
 	return err
+
 }
 
 func newTUICmd() *cobra.Command {
