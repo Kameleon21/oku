@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Kameleon21/oku/internal/model"
 	"github.com/machinebox/graphql"
@@ -49,6 +51,16 @@ func TestNormalizeToken(t *testing.T) {
 			name:  "Bearer without space is treated as raw token",
 			input: "BearerNoSpace",
 			want:  "Bearer BearerNoSpace",
+		},
+		{
+			name:  "surrounding whitespace is trimmed",
+			input: "  abc123\n",
+			want:  "Bearer abc123",
+		},
+		{
+			name:  "whitespace around an existing prefix is trimmed",
+			input: "\n Bearer  abc123 \t",
+			want:  "Bearer abc123",
 		},
 	}
 
@@ -164,5 +176,144 @@ func TestExtractHTTPStatusFromWrappedError(t *testing.T) {
 	}
 	if got := extractHTTPStatus(errors.New("status code: 429")); got != 0 {
 		t.Fatalf("extractHTTPStatus on plain error = %d, want 0", got)
+	}
+}
+
+func TestParseRetryAfter(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  time.Duration
+	}{
+		{name: "seconds", input: "5", want: 5 * time.Second},
+		{name: "padded seconds", input: " 2 ", want: 2 * time.Second},
+		{name: "zero", input: "0", want: 0},
+		{name: "clamped to the cap", input: "600", want: maxRetryAfter},
+		{name: "absent", input: "", want: 0},
+		{name: "http-date form is ignored", input: "Wed, 21 Oct 2015 07:28:00 GMT", want: 0},
+		{name: "negative", input: "-3", want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseRetryAfter(tt.input); got != tt.want {
+				t.Fatalf("parseRetryAfter(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDoHonoursRetryAfterOver429Backoff(t *testing.T) {
+	var calls int32
+	c, srv := testClientForServer(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{}}`))
+	})
+	defer srv.Close()
+
+	var resp struct{}
+	start := time.Now()
+	if err := c.do(context.Background(), graphql.NewRequest(`query { me { id } }`), &resp); err != nil {
+		t.Fatalf("do() = %v, want success after retry", err)
+	}
+	// Without Retry-After the first retry waits only 200ms.
+	if elapsed := time.Since(start); elapsed < 900*time.Millisecond {
+		t.Fatalf("retry happened after %v, want ~1s from Retry-After", elapsed)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Fatalf("server calls = %d, want 2", got)
+	}
+}
+
+func TestStatusErrorCarriesBoundedBodyAndRetryAfter(t *testing.T) {
+	body := "boom: " + strings.Repeat("x", maxErrorBody)
+	c, srv := testClientForServer(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "7")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, body)
+	})
+	defer srv.Close()
+
+	var resp struct{}
+	err := c.do(context.Background(), graphql.NewRequest(`query { me { id } }`), &resp)
+	if err == nil {
+		t.Fatal("do() = nil, want error")
+	}
+
+	var statusErr *StatusError
+	if !errors.As(err, &statusErr) {
+		t.Fatalf("do() = %v, want a *StatusError in the chain", err)
+	}
+	if statusErr.Code != http.StatusBadRequest {
+		t.Fatalf("StatusError.Code = %d, want 400", statusErr.Code)
+	}
+	if !strings.HasPrefix(statusErr.Body, "boom: ") {
+		t.Fatalf("StatusError.Body = %q, want it to start with the response body", statusErr.Body)
+	}
+	if len(statusErr.Body) > maxErrorBody {
+		t.Fatalf("StatusError.Body is %d bytes, want at most %d", len(statusErr.Body), maxErrorBody)
+	}
+	if statusErr.RetryAfter != 7*time.Second {
+		t.Fatalf("StatusError.RetryAfter = %v, want 7s", statusErr.RetryAfter)
+	}
+	if !strings.Contains(err.Error(), "boom: ") {
+		t.Fatalf("error message %q does not include the body prefix", err.Error())
+	}
+}
+
+func TestDoAbortsThrottleOnCancelledContext(t *testing.T) {
+	var calls int32
+	c, srv := testClientForServer(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{}}`))
+	})
+	defer srv.Close()
+
+	var resp struct{}
+	// The first request arms the throttle, so the next one has to wait ~1s.
+	if err := c.do(context.Background(), graphql.NewRequest(`query { me { id } }`), &resp); err != nil {
+		t.Fatalf("first do() = %v, want success", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	err := c.do(ctx, graphql.NewRequest(`query { me { id } }`), &resp)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("do() = %v, want context.Canceled", err)
+	}
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("do() returned after %v, want a prompt return instead of sleeping out the interval", elapsed)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("server calls = %d, want 1 (the cancelled request must not be sent)", got)
+	}
+}
+
+func TestDoSetsUserAgent(t *testing.T) {
+	var got string
+	c, srv := testClientForServer(func(w http.ResponseWriter, r *http.Request) {
+		got = r.UserAgent()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{}}`))
+	})
+	defer srv.Close()
+
+	var resp struct{}
+	if err := c.do(context.Background(), graphql.NewRequest(`query { me { id } }`), &resp); err != nil {
+		t.Fatalf("do() = %v, want success", err)
+	}
+	if got != userAgent() {
+		t.Fatalf("User-Agent = %q, want %q", got, userAgent())
+	}
+	if !strings.HasPrefix(got, "oku/") {
+		t.Fatalf("User-Agent = %q, want it to start with %q", got, "oku/")
 	}
 }
