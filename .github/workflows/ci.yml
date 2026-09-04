@@ -23,5 +23,23 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: gofmt
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            echo "gofmt needed on:"; echo "$files"; exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Build release targets
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          GOOS=linux   GOARCH=amd64 go build ./...
+          GOOS=darwin  GOARCH=arm64 go build ./...
+          GOOS=windows GOARCH=amd64 go build ./...
+
       - name: Run Unit Tests
         run: go test ./...
