@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -204,10 +205,18 @@ func TestParseRetryAfter(t *testing.T) {
 }
 
 func TestDoHonoursRetryAfterOver429Backoff(t *testing.T) {
-	var calls int32
+	// Retry-After must exceed the 1s throttle interval, otherwise the throttle
+	// alone would produce the same gap and the assertion would prove nothing.
+	var mu sync.Mutex
+	var seen []time.Time
 	c, srv := testClientForServer(func(w http.ResponseWriter, r *http.Request) {
-		if atomic.AddInt32(&calls, 1) == 1 {
-			w.Header().Set("Retry-After", "1")
+		mu.Lock()
+		seen = append(seen, time.Now())
+		n := len(seen)
+		mu.Unlock()
+
+		if n == 1 {
+			w.Header().Set("Retry-After", "2")
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
@@ -217,16 +226,54 @@ func TestDoHonoursRetryAfterOver429Backoff(t *testing.T) {
 	defer srv.Close()
 
 	var resp struct{}
-	start := time.Now()
 	if err := c.do(context.Background(), graphql.NewRequest(`query { me { id } }`), &resp); err != nil {
 		t.Fatalf("do() = %v, want success after retry", err)
 	}
-	// Without Retry-After the first retry waits only 200ms.
-	if elapsed := time.Since(start); elapsed < 900*time.Millisecond {
-		t.Fatalf("retry happened after %v, want ~1s from Retry-After", elapsed)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 2 {
+		t.Fatalf("server calls = %d, want 2", len(seen))
 	}
-	if got := atomic.LoadInt32(&calls); got != 2 {
-		t.Fatalf("server calls = %d, want 2", got)
+	// The default first-retry backoff is 200ms and the throttle caps the gap
+	// at 1s, so anything under ~2s means Retry-After was ignored.
+	if gap := seen[1].Sub(seen[0]); gap < 1900*time.Millisecond {
+		t.Fatalf("gap between attempts = %v, want >= 1.9s from Retry-After: 2", gap)
+	}
+}
+
+func TestDoFailsFastWhenRetryAfterOutlastsTheDeadline(t *testing.T) {
+	var calls int32
+	c, srv := testClientForServer(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Retry-After", "60")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, "rate limited: slow down")
+	})
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	var resp struct{}
+	start := time.Now()
+	err := c.do(ctx, graphql.NewRequest(`query { me { id } }`), &resp)
+	if err == nil {
+		t.Fatal("do() = nil, want error")
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("do() returned after %v, want a fast failure rather than sleeping into the deadline", elapsed)
+	}
+	if !IsNetworkError(err) {
+		t.Fatalf("IsNetworkError(%v) = false, want true", err)
+	}
+	// The point of failing fast is keeping the server's own explanation
+	// instead of replacing it with a bare deadline error.
+	if !strings.Contains(err.Error(), "429") || !strings.Contains(err.Error(), "rate limited: slow down") {
+		t.Fatalf("error = %q, want it to keep the 429 status and body", err.Error())
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("server calls = %d, want 1 (no point retrying past the deadline)", got)
 	}
 }
 

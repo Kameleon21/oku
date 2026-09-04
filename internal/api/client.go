@@ -78,8 +78,9 @@ func IsNetworkError(err error) bool {
 // non-2xx responses into this typed error at the transport layer.
 type StatusError struct {
 	Code int
-	// Body holds up to maxErrorBody bytes of the response body so failures
-	// carry the server's explanation instead of just a status number.
+	// Body holds up to maxErrorBody bytes of the response body, with runs of
+	// whitespace collapsed, so failures carry the server's explanation
+	// instead of just a status number.
 	Body string
 	// RetryAfter is the parsed Retry-After header, or 0 when absent or unparseable.
 	RetryAfter time.Duration
@@ -108,8 +109,10 @@ func (t *statusTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
 		resp.Body.Close()
 		return nil, &StatusError{
-			Code:       resp.StatusCode,
-			Body:       strings.TrimSpace(string(body)),
+			Code: resp.StatusCode,
+			// The body lands on stderr verbatim, and an edge proxy's HTML 503
+			// is 512 bytes of newlines and indentation, so flatten it first.
+			Body:       strings.Join(strings.Fields(string(body)), " "),
 			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
 		}
 	}
@@ -210,18 +213,36 @@ func (c *Client) do(ctx context.Context, req *graphql.Request, resp interface{})
 		if d := retryAfterDelay(err); d > 0 {
 			backoff = d
 		}
+		// Sleeping out the deadline would report a bare timeout and throw away
+		// lastErr — the status and body the server actually sent. A Retry-After
+		// longer than the time left is a definite failure, so say so now.
+		if backoff >= remaining(ctx) {
+			return &NetworkError{Err: lastErr}
+		}
 		select {
 		case <-ctx.Done():
+			// A user-initiated cancel stays a cancellation; a deadline that
+			// expires mid-backoff still reports what the server last said.
 			if errors.Is(ctx.Err(), context.Canceled) {
 				return ctx.Err()
 			}
-			return &NetworkError{Err: ctx.Err()}
+			return &NetworkError{Err: lastErr}
 		case <-time.After(backoff):
 		}
 	}
 
 	// The loop only exits via break, which always assigns lastErr first.
 	return &NetworkError{Err: lastErr}
+}
+
+// remaining reports how long ctx has left. do always runs under a deadline
+// because withRequestTimeout adds one, so the fallback is only a safety net.
+func remaining(ctx context.Context) time.Duration {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return requestTimeout
+	}
+	return time.Until(deadline)
 }
 
 // throttle spaces requests at least minRequestInterval apart to respect the

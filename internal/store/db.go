@@ -10,6 +10,10 @@ import (
 
 // schemaVersion is the current schema revision, tracked in PRAGMA user_version
 // so migrations only run when the database is behind.
+//
+// Bump this whenever schemaDDL, its index list, or the ensureColumn lists in
+// migrate change. A database already at the old value skips migrate entirely,
+// so without a bump existing installations silently never get the change.
 const schemaVersion = 1
 
 // Store wraps a SQLite database connection for local book data.
@@ -55,19 +59,9 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-// migrate creates the schema tables if they do not already exist. It is a
-// no-op once PRAGMA user_version reports the database is already at
-// schemaVersion, so repeated opens do not re-run the DDL.
-func migrate(db *sql.DB) error {
-	var current int
-	if err := db.QueryRow("PRAGMA user_version").Scan(&current); err != nil {
-		return fmt.Errorf("read user_version: %w", err)
-	}
-	if current >= schemaVersion {
-		return nil
-	}
-
-	const ddl = `
+// schemaDDL is the full schema: tables, the indexes covering the queries in
+// this package, and the drop of tables retired from earlier revisions.
+const schemaDDL = `
 CREATE TABLE IF NOT EXISTS books (
 	id         INTEGER PRIMARY KEY,
 	title      TEXT    NOT NULL DEFAULT '',
@@ -150,7 +144,20 @@ CREATE INDEX IF NOT EXISTS idx_reading_sessions_book_id
 CREATE INDEX IF NOT EXISTS idx_reading_journals_action_at
 	ON reading_journals(action_at);
 `
-	if _, err := db.Exec(ddl); err != nil {
+
+// migrate creates the schema tables if they do not already exist. It is a
+// no-op once PRAGMA user_version reports the database is already at
+// schemaVersion, so repeated opens do not re-run the DDL.
+func migrate(db *sql.DB) error {
+	var current int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&current); err != nil {
+		return fmt.Errorf("read user_version: %w", err)
+	}
+	if current >= schemaVersion {
+		return nil
+	}
+
+	if _, err := db.Exec(schemaDDL); err != nil {
 		return err
 	}
 

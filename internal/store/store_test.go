@@ -1,8 +1,10 @@
 package store
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -517,4 +519,190 @@ func TestPruneOrphanBooksKeepsBooksWithSessions(t *testing.T) {
 			t.Fatalf("book %d (%s) survived the prune", tc.id, tc.reason)
 		}
 	}
+}
+
+// legacySchemaDDL is the schema as it stood before indexes, the cached_tags
+// column and the activity_log drop landed: the shape a user upgrading from an
+// older release actually has on disk.
+const legacySchemaDDL = `
+CREATE TABLE books (
+	id INTEGER PRIMARY KEY,
+	title TEXT NOT NULL DEFAULT '',
+	authors TEXT NOT NULL DEFAULT '',
+	pages INTEGER NOT NULL DEFAULT 0,
+	slug TEXT NOT NULL DEFAULT '',
+	image_url TEXT NOT NULL DEFAULT '',
+	rating REAL NOT NULL DEFAULT 0,
+	ratings_count INTEGER NOT NULL DEFAULT 0,
+	reviews_count INTEGER NOT NULL DEFAULT 0,
+	users_count INTEGER NOT NULL DEFAULT 0,
+	users_read_count INTEGER NOT NULL DEFAULT 0,
+	release_date TEXT NOT NULL DEFAULT '',
+	featured_series TEXT NOT NULL DEFAULT '',
+	featured_series_position INTEGER NOT NULL DEFAULT 0,
+	updated_at TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE user_books (
+	id INTEGER PRIMARY KEY,
+	book_id INTEGER NOT NULL,
+	status_id INTEGER NOT NULL DEFAULT 0,
+	rating REAL NOT NULL DEFAULT 0,
+	review TEXT NOT NULL DEFAULT '',
+	reviewed_at TEXT,
+	updated_at TEXT NOT NULL DEFAULT '',
+	UNIQUE(book_id)
+);
+CREATE TABLE user_book_reads (
+	id INTEGER PRIMARY KEY,
+	user_book_id INTEGER NOT NULL,
+	progress_pages INTEGER NOT NULL DEFAULT 0,
+	started_at TEXT,
+	finished_at TEXT
+);
+CREATE TABLE state (
+	key TEXT PRIMARY KEY,
+	value TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE reading_sessions (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	book_id INTEGER DEFAULT 0,
+	started_at TEXT NOT NULL,
+	ended_at TEXT,
+	notes TEXT DEFAULT ''
+);
+CREATE TABLE reading_journals (
+	id INTEGER PRIMARY KEY,
+	action_at TEXT NOT NULL,
+	event TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE goals (
+	id INTEGER PRIMARY KEY,
+	metric TEXT NOT NULL DEFAULT '',
+	target INTEGER NOT NULL DEFAULT 0,
+	progress REAL NOT NULL DEFAULT 0,
+	state TEXT NOT NULL DEFAULT '',
+	start_date TEXT,
+	end_date TEXT
+);
+CREATE TABLE activity_log (
+	id INTEGER PRIMARY KEY,
+	event TEXT NOT NULL DEFAULT ''
+);
+INSERT INTO books (id, title, updated_at) VALUES (7, 'Legacy', '2020-01-01T00:00:00Z');
+INSERT INTO state (key, value) VALUES ('legacy', 'kept');
+`
+
+func TestMigrationUpgradesLegacyDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open legacy fixture: %v", err)
+	}
+	if _, err := raw.Exec(legacySchemaDDL); err != nil {
+		t.Fatalf("build legacy fixture: %v", err)
+	}
+	var version int
+	if err := raw.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 0 {
+		t.Fatalf("legacy fixture user_version = %d, want 0", version)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := New(path)
+	if err != nil {
+		t.Fatalf("open legacy database: %v", err)
+	}
+	defer s.Close()
+
+	if !columnExists(t, s, "books", "cached_tags") {
+		t.Fatal("books.cached_tags was not added to the legacy database")
+	}
+	// Compare against the names in schemaDDL so an index added later is
+	// checked here automatically.
+	for _, name := range ddlIndexNames(t) {
+		if !indexExists(t, s, name) {
+			t.Fatalf("index %q from the DDL is missing after the upgrade", name)
+		}
+	}
+	if tableExists(t, s, "activity_log") {
+		t.Fatal("activity_log survived the upgrade")
+	}
+	if got := userVersion(t, s); got != schemaVersion {
+		t.Fatalf("user_version after upgrade = %d, want %d", got, schemaVersion)
+	}
+
+	// The upgrade must not cost the user their cache.
+	b, err := s.GetBookByID(7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b == nil || b.Title != "Legacy" {
+		t.Fatalf("GetBookByID(7) = %+v, want the pre-existing row", b)
+	}
+	if got, err := s.GetState("legacy"); err != nil || got != "kept" {
+		t.Fatalf("GetState(\"legacy\") = %q, %v; want %q, nil", got, err, "kept")
+	}
+}
+
+// ddlIndexNames extracts the index names declared in schemaDDL.
+func ddlIndexNames(t *testing.T) []string {
+	t.Helper()
+	const prefix = "CREATE INDEX IF NOT EXISTS "
+
+	var names []string
+	for _, line := range strings.Split(schemaDDL, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		name := strings.TrimPrefix(line, prefix)
+		if i := strings.IndexAny(name, " \t("); i >= 0 {
+			name = name[:i]
+		}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		t.Fatal("no CREATE INDEX statements found in schemaDDL")
+	}
+	return names
+}
+
+func indexExists(t *testing.T, s *Store, name string) bool {
+	t.Helper()
+	var n int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?`, name,
+	).Scan(&n)
+	if err != nil {
+		t.Fatalf("look up index %q: %v", name, err)
+	}
+	return n > 0
+}
+
+func columnExists(t *testing.T, s *Store, table, column string) bool {
+	t.Helper()
+	rows, err := s.db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		t.Fatalf("table_info(%s): %v", table, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		if strings.EqualFold(name, column) {
+			return true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return false
 }
