@@ -8,6 +8,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// schemaVersion is the current schema revision, tracked in PRAGMA user_version
+// so migrations only run when the database is behind.
+const schemaVersion = 1
+
 // Store wraps a SQLite database connection for local book data.
 type Store struct {
 	db *sql.DB
@@ -20,15 +24,15 @@ func New(dbPath string) (*Store, error) {
 	if strings.Contains(dbPath, "?") {
 		separator = "&"
 	}
-	dsn := dbPath + separator + "_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
+	dsn := dbPath + separator + "_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
 
-	// NOTE: do not SetMaxOpenConns(1) — several queries (e.g. ListUserBooks →
-	// GetLatestRead) run while iterating another query's rows, which deadlocks
-	// on a single-connection pool. busy_timeout above handles writer contention.
+	// NOTE: do not SetMaxOpenConns(1) — queries that run while iterating
+	// another query's rows deadlock on a single-connection pool.
+	// busy_timeout above handles writer contention.
 
 	// Enable WAL mode for better concurrent access.
 	for _, pragma := range []string{"PRAGMA journal_mode=WAL"} {
@@ -51,8 +55,18 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-// migrate creates the schema tables if they do not already exist.
+// migrate creates the schema tables if they do not already exist. It is a
+// no-op once PRAGMA user_version reports the database is already at
+// schemaVersion, so repeated opens do not re-run the DDL.
 func migrate(db *sql.DB) error {
+	var current int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&current); err != nil {
+		return fmt.Errorf("read user_version: %w", err)
+	}
+	if current >= schemaVersion {
+		return nil
+	}
+
 	const ddl = `
 CREATE TABLE IF NOT EXISTS books (
 	id         INTEGER PRIMARY KEY,
@@ -67,6 +81,7 @@ CREATE TABLE IF NOT EXISTS books (
 	users_count INTEGER NOT NULL DEFAULT 0,
 	users_read_count INTEGER NOT NULL DEFAULT 0,
 	release_date TEXT   NOT NULL DEFAULT '',
+	cached_tags TEXT    NOT NULL DEFAULT '',
 	featured_series TEXT NOT NULL DEFAULT '',
 	featured_series_position INTEGER NOT NULL DEFAULT 0,
 	updated_at TEXT    NOT NULL DEFAULT ''
@@ -121,6 +136,19 @@ CREATE TABLE IF NOT EXISTS goals (
 );
 
 DROP TABLE IF EXISTS activity_log;
+
+CREATE INDEX IF NOT EXISTS idx_user_books_status_updated
+	ON user_books(status_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_user_book_reads_latest
+	ON user_book_reads(user_book_id, started_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_user_book_reads_finished_at
+	ON user_book_reads(finished_at);
+CREATE INDEX IF NOT EXISTS idx_reading_sessions_started_at
+	ON reading_sessions(started_at);
+CREATE INDEX IF NOT EXISTS idx_reading_sessions_book_id
+	ON reading_sessions(book_id);
+CREATE INDEX IF NOT EXISTS idx_reading_journals_action_at
+	ON reading_journals(action_at);
 `
 	if _, err := db.Exec(ddl); err != nil {
 		return err
@@ -158,6 +186,9 @@ DROP TABLE IF EXISTS activity_log;
 		}
 	}
 
+	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
+		return fmt.Errorf("set user_version: %w", err)
+	}
 	return nil
 }
 
