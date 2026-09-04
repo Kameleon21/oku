@@ -43,44 +43,98 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
+// pathEnv carries the lookups path resolution depends on, so the rules can be
+// unit-tested without touching the real environment.
+type pathEnv struct {
+	goos      string
+	getenv    func(string) string
+	home      func() (string, error)
+	configDir func() (string, error) // %AppData% on Windows
+	cacheDir  func() (string, error) // %LocalAppData% on Windows
+	exists    func(string) bool
+}
+
+func osPathEnv() pathEnv {
+	return pathEnv{
+		goos:      runtime.GOOS,
+		getenv:    os.Getenv,
+		home:      os.UserHomeDir,
+		configDir: os.UserConfigDir,
+		cacheDir:  os.UserCacheDir,
+		exists: func(path string) bool {
+			_, err := os.Stat(path)
+			return err == nil
+		},
+	}
+}
+
 // FilePath returns the config file path (~/.config/oku/config.toml on
 // macOS and Linux, %AppData%\oku\config.toml on Windows).
 func FilePath() (string, error) {
-	dir := os.Getenv("XDG_CONFIG_HOME")
-	if dir == "" {
-		var err error
-		if runtime.GOOS == "windows" {
-			dir, err = os.UserConfigDir()
-		} else {
-			dir, err = homeSubdir(".config")
-		}
-		if err != nil {
-			return "", fmt.Errorf("locate config dir: %w", err)
-		}
+	return configFilePath(osPathEnv())
+}
+
+func configFilePath(env pathEnv) (string, error) {
+	if dir := env.getenv("XDG_CONFIG_HOME"); dir != "" {
+		return filepath.Join(dir, "oku", "config.toml"), nil
 	}
-	return filepath.Join(dir, "oku", "config.toml"), nil
+
+	legacy, legacyErr := homeJoin(env, ".config", "oku", "config.toml")
+	if env.goos != "windows" {
+		if legacyErr != nil {
+			return "", fmt.Errorf("locate config dir: %w", legacyErr)
+		}
+		return legacy, nil
+	}
+
+	dir, err := env.configDir()
+	if err != nil {
+		return "", fmt.Errorf("locate config dir: %w", err)
+	}
+	current := filepath.Join(dir, "oku", "config.toml")
+	return preferLegacyWindowsPath(env, legacy, legacyErr, current), nil
 }
 
 // DataDir returns the data directory (~/.local/share/oku on macOS and Linux,
 // %LocalAppData%\oku on Windows).
 func DataDir() (string, error) {
-	dir := os.Getenv("XDG_DATA_HOME")
-	if dir == "" {
-		var err error
-		if runtime.GOOS == "windows" {
-			dir, err = os.UserCacheDir()
-		} else {
-			dir, err = homeSubdir(".local", "share")
-		}
-		if err != nil {
-			return "", fmt.Errorf("locate data dir: %w", err)
-		}
-	}
-	return filepath.Join(dir, "oku"), nil
+	return dataDir(osPathEnv())
 }
 
-func homeSubdir(parts ...string) (string, error) {
-	home, err := os.UserHomeDir()
+func dataDir(env pathEnv) (string, error) {
+	if dir := env.getenv("XDG_DATA_HOME"); dir != "" {
+		return filepath.Join(dir, "oku"), nil
+	}
+
+	legacy, legacyErr := homeJoin(env, ".local", "share", "oku")
+	if env.goos != "windows" {
+		if legacyErr != nil {
+			return "", fmt.Errorf("locate data dir: %w", legacyErr)
+		}
+		return legacy, nil
+	}
+
+	dir, err := env.cacheDir()
+	if err != nil {
+		return "", fmt.Errorf("locate data dir: %w", err)
+	}
+	current := filepath.Join(dir, "oku")
+	return preferLegacyWindowsPath(env, legacy, legacyErr, current), nil
+}
+
+// preferLegacyWindowsPath keeps Windows installs from before the switch to
+// %AppData%/%LocalAppData% pointed at the data they already have: the cache
+// holds local-only timer sessions, journals and active-book state that no
+// re-sync can recreate. Only used when the new location is still absent.
+func preferLegacyWindowsPath(env pathEnv, legacy string, legacyErr error, current string) string {
+	if legacyErr == nil && env.exists(legacy) && !env.exists(current) {
+		return legacy
+	}
+	return current
+}
+
+func homeJoin(env pathEnv, parts ...string) (string, error) {
+	home, err := env.home()
 	if err != nil {
 		return "", err
 	}

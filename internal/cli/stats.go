@@ -12,9 +12,9 @@ import (
 const (
 	// defaultHeatmapWeeks matches the range GetReadingStats already fetches.
 	defaultHeatmapWeeks = 26
-	// maxHeatmapWeeks keeps the grid to two years, which is as wide as a
-	// terminal can usefully render.
-	maxHeatmapWeeks = 104
+	// maxHeatmapWeeks is a year: SyncStats only fetches a year of journals, so
+	// a wider grid adds empty columns the terminal has to fit.
+	maxHeatmapWeeks = 52
 )
 
 func newStatsCmd() *cobra.Command {

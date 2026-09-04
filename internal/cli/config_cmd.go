@@ -73,11 +73,16 @@ func newConfigShowCmd() *cobra.Command {
 		Use:   "show",
 		Short: "Show current configuration",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load()
+			// Print the file path before anything that can fail: when the
+			// config is malformed, its location is the one thing the user
+			// needs from this command.
+			path, err := config.FilePath()
 			if err != nil {
 				return err
 			}
-			path, err := config.FilePath()
+			fmt.Printf("Config file: %s\n", path)
+
+			cfg, err := config.Load()
 			if err != nil {
 				return err
 			}
@@ -85,7 +90,6 @@ func newConfigShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("Config file: %s\n", path)
 			fmt.Printf("Data dir:    %s\n", dataDir)
 			fmt.Printf("Editor:      %s\n", resolveEditor(cfg.Editor, os.Getenv))
 			fmt.Printf("Use fzf:     %v\n", cfg.UseFzf)

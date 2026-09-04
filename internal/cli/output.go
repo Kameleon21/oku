@@ -214,9 +214,10 @@ func formatCount(n int) string {
 	}
 }
 
-// printJSON writes v to stdout. The encode error is returned so a closed pipe
-// (`oku list --json | head`) or a full disk exits non-zero instead of looking
-// like a successful empty run.
+// printJSON writes v to stdout. The encode error is returned so a redirected
+// stdout that fails mid-write (ENOSPC, EIO) exits non-zero instead of looking
+// like a successful empty run. A closed pipe never reaches here: Go's runtime
+// leaves SIGPIPE fatal for fds 1 and 2, so `| head` kills the process first.
 func printJSON(v interface{}) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")

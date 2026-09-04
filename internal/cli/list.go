@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Kameleon21/oku/internal/config"
 	"github.com/Kameleon21/oku/internal/model"
 	"github.com/spf13/cobra"
 )
@@ -17,15 +16,16 @@ func newListCmd() *cobra.Command {
 		Short: "List books by status (defaults to default_list from config)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			status, err := listStatusFromArgs(args)
-			if err != nil {
-				return err
-			}
 			a, err := initApp()
 			if err != nil {
 				return err
 			}
 			defer a.Store.Close()
+
+			status, err := listStatusFromArgs(args, a.Config.DefaultList)
+			if err != nil {
+				return err
+			}
 
 			books, err := a.ListBooks(ctx(), status, refresh)
 			if err != nil {
@@ -40,19 +40,15 @@ func newListCmd() *cobra.Command {
 
 // listStatusFromArgs resolves the status to list, falling back to the
 // configured default_list when no status is given.
-func listStatusFromArgs(args []string) (model.Status, error) {
+func listStatusFromArgs(args []string, defaultList string) (model.Status, error) {
 	if len(args) > 0 {
 		return model.StatusFromString(args[0])
 	}
 
-	cfg, err := config.Load()
-	if err != nil {
-		return 0, fmt.Errorf("load config: %w", err)
-	}
-	if strings.TrimSpace(cfg.DefaultList) == "" {
+	if strings.TrimSpace(defaultList) == "" {
 		return 0, fmt.Errorf("no status given and default_list is not set (see: oku config edit)")
 	}
-	status, err := model.StatusFromString(cfg.DefaultList)
+	status, err := model.StatusFromString(defaultList)
 	if err != nil {
 		return 0, fmt.Errorf("default_list: %w", err)
 	}
