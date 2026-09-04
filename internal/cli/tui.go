@@ -262,8 +262,12 @@ type dashboardModel struct {
 	reviewBook       *model.UserBook
 	reviewFocus      dashboardReviewFocus
 	reviewSubmitting bool
-	dirty            bool
-	lastMutationAt   time.Time
+	// reviewErr is the review modal's own error, rendered inside the overlay
+	// because the status bar sits behind it.
+	reviewErr string
+
+	dirty          bool
+	lastMutationAt time.Time
 
 	lastQuery      string
 	lastSearchMode model.SearchMode
@@ -611,13 +615,15 @@ func (m dashboardModel) applySearchLoaded(msg searchLoadedMsg) (tea.Model, tea.C
 	return m, cmd
 }
 
-// applyOpDone applies the result of a mutating operation.
+// applyOpDone applies the result of a mutating operation. Results other than
+// the review modal's own save leave the modal, and its draft, untouched.
 func (m dashboardModel) applyOpDone(msg opDoneMsg) (tea.Model, tea.Cmd) {
-	if m.mode == modeReviewRating {
-		return m.applyReviewOpDone(msg)
+	if m.mode == modeReviewRating && msg.op == opReview && m.reviewSubmitting {
+		return m.applyReviewSaveDone(msg)
 	}
 
 	m.loading = false
+
 	if msg.err != nil {
 		m.errMsg = msg.err.Error()
 		m.infoMsg = ""
@@ -638,28 +644,14 @@ func (m dashboardModel) applyOpDone(msg opDoneMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// applyReviewOpDone keeps the review modal open until its own save succeeds,
-// so a failed save never throws away what was typed and the result of another
-// operation never closes the modal.
-func (m dashboardModel) applyReviewOpDone(msg opDoneMsg) (tea.Model, tea.Cmd) {
+// applyReviewSaveDone keeps the review modal open until its own save
+// succeeds, so a failed save never throws away what was typed.
+func (m dashboardModel) applyReviewSaveDone(msg opDoneMsg) (tea.Model, tea.Cmd) {
 	m.loading = false
-	if msg.op != opReview || !m.reviewSubmitting {
-		// Another operation was still in flight when the modal opened: do its
-		// bookkeeping and leave the draft alone.
-		if msg.err == nil && msg.markDirty {
-			m.dirty = true
-			m.lastMutationAt = time.Now()
-		}
-		if msg.reload {
-			return m.startOp(loadLibraryCmd(m.ctx, m.app, false), loadLocalDataCmd(m.app))
-		}
-		return m, nil
-	}
-
 	m.reviewSubmitting = false
 	if msg.err != nil {
-		// Rendered inside the overlay; rating and review text are preserved.
-		m.errMsg = msg.err.Error()
+		// Shown in the overlay; the rating and review text are preserved.
+		m.reviewErr = msg.err.Error()
 		m.infoMsg = ""
 		return m, nil
 	}
@@ -783,7 +775,6 @@ func (m dashboardModel) handleStatsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.startOp(syncAllAndReloadCmd(m.ctx, m.app))
 	case "l", "right", "tab":
 		m.statsScroll = 0
-
 		m.nextSection()
 		return m, nil
 	case "h", "left", "shift+tab":
@@ -836,7 +827,6 @@ func (m dashboardModel) handleLibraryKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.startOp(loadLibraryCmd(m.ctx, m.app, true))
 	case "s":
 		return m.startOp(syncAllAndReloadCmd(m.ctx, m.app))
-
 	case "z":
 		cmd := m.cycleDensity()
 		return m, cmd
@@ -849,7 +839,6 @@ func (m dashboardModel) handleLibraryKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.quickProgress(+10)
 	case "-":
 		return m.quickProgress(-10)
-
 	case "u":
 		if b := m.selectedLibraryBook(); b != nil {
 			m.mode = modeUpdatePage
@@ -913,7 +902,6 @@ func (m dashboardModel) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				cmd := m.submitSearch()
 				return m, cmd
 			case "l", "right", "tab":
-
 				m.nextSection()
 				m.searchInput.Blur()
 				return m, nil
@@ -975,7 +963,6 @@ func (m dashboardModel) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.startOp(addFromSearchCmd(m.ctx, m.app, r.ID, model.StatusCurrentlyReading))
 		}
 	case "g":
-
 		return m.changeSelectedSearchStatus(model.StatusCurrentlyReading)
 	case "w":
 		return m.changeSelectedSearchStatus(model.StatusWantToRead)
@@ -1029,7 +1016,6 @@ func (m dashboardModel) handleTimerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			selected := m.readingBooks[m.timerSelectIdx]
 			m.timerSelecting = false
 			return m.startOp(startTimerForBookCmd(m.app, selected.Book.ID))
-
 		}
 		return m, nil
 	}
@@ -1161,11 +1147,11 @@ func (m dashboardModel) updateReviewRatingMode(msg tea.KeyMsg) (tea.Model, tea.C
 		}
 		rating, err := parseReviewRatingInput(m.reviewRatingInput.Value())
 		if err != nil {
-			m.errMsg = err.Error()
+			m.reviewErr = err.Error()
 			return m, nil
 		}
 		review := m.reviewTextInput.Value()
-		m.errMsg = ""
+		m.reviewErr = ""
 		m.infoMsg = reviewSavePendingMessage(review)
 		// The modal stays open until the save succeeds, so a failure can show
 		// the error without discarding the draft.
@@ -1415,7 +1401,7 @@ func (m dashboardModel) renderSectionCard(def sectionDef, w, h int, focused bool
 			contentH = 0
 		}
 		if contentH > 0 {
-			if body := m.sectionContent(def.id, max(8, w-4), contentH); body != "" {
+			if body := m.sectionContent(def.id, max(8, w-4)); body != "" {
 				content += "\n" + body
 			}
 		}
@@ -1448,13 +1434,12 @@ func (m dashboardModel) formatSectionLabel(id focusSection, label string, count 
 }
 
 // sectionContent returns the expanded content for a focused section.
-func (m dashboardModel) sectionContent(id focusSection, w, h int) string {
+func (m dashboardModel) sectionContent(id focusSection, w int) string {
 	switch id {
 	case sectionReading:
 		return m.readingList.View()
 	case sectionOku:
 		return m.okuList.View()
-
 	case sectionSearch:
 		return m.searchSectionContent(w)
 	default:
@@ -1614,6 +1599,7 @@ func (m *dashboardModel) openReviewRatingModal(book model.UserBook) {
 	m.mode = modeReviewRating
 	m.showHelp = false
 	m.reviewSubmitting = false
+	m.reviewErr = ""
 
 	if b.Rating > 0 {
 		m.reviewRatingInput.SetValue(fmt.Sprintf("%.1f", b.Rating))
@@ -1628,6 +1614,7 @@ func (m *dashboardModel) closeReviewRatingModal() {
 	m.mode = modeLibrary
 	m.reviewBook = nil
 	m.reviewSubmitting = false
+	m.reviewErr = ""
 	m.reviewRatingInput.Blur()
 	m.reviewTextInput.Blur()
 }
@@ -1676,9 +1663,9 @@ func (m dashboardModel) reviewRatingOverlay() string {
 	case m.reviewSubmitting:
 		sb.WriteString(dimStyleTUI.Render("Saving..."))
 		sb.WriteString("\n")
-	case m.errMsg != "":
+	case m.reviewErr != "":
 		// The status bar sits behind the modal, so surface the failure here.
-		sb.WriteString(errorStyleTUI.Render(m.errMsg))
+		sb.WriteString(errorStyleTUI.Render(m.reviewErr))
 		sb.WriteString("\n")
 	}
 

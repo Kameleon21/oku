@@ -679,9 +679,10 @@ func TestReviewSaveFailureKeepsModalOpen(t *testing.T) {
 	if got.reviewTextInput.Value() != "Strong first half." {
 		t.Fatalf("review text = %q, want the draft to survive", got.reviewTextInput.Value())
 	}
-	if got.errMsg != "save failed" {
-		t.Fatalf("errMsg = %q, want save failed", got.errMsg)
+	if got.reviewErr != "save failed" {
+		t.Fatalf("reviewErr = %q, want save failed", got.reviewErr)
 	}
+
 	if !strings.Contains(got.reviewRatingOverlay(), "save failed") {
 		t.Fatal("the failure should be visible inside the overlay, not behind it")
 	}
@@ -709,6 +710,9 @@ func TestUnrelatedOpDoesNotDisturbReviewModal(t *testing.T) {
 	}
 	if !got.dirty {
 		t.Fatal("the unrelated mutation should still mark the library dirty")
+	}
+	if got.infoMsg != "Progress +10 → page 40" {
+		t.Fatalf("infoMsg = %q, want the unrelated result reported", got.infoMsg)
 	}
 }
 
