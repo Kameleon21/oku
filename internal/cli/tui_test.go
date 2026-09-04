@@ -76,7 +76,7 @@ func TestLoadCachedLibraryCmdWithNilAppReturnsError(t *testing.T) {
 
 func TestStaleCachedLibraryRendersBeforeRefresh(t *testing.T) {
 	m := newTestDashboard()
-	updated, cmd := m.updateLibraryMode(libraryLoadedMsg{
+	updated, cmd := m.Update(libraryLoadedMsg{
 		reading:      []model.UserBook{{Book: model.Book{ID: 1, Title: "Dune"}}},
 		needsRefresh: true,
 	})
@@ -203,7 +203,7 @@ func TestSearchLoadedMsgTransitionsToResults(t *testing.T) {
 	m.section = sectionSearch
 	m.searchSub = searchSubInput
 
-	updated, _ := m.updateLibraryMode(searchLoadedMsg{
+	updated, _ := m.Update(searchLoadedMsg{
 		results: []model.SearchResult{{ID: 1, Title: "Dune"}},
 		query:   "dune",
 		mode:    model.SearchModeAuthor,
@@ -349,7 +349,7 @@ func TestParseReviewRatingInput(t *testing.T) {
 	}
 }
 
-func TestReviewSaveClosesModalAndShowsPendingState(t *testing.T) {
+func TestReviewSaveKeepsModalOpenWhileSaving(t *testing.T) {
 	m := newTestDashboard()
 	m.loaded = true
 	m.openReviewRatingModal(model.UserBook{
@@ -364,11 +364,14 @@ func TestReviewSaveClosesModalAndShowsPendingState(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected save command")
 	}
-	if got.mode != modeLibrary {
-		t.Fatalf("mode after save = %v, want library", got.mode)
+	if got.mode != modeReviewRating {
+		t.Fatalf("mode while saving = %v, want review/rating", got.mode)
 	}
-	if got.reviewBook != nil {
-		t.Fatal("review modal should be closed after save starts")
+	if !got.reviewSubmitting {
+		t.Fatal("reviewSubmitting should be true while the save is in flight")
+	}
+	if got.reviewBook == nil {
+		t.Fatal("review modal should stay open until the save succeeds")
 	}
 	if !got.loading {
 		t.Fatal("loading should be true while save is in flight")

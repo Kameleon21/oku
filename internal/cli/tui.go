@@ -180,7 +180,20 @@ type searchLoadedMsg struct {
 	err     error
 }
 
+// opKind identifies which operation an opDoneMsg belongs to, so a modal can
+// react to its own result and ignore results of other in-flight work.
+type opKind int
+
+const (
+	opUnknown opKind = iota
+	opProgress
+	opStatus
+	opReview
+	opSync
+)
+
 type opDoneMsg struct {
+	op        opKind
 	info      string
 	err       error
 	reload    bool
@@ -217,6 +230,13 @@ type dashboardModel struct {
 	section focusSection
 	loaded  bool
 	loading bool
+	// spinning reports whether the spinner tick loop is armed. It only runs
+	// while work is in flight, so an idle dashboard does not re-render a
+	// dozen times a second.
+	spinning bool
+	// reconciling marks the background reconcile load; only its success
+	// clears dirty.
+	reconciling bool
 
 	width  int
 	height int
@@ -370,6 +390,9 @@ func newDashboardModel(ctx context.Context, a *app.App) dashboardModel {
 		reviewRatingInput: reviewRatingIn,
 		reviewTextInput:   reviewTextIn,
 		spin:              s,
+		// Init starts the first loads, so the dashboard is busy already.
+		loading:  true,
+		spinning: true,
 	}
 }
 
@@ -388,19 +411,33 @@ func (m dashboardModel) Init() tea.Cmd {
 // ── Update ─────────────────────────────────────────────────────────────────
 
 func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	key, isKey := msg.(tea.KeyMsg)
+	if !isKey {
+		// Async results, ticks and resizes are handled once for every mode so
+		// an open modal never swallows them.
+		return m.updateCommon(msg)
+	}
+
 	switch m.mode {
 	case modeUpdatePage:
-		return m.updatePageMode(msg)
+		return m.updatePageMode(key)
 	case modeReviewRating:
-		return m.updateReviewRatingMode(msg)
+		return m.updateReviewRatingMode(key)
 	default:
-		return m.updateLibraryMode(msg)
+		return m.updateLibraryMode(key)
 	}
 }
 
-func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
+// updateCommon handles every message that is not a key press, whatever mode
+// the dashboard is in.
+func (m dashboardModel) updateCommon(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case spinner.TickMsg:
+		if !m.loading && !m.searchLoading {
+			// Nothing in flight: let the tick loop stop.
+			m.spinning = false
+			return m, nil
+		}
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
 		return m, cmd
@@ -413,31 +450,14 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.resize()
+		m.reviewTextInput.SetWidth(max(40, m.width/2))
 		return m, nil
 
 	case libraryLoadedMsg:
-		m.loading = false
-		m.loaded = true
-		if msg.err != nil {
-			m.errMsg = msg.err.Error()
-			m.infoMsg = ""
-			return m, nil
-		}
-		m.readingBooks = msg.reading
-		m.okuBooks = msg.oku
-		if m.timerSelectIdx >= len(m.readingBooks) {
-			m.timerSelectIdx = max(0, len(m.readingBooks)-1)
-		}
-		m.refreshListItems()
-		m.updateSearchSuggestions()
-		m.errMsg = ""
-		if msg.needsRefresh {
-			m.loading = true
-			return m, loadLibraryCmd(m.ctx, m.app, true)
-		}
-		return m, nil
+		return m.applyLibraryLoaded(msg)
 
 	case localDataLoadedMsg:
+		m.loading = false
 		m.localLoaded = true
 		if msg.err != nil {
 			m.errMsg = msg.err.Error()
@@ -452,6 +472,7 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case timerOpDoneMsg:
+		m.loading = false
 		m.timerSelecting = false
 		if msg.err != nil {
 			m.errMsg = msg.err.Error()
@@ -464,89 +485,36 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, loadLocalDataCmd(m.app)
 
 	case searchLoadedMsg:
-		m.loading = false
-		m.searchLoading = false
-		m.searchLoadingQuery = ""
-		if msg.err != nil {
-			m.errMsg = msg.err.Error()
-			m.infoMsg = ""
-			return m, nil
-		}
-		m.searchQueryMode = msg.mode
-		m.lastQuery = msg.query
-		m.lastSearchMode = msg.mode
-		m.searchBooks = msg.results
-		m.refreshSearchResultItems()
-		m.searchList.Title = fmt.Sprintf("%s Results (%d)", m.searchQueryMode.Label(), len(msg.results))
-		if len(msg.results) > 0 {
-			m.searchSub = searchSubResults
-		}
-		m.errMsg = ""
-		if len(msg.results) == 0 {
-			m.infoMsg = fmt.Sprintf("%s mode: no results for %q", strings.ToLower(m.searchQueryMode.Label()), msg.query)
-		} else {
-			m.infoMsg = fmt.Sprintf("%s mode: loaded %d results", strings.ToLower(m.searchQueryMode.Label()), len(msg.results))
-		}
-		m.addRecentSearchQuery(msg.query)
-		m.updateSearchSuggestions()
-		return m, nil
+		return m.applySearchLoaded(msg)
 
 	case backgroundCheckMsg:
-		if m.dirty && !m.loading && time.Since(m.lastMutationAt) >= backgroundSyncWindow {
-			m.loading = true
-			m.dirty = false
-			return m, tea.Batch(loadLibraryCmd(m.ctx, m.app, true), backgroundCheckCmd())
+		if m.dirty && !m.loading && !m.reconciling && time.Since(m.lastMutationAt) >= backgroundSyncWindow {
+			m.reconciling = true
+			cmd := m.beginLoading(loadLibraryCmd(m.ctx, m.app, true))
+			return m, tea.Batch(cmd, backgroundCheckCmd())
 		}
 		return m, backgroundCheckCmd()
 
 	case opDoneMsg:
-		m.loading = false
-		if msg.err != nil {
-			m.errMsg = msg.err.Error()
-			m.infoMsg = ""
-		} else {
-			m.errMsg = ""
-			m.infoMsg = msg.info
-			if msg.markDirty {
-				m.dirty = true
-				m.lastMutationAt = time.Now()
-			}
-		}
-		if msg.reload {
-			m.loading = true
-			return m, tea.Batch(loadLibraryCmd(m.ctx, m.app, false), loadLocalDataCmd(m.app))
-		}
-		return m, nil
-
-	case tea.KeyMsg:
-		// Help modal intercepts all keys.
-		if m.showHelp {
-			switch msg.String() {
-			case "?", "esc":
-				m.showHelp = false
-			case "q", "ctrl+c":
-				return m, tea.Quit
-			}
-			return m, nil
-		}
-
-		// Route to section-specific handlers.
-		switch m.section {
-		case sectionSearch:
-			return m.handleSearchKeys(msg)
-		case sectionReading, sectionOku:
-			return m.handleLibraryKeys(msg)
-		case sectionStats:
-			return m.handleStatsKeys(msg)
-		case sectionTimer:
-			return m.handleTimerKeys(msg)
-		default:
-			return m.handleGenericKeys(msg)
-		}
+		return m.applyOpDone(msg)
 	}
 
-	// Forward to active list for scroll/filter.
+	// Anything else (cursor blinks, list filter updates) goes to whatever has
+	// focus right now.
 	var cmd tea.Cmd
+	switch m.mode {
+	case modeUpdatePage:
+		m.pageInput, cmd = m.pageInput.Update(msg)
+		return m, cmd
+	case modeReviewRating:
+		if m.reviewFocus == dashboardReviewFocusRating {
+			m.reviewRatingInput, cmd = m.reviewRatingInput.Update(msg)
+		} else {
+			m.reviewTextInput, cmd = m.reviewTextInput.Update(msg)
+		}
+		return m, cmd
+	}
+
 	switch m.section {
 	case sectionReading:
 		m.readingList, cmd = m.readingList.Update(msg)
@@ -558,6 +526,178 @@ func (m dashboardModel) updateLibraryMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, cmd
+}
+
+func (m dashboardModel) applyLibraryLoaded(msg libraryLoadedMsg) (tea.Model, tea.Cmd) {
+	m.loading = false
+	m.loaded = true
+	reconciled := m.reconciling
+	m.reconciling = false
+	if msg.err != nil {
+		m.errMsg = msg.err.Error()
+		m.infoMsg = ""
+		// dirty stays set: the local mutations are still unreconciled.
+		return m, nil
+	}
+	m.readingBooks = msg.reading
+	m.okuBooks = msg.oku
+	if m.timerSelectIdx >= len(m.readingBooks) {
+		m.timerSelectIdx = max(0, len(m.readingBooks)-1)
+	}
+	m.refreshListItems()
+	m.updateSearchSuggestions()
+	m.errMsg = ""
+	if reconciled {
+		m.dirty = false
+	}
+	if msg.needsRefresh {
+		return m.startOp(loadLibraryCmd(m.ctx, m.app, true))
+	}
+	return m, nil
+}
+
+func (m dashboardModel) applySearchLoaded(msg searchLoadedMsg) (tea.Model, tea.Cmd) {
+	m.loading = false
+	m.searchLoading = false
+	m.searchLoadingQuery = ""
+	if msg.err != nil {
+		m.errMsg = msg.err.Error()
+		m.infoMsg = ""
+		return m, nil
+	}
+	m.searchQueryMode = msg.mode
+	m.lastQuery = msg.query
+	m.lastSearchMode = msg.mode
+	m.searchBooks = msg.results
+	m.refreshSearchResultItems()
+	m.searchList.Title = fmt.Sprintf("%s Results (%d)", m.searchQueryMode.Label(), len(msg.results))
+	if len(msg.results) > 0 {
+		m.searchSub = searchSubResults
+	}
+	m.errMsg = ""
+	if len(msg.results) == 0 {
+		m.infoMsg = fmt.Sprintf("%s mode: no results for %q", strings.ToLower(m.searchQueryMode.Label()), msg.query)
+	} else {
+		m.infoMsg = fmt.Sprintf("%s mode: loaded %d results", strings.ToLower(m.searchQueryMode.Label()), len(msg.results))
+	}
+	m.addRecentSearchQuery(msg.query)
+	m.updateSearchSuggestions()
+	return m, nil
+}
+
+// applyOpDone applies the result of a mutating operation.
+func (m dashboardModel) applyOpDone(msg opDoneMsg) (tea.Model, tea.Cmd) {
+	if m.mode == modeReviewRating {
+		return m.applyReviewOpDone(msg)
+	}
+
+	m.loading = false
+	if msg.err != nil {
+		m.errMsg = msg.err.Error()
+		m.infoMsg = ""
+	} else {
+		m.errMsg = ""
+		m.infoMsg = msg.info
+		if msg.markDirty {
+			m.dirty = true
+			m.lastMutationAt = time.Now()
+		}
+	}
+	if m.mode == modeUpdatePage && msg.op == opProgress {
+		m.closePageModal()
+	}
+	if msg.reload {
+		return m.startOp(loadLibraryCmd(m.ctx, m.app, false), loadLocalDataCmd(m.app))
+	}
+	return m, nil
+}
+
+// applyReviewOpDone keeps the review modal open until its own save succeeds,
+// so a failed save never throws away what was typed and the result of another
+// operation never closes the modal.
+func (m dashboardModel) applyReviewOpDone(msg opDoneMsg) (tea.Model, tea.Cmd) {
+	m.loading = false
+	if msg.op != opReview || !m.reviewSubmitting {
+		// Another operation was still in flight when the modal opened: do its
+		// bookkeeping and leave the draft alone.
+		if msg.err == nil && msg.markDirty {
+			m.dirty = true
+			m.lastMutationAt = time.Now()
+		}
+		if msg.reload {
+			return m.startOp(loadLibraryCmd(m.ctx, m.app, false), loadLocalDataCmd(m.app))
+		}
+		return m, nil
+	}
+
+	m.reviewSubmitting = false
+	if msg.err != nil {
+		// Rendered inside the overlay; rating and review text are preserved.
+		m.errMsg = msg.err.Error()
+		m.infoMsg = ""
+		return m, nil
+	}
+	m.errMsg = ""
+	m.infoMsg = msg.info
+	if msg.markDirty {
+		m.dirty = true
+		m.lastMutationAt = time.Now()
+	}
+	m.closeReviewRatingModal()
+	if msg.reload {
+		return m.startOp(loadLibraryCmd(m.ctx, m.app, false), loadLocalDataCmd(m.app))
+	}
+	return m, nil
+}
+
+// startOp marks work as in flight and returns the model together with cmds and
+// the spinner tick.
+func (m dashboardModel) startOp(cmds ...tea.Cmd) (tea.Model, tea.Cmd) {
+	cmd := m.beginLoading(cmds...)
+	return m, cmd
+}
+
+// beginLoading flags work as in flight and (re)starts the spinner tick loop.
+func (m *dashboardModel) beginLoading(cmds ...tea.Cmd) tea.Cmd {
+	m.loading = true
+	return tea.Batch(append(cmds, m.startSpinner())...)
+}
+
+// startSpinner returns the spinner tick only when no loop is armed, so
+// overlapping operations never run two of them at once.
+func (m *dashboardModel) startSpinner() tea.Cmd {
+	if m.spinning {
+		return nil
+	}
+	m.spinning = true
+	return m.spin.Tick
+}
+
+func (m dashboardModel) updateLibraryMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Help modal intercepts all keys.
+	if m.showHelp {
+		switch msg.String() {
+		case "?", "esc":
+			m.showHelp = false
+		case "q", "ctrl+c":
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+
+	// Route to section-specific handlers.
+	switch m.section {
+	case sectionSearch:
+		return m.handleSearchKeys(msg)
+	case sectionReading, sectionOku:
+		return m.handleLibraryKeys(msg)
+	case sectionStats:
+		return m.handleStatsKeys(msg)
+	case sectionTimer:
+		return m.handleTimerKeys(msg)
+	default:
+		return m.handleGenericKeys(msg)
+	}
 }
 
 // ── Section-specific key handlers ──────────────────────────────────────────
@@ -604,10 +744,10 @@ func (m dashboardModel) handleStatsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		return m, loadLocalDataCmd(m.app)
 	case "s":
-		m.loading = true
-		return m, syncAllAndReloadCmd(m.ctx, m.app)
+		return m.startOp(syncAllAndReloadCmd(m.ctx, m.app))
 	case "l", "right", "tab":
 		m.statsScroll = 0
+
 		m.nextSection()
 		return m, nil
 	case "h", "left", "shift+tab":
@@ -657,11 +797,10 @@ func (m dashboardModel) handleLibraryKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.errMsg = ""
 		return m, nil
 	case "r":
-		m.loading = true
-		return m, loadLibraryCmd(m.ctx, m.app, true)
+		return m.startOp(loadLibraryCmd(m.ctx, m.app, true))
 	case "s":
-		m.loading = true
-		return m, syncAllAndReloadCmd(m.ctx, m.app)
+		return m.startOp(syncAllAndReloadCmd(m.ctx, m.app))
+
 	case "z":
 		m.cycleDensity()
 		return m, nil
@@ -671,15 +810,10 @@ func (m dashboardModel) handleLibraryKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.changeSelectedLibraryStatus(model.StatusWantToRead)
 	case "+", "=":
-		if b := m.selectedLibraryBook(); b != nil {
-			m.loading = true
-			return m, quickProgressCmd(m.ctx, m.app, b.Book.ID, +10)
-		}
+		return m.quickProgress(+10)
 	case "-":
-		if b := m.selectedLibraryBook(); b != nil {
-			m.loading = true
-			return m, quickProgressCmd(m.ctx, m.app, b.Book.ID, -10)
-		}
+		return m.quickProgress(-10)
+
 	case "u":
 		if b := m.selectedLibraryBook(); b != nil {
 			m.mode = modeUpdatePage
@@ -802,9 +936,9 @@ func (m dashboardModel) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		if r := m.selectedSearchResult(); r != nil {
-			m.loading = true
-			return m, addFromSearchCmd(m.ctx, m.app, r.ID, model.StatusCurrentlyReading)
+			return m.startOp(addFromSearchCmd(m.ctx, m.app, r.ID, model.StatusCurrentlyReading))
 		}
+
 	case "g":
 		return m.changeSelectedSearchStatus(model.StatusCurrentlyReading)
 	case "w":
@@ -861,9 +995,9 @@ func (m dashboardModel) handleTimerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.timerSelectIdx = len(m.readingBooks) - 1
 			}
 			selected := m.readingBooks[m.timerSelectIdx]
-			m.loading = true
 			m.timerSelecting = false
-			return m, startTimerForBookCmd(m.app, selected.Book.ID)
+			return m.startOp(startTimerForBookCmd(m.app, selected.Book.ID))
+
 		}
 		return m, nil
 	}
@@ -919,64 +1053,24 @@ func (m dashboardModel) handleTimerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // ── Page update mode ───────────────────────────────────────────────────────
 
-func (m dashboardModel) updatePageMode(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case spinner.TickMsg:
-		var cmd tea.Cmd
-		m.spin, cmd = m.spin.Update(msg)
-		return m, cmd
-	case timerTickMsg:
-		return m, timerTickCmd()
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		m.resize()
+func (m dashboardModel) updatePageMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.closePageModal()
 		return m, nil
-	case backgroundCheckMsg:
-		if m.dirty && !m.loading && time.Since(m.lastMutationAt) >= backgroundSyncWindow {
-			m.loading = true
-			m.dirty = false
-			return m, tea.Batch(loadLibraryCmd(m.ctx, m.app, true), backgroundCheckCmd())
-		}
-		return m, backgroundCheckCmd()
-	case opDoneMsg:
-		m.loading = false
-		m.mode = modeLibrary
-		m.pageInput.Blur()
-		if msg.err != nil {
-			m.errMsg = msg.err.Error()
-			m.infoMsg = ""
-		} else {
-			m.errMsg = ""
-			m.infoMsg = msg.info
-			if msg.markDirty {
-				m.dirty = true
-				m.lastMutationAt = time.Now()
-			}
-		}
-		if msg.reload {
-			m.loading = true
-			return m, tea.Batch(loadLibraryCmd(m.ctx, m.app, false), loadLocalDataCmd(m.app))
-		}
-		return m, nil
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "esc":
-			m.mode = modeLibrary
-			m.pageInput.Blur()
-			m.pageInput.SetValue("")
+	case "ctrl+c":
+		return m, tea.Quit
+	case "enter":
+		raw := strings.TrimSpace(m.pageInput.Value())
+		if raw == "" {
+			m.errMsg = "page value cannot be empty"
 			return m, nil
-		case "ctrl+c":
-			return m, tea.Quit
-		case "enter":
-			raw := strings.TrimSpace(m.pageInput.Value())
-			if raw == "" {
-				m.errMsg = "page value cannot be empty"
-				return m, nil
-			}
-			m.loading = true
-			return m, updateProgressCmd(m.ctx, m.app, m.pendingBookID, raw)
 		}
+		if m.loading {
+			m.infoMsg = "Please wait — an update is still in flight"
+			return m, nil
+		}
+		return m.startOp(updateProgressCmd(m.ctx, m.app, m.pendingBookID, raw))
 	}
 
 	var cmd tea.Cmd
@@ -984,91 +1078,67 @@ func (m dashboardModel) updatePageMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m *dashboardModel) closePageModal() {
+	m.mode = modeLibrary
+	m.pageInput.Blur()
+	m.pageInput.SetValue("")
+}
+
+// quickProgress applies a relative page update. UpdateProgress is
+// read-modify-write, so firing a second one while the first is in flight
+// would silently lose an update.
+func (m dashboardModel) quickProgress(delta int) (tea.Model, tea.Cmd) {
+	b := m.selectedLibraryBook()
+	if b == nil {
+		return m, nil
+	}
+	if m.loading {
+		m.infoMsg = "Please wait — an update is still in flight"
+		return m, nil
+	}
+	return m.startOp(quickProgressCmd(m.ctx, m.app, b.Book.ID, delta))
+}
+
 // ── Review/rating mode ─────────────────────────────────────────────────────
 
-func (m dashboardModel) updateReviewRatingMode(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case spinner.TickMsg:
-		var cmd tea.Cmd
-		m.spin, cmd = m.spin.Update(msg)
-		return m, cmd
-	case timerTickMsg:
-		return m, timerTickCmd()
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		m.resize()
-		textareaWidth := max(40, m.width/2)
-		m.reviewTextInput.SetWidth(textareaWidth)
-		return m, nil
-	case backgroundCheckMsg:
-		if m.dirty && !m.loading && time.Since(m.lastMutationAt) >= backgroundSyncWindow {
-			m.loading = true
-			m.dirty = false
-			return m, tea.Batch(loadLibraryCmd(m.ctx, m.app, true), backgroundCheckCmd())
-		}
-		return m, backgroundCheckCmd()
-	case opDoneMsg:
-		m.loading = false
-		m.reviewSubmitting = false
-		if msg.err != nil {
-			m.errMsg = msg.err.Error()
-			m.infoMsg = ""
-			return m, nil
-		}
-
-		m.errMsg = ""
-		m.infoMsg = msg.info
-		if msg.markDirty {
-			m.dirty = true
-			m.lastMutationAt = time.Now()
-		}
+func (m dashboardModel) updateReviewRatingMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
 		m.closeReviewRatingModal()
-		if msg.reload {
-			m.loading = true
-			return m, loadLibraryCmd(m.ctx, m.app, false)
+		m.infoMsg = "Review update cancelled"
+		return m, nil
+	case "tab":
+		if m.reviewFocus == dashboardReviewFocusRating {
+			m.focusReviewTextField()
+		} else {
+			m.focusReviewRatingField()
 		}
 		return m, nil
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "ctrl+c":
-			return m, tea.Quit
-		case "esc":
-			m.closeReviewRatingModal()
-			m.infoMsg = "Review update cancelled"
-			return m, nil
-		case "tab":
-			if m.reviewFocus == dashboardReviewFocusRating {
-				m.focusReviewTextField()
-			} else {
-				m.focusReviewRatingField()
-			}
-			return m, nil
-		case "shift+tab":
-			if m.reviewFocus == dashboardReviewFocusText {
-				m.focusReviewRatingField()
-			} else {
-				m.focusReviewTextField()
-			}
-			return m, nil
-		case "ctrl+s":
-			if m.reviewSubmitting || m.reviewBook == nil {
-				return m, nil
-			}
-			rating, err := parseReviewRatingInput(m.reviewRatingInput.Value())
-			if err != nil {
-				m.errMsg = err.Error()
-				return m, nil
-			}
-			m.errMsg = ""
-			m.loading = true
-			m.reviewSubmitting = true
-			review := m.reviewTextInput.Value()
-			bookID := m.reviewBook.Book.ID
-			m.infoMsg = reviewSavePendingMessage(review)
-			m.closeReviewRatingModal()
-			return m, submitReviewRatingCmd(m.ctx, m.app, bookID, rating, review)
+	case "shift+tab":
+		if m.reviewFocus == dashboardReviewFocusText {
+			m.focusReviewRatingField()
+		} else {
+			m.focusReviewTextField()
 		}
+		return m, nil
+	case "ctrl+s":
+		if m.reviewSubmitting || m.reviewBook == nil {
+			return m, nil
+		}
+		rating, err := parseReviewRatingInput(m.reviewRatingInput.Value())
+		if err != nil {
+			m.errMsg = err.Error()
+			return m, nil
+		}
+		review := m.reviewTextInput.Value()
+		m.errMsg = ""
+		m.infoMsg = reviewSavePendingMessage(review)
+		// The modal stays open until the save succeeds, so a failure can show
+		// the error without discarding the draft.
+		m.reviewSubmitting = true
+		return m.startOp(submitReviewRatingCmd(m.ctx, m.app, m.reviewBook.Book.ID, rating, review))
 	}
 
 	var cmd tea.Cmd
@@ -1571,10 +1641,16 @@ func (m dashboardModel) reviewRatingOverlay() string {
 	sb.WriteString("\n")
 	sb.WriteString(m.reviewTextInput.View())
 	sb.WriteString("\n\n")
-	if m.reviewSubmitting {
+	switch {
+	case m.reviewSubmitting:
 		sb.WriteString(dimStyleTUI.Render("Saving..."))
 		sb.WriteString("\n")
+	case m.errMsg != "":
+		// The status bar sits behind the modal, so surface the failure here.
+		sb.WriteString(errorStyleTUI.Render(m.errMsg))
+		sb.WriteString("\n")
 	}
+
 	sb.WriteString(dimStyleTUI.Render("Tab/Shift+Tab switch fields   Ctrl+S save   Esc cancel"))
 
 	width := max(70, m.width-10)
@@ -1799,9 +1875,9 @@ func (m *dashboardModel) submitSearch() tea.Cmd {
 		return nil
 	}
 
-	m.loading = true
 	m.searchLoading = true
 	m.searchLoadingQuery = query
+
 	m.errMsg = ""
 	m.infoMsg = fmt.Sprintf("%s mode (%s): searching for %q...",
 		strings.ToLower(m.searchQueryMode.Label()),
@@ -1809,7 +1885,8 @@ func (m *dashboardModel) submitSearch() tea.Cmd {
 		query,
 	)
 	m.searchList.Title = fmt.Sprintf("%s Results (loading...)", m.searchQueryMode.Label())
-	return searchCmd(m.ctx, m.app, query, m.searchQueryMode)
+	return m.beginLoading(searchCmd(m.ctx, m.app, query, m.searchQueryMode))
+
 }
 
 func (m *dashboardModel) cycleDensity() {
@@ -2095,8 +2172,8 @@ func (m dashboardModel) changeSelectedLibraryStatus(status model.Status) (tea.Mo
 		m.errMsg = "no book selected"
 		return m, nil
 	}
-	m.loading = true
-	return m, changeStatusCmd(m.ctx, m.app, b.Book.ID, status)
+	return m.startOp(changeStatusCmd(m.ctx, m.app, b.Book.ID, status))
+
 }
 
 func (m dashboardModel) changeSelectedSearchStatus(status model.Status) (tea.Model, tea.Cmd) {
@@ -2105,8 +2182,8 @@ func (m dashboardModel) changeSelectedSearchStatus(status model.Status) (tea.Mod
 		m.errMsg = "no search result selected"
 		return m, nil
 	}
-	m.loading = true
-	return m, addFromSearchCmd(m.ctx, m.app, r.ID, status)
+	return m.startOp(addFromSearchCmd(m.ctx, m.app, r.ID, status))
+
 }
 
 // ── Tea Commands ───────────────────────────────────────────────────────────
@@ -2295,13 +2372,14 @@ func updateProgressCmd(ctx context.Context, a *app.App, bookID int, rawPage stri
 	return func() tea.Msg {
 		p, err := model.ParsePage(rawPage)
 		if err != nil {
-			return opDoneMsg{err: err}
+			return opDoneMsg{op: opProgress, err: err}
 		}
 		newPage, err := a.UpdateProgress(ctx, bookID, p)
 		if err != nil {
-			return opDoneMsg{err: err}
+			return opDoneMsg{op: opProgress, err: err}
 		}
 		return opDoneMsg{
+			op:        opProgress,
 			info:      fmt.Sprintf("Progress updated to page %d", newPage),
 			reload:    true,
 			markDirty: true,
@@ -2312,13 +2390,14 @@ func updateProgressCmd(ctx context.Context, a *app.App, bookID int, rawPage stri
 func submitReviewRatingCmd(ctx context.Context, a *app.App, bookID int, rating float64, review string) tea.Cmd {
 	return func() tea.Msg {
 		if err := a.ReviewBook(ctx, bookID, rating, review); err != nil {
-			return opDoneMsg{err: err}
+			return opDoneMsg{op: opReview, err: err}
 		}
 		info := fmt.Sprintf("Updated review and rating (%s)", model.StarString(rating))
 		if strings.TrimSpace(review) == "" {
 			info = fmt.Sprintf("Updated rating (%s)", model.StarString(rating))
 		}
 		return opDoneMsg{
+			op:        opReview,
 			info:      info,
 			reload:    true,
 			markDirty: true,
@@ -2336,20 +2415,21 @@ func reviewSavePendingMessage(review string) string {
 func quickProgressCmd(ctx context.Context, a *app.App, bookID int, delta int) tea.Cmd {
 	return func() tea.Msg {
 		if delta == 0 {
-			return opDoneMsg{}
+			return opDoneMsg{op: opProgress}
 		}
 		newPage, err := a.UpdateProgress(ctx, bookID, model.PageUpdate{
 			Delta:    delta,
 			Relative: true,
 		})
 		if err != nil {
-			return opDoneMsg{err: err}
+			return opDoneMsg{op: opProgress, err: err}
 		}
 		sign := ""
 		if delta > 0 {
 			sign = "+"
 		}
 		return opDoneMsg{
+			op:        opProgress,
 			info:      fmt.Sprintf("Progress %s%d → page %d", sign, delta, newPage),
 			reload:    true,
 			markDirty: true,
@@ -2360,9 +2440,10 @@ func quickProgressCmd(ctx context.Context, a *app.App, bookID int, delta int) te
 func changeStatusCmd(ctx context.Context, a *app.App, bookID int, status model.Status) tea.Cmd {
 	return func() tea.Msg {
 		if err := a.ChangeStatus(ctx, bookID, status); err != nil {
-			return opDoneMsg{err: err}
+			return opDoneMsg{op: opStatus, err: err}
 		}
 		return opDoneMsg{
+			op:        opStatus,
 			info:      fmt.Sprintf("Status changed to %s", status.Label()),
 			reload:    true,
 			markDirty: true,
@@ -2373,9 +2454,10 @@ func changeStatusCmd(ctx context.Context, a *app.App, bookID int, status model.S
 func addFromSearchCmd(ctx context.Context, a *app.App, bookID int, status model.Status) tea.Cmd {
 	return func() tea.Msg {
 		if err := a.ChangeStatus(ctx, bookID, status); err != nil {
-			return opDoneMsg{err: err}
+			return opDoneMsg{op: opStatus, err: err}
 		}
 		return opDoneMsg{
+			op:        opStatus,
 			info:      fmt.Sprintf("Added to %s", status.Label()),
 			reload:    true,
 			markDirty: true,
@@ -2386,9 +2468,10 @@ func addFromSearchCmd(ctx context.Context, a *app.App, bookID int, status model.
 func syncAllAndReloadCmd(ctx context.Context, a *app.App) tea.Cmd {
 	return func() tea.Msg {
 		if err := a.SyncAll(ctx); err != nil {
-			return opDoneMsg{err: err}
+			return opDoneMsg{op: opSync, err: err}
 		}
 		return opDoneMsg{
+			op:     opSync,
 			info:   "Sync complete",
 			reload: true,
 		}
