@@ -17,13 +17,21 @@ const (
 	envKey      = "HARDCOVER_TOKEN"
 )
 
+// normalizeToken trims surrounding whitespace and newlines, which routinely
+// sneak in via `export HARDCOVER_TOKEN="$(cat token.txt)"` or a copy-paste
+// into the keychain and would otherwise corrupt the Authorization header.
+func normalizeToken(token string) string {
+	return strings.TrimSpace(token)
+}
+
 // GetToken returns the API token using priority: env var > keychain.
 func GetToken() (string, error) {
-	if token := os.Getenv(envKey); token != "" {
+	if token := normalizeToken(os.Getenv(envKey)); token != "" {
 		return token, nil
 	}
 
 	token, err := keyring.Get(serviceName, accountName)
+	token = normalizeToken(token)
 	if err == nil && token != "" {
 		return token, nil
 	}
@@ -60,7 +68,7 @@ func PromptToken() (string, error) {
 		token = line
 	}
 
-	token = strings.TrimSpace(token)
+	token = normalizeToken(token)
 	if token == "" {
 		return "", fmt.Errorf("token cannot be empty")
 	}
