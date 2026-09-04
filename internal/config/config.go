@@ -1,8 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/BurntSushi/toml"
 )
@@ -26,7 +28,10 @@ func Defaults() Config {
 // Load reads config from the TOML file, falling back to defaults.
 func Load() (Config, error) {
 	cfg := Defaults()
-	path := FilePath()
+	path, err := FilePath()
+	if err != nil {
+		return cfg, err
+	}
 
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return cfg, nil
@@ -38,37 +43,73 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
-// FilePath returns the config file path (~/.config/oku/config.toml).
-func FilePath() string {
+// FilePath returns the config file path (~/.config/oku/config.toml on
+// macOS and Linux, %AppData%\oku\config.toml on Windows).
+func FilePath() (string, error) {
 	dir := os.Getenv("XDG_CONFIG_HOME")
 	if dir == "" {
-		home, _ := os.UserHomeDir()
-		dir = filepath.Join(home, ".config")
+		var err error
+		if runtime.GOOS == "windows" {
+			dir, err = os.UserConfigDir()
+		} else {
+			dir, err = homeSubdir(".config")
+		}
+		if err != nil {
+			return "", fmt.Errorf("locate config dir: %w", err)
+		}
 	}
-	return filepath.Join(dir, "oku", "config.toml")
+	return filepath.Join(dir, "oku", "config.toml"), nil
 }
 
-// DataDir returns the data directory (~/.local/share/oku).
-func DataDir() string {
+// DataDir returns the data directory (~/.local/share/oku on macOS and Linux,
+// %LocalAppData%\oku on Windows).
+func DataDir() (string, error) {
 	dir := os.Getenv("XDG_DATA_HOME")
 	if dir == "" {
-		home, _ := os.UserHomeDir()
-		dir = filepath.Join(home, ".local", "share")
+		var err error
+		if runtime.GOOS == "windows" {
+			dir, err = os.UserCacheDir()
+		} else {
+			dir, err = homeSubdir(".local", "share")
+		}
+		if err != nil {
+			return "", fmt.Errorf("locate data dir: %w", err)
+		}
 	}
-	return filepath.Join(dir, "oku")
+	return filepath.Join(dir, "oku"), nil
+}
+
+func homeSubdir(parts ...string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(append([]string{home}, parts...)...), nil
 }
 
 // DBPath returns the SQLite database path.
-func DBPath() string {
-	return filepath.Join(DataDir(), "cache.db")
+func DBPath() (string, error) {
+	dir, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "cache.db"), nil
 }
 
 // EnsureDataDir creates the data directory if it doesn't exist.
 func EnsureDataDir() error {
-	return os.MkdirAll(DataDir(), 0o755)
+	dir, err := DataDir()
+	if err != nil {
+		return err
+	}
+	return os.MkdirAll(dir, 0o755)
 }
 
 // EnsureConfigDir creates the config directory if it doesn't exist.
 func EnsureConfigDir() error {
-	return os.MkdirAll(filepath.Dir(FilePath()), 0o755)
+	path, err := FilePath()
+	if err != nil {
+		return err
+	}
+	return os.MkdirAll(filepath.Dir(path), 0o755)
 }

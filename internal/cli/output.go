@@ -48,14 +48,13 @@ func currentOutputDensity() outputDensity {
 	return d
 }
 
-func printBooks(books []model.UserBook) {
+func printBooks(books []model.UserBook) error {
 	if jsonOutput {
-		printJSON(books)
-		return
+		return printJSON(books)
 	}
 	if len(books) == 0 {
 		fmt.Println(dimStyle.Render("No books found."))
-		return
+		return nil
 	}
 	density := currentOutputDensity()
 	for i, ub := range books {
@@ -87,16 +86,16 @@ func printBooks(books []model.UserBook) {
 			fmt.Printf("   %s\n", dimStyle.Render(detail))
 		}
 	}
+	return nil
 }
 
-func printSearchResults(results []model.SearchResult) {
+func printSearchResults(results []model.SearchResult) error {
 	if jsonOutput {
-		printJSON(results)
-		return
+		return printJSON(results)
 	}
 	if len(results) == 0 {
 		fmt.Println(dimStyle.Render("No results found."))
-		return
+		return nil
 	}
 	for i, r := range results {
 		num := dimStyle.Render(fmt.Sprintf("%d.", i+1))
@@ -113,17 +112,17 @@ func printSearchResults(results []model.SearchResult) {
 			fmt.Printf("   %s\n", author)
 		}
 	}
+	return nil
 }
 
-func printActiveBooks(books []model.UserBook) {
+func printActiveBooks(books []model.UserBook) error {
 	if jsonOutput {
-		printJSON(books)
-		return
+		return printJSON(books)
 	}
 
 	if len(books) == 0 {
 		fmt.Println(dimStyle.Render("No active books."))
-		return
+		return nil
 	}
 
 	density := currentOutputDensity()
@@ -157,6 +156,7 @@ func printActiveBooks(books []model.UserBook) {
 			fmt.Printf("      %s\n", dimStyle.Render(detail))
 		}
 	}
+	return nil
 }
 
 func bookMetaLine(b model.Book) string {
@@ -214,8 +214,14 @@ func formatCount(n int) string {
 	}
 }
 
-func printJSON(v interface{}) {
+// printJSON writes v to stdout. The encode error is returned so a closed pipe
+// (`oku list --json | head`) or a full disk exits non-zero instead of looking
+// like a successful empty run.
+func printJSON(v interface{}) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	_ = enc.Encode(v)
+	if err := enc.Encode(v); err != nil {
+		return fmt.Errorf("write JSON output: %w", err)
+	}
+	return nil
 }

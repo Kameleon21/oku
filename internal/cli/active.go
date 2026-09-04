@@ -21,8 +21,7 @@ func newActiveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			printActiveBooks(books)
-			return nil
+			return printActiveBooks(books)
 		},
 	}
 }
