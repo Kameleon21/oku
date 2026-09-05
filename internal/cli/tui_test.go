@@ -397,6 +397,7 @@ func TestReviewSaveKeepsModalOpenWhileSaving(t *testing.T) {
 
 func TestTimerSelectEnterClampsStaleIndex(t *testing.T) {
 	m := newTestDashboard()
+	m.section = sectionTimer
 	m.timerSelecting = true
 	m.timerSelectIdx = 5 // stale: list shrank while the picker was open
 	m.readingBooks = []model.UserBook{
@@ -1325,7 +1326,15 @@ func TestPageModalShowsTitleAndKeepsFormatHint(t *testing.T) {
 }
 
 func TestHelpModalFitsTheTerminalAndScrolls(t *testing.T) {
-	for _, h := range []int{24, 40} {
+	// The body lists the keys of the focus behind the modal, so on a tall
+	// terminal it fits and only a short one has to scroll.
+	tall := renderedDashboard(80, 40)
+	updated, _ := tall.Update(runeKey('?'))
+	if got := updated.(dashboardModel); strings.Contains(got.renderHelpModal(), "j/k scroll") {
+		t.Fatal("height 40: the help body fits, so it should not offer to scroll")
+	}
+
+	for _, h := range []int{24} {
 		m := renderedDashboard(80, h)
 
 		updated, _ := m.Update(runeKey('?'))
@@ -1701,6 +1710,172 @@ func TestApplyThemeSetting(t *testing.T) {
 	}
 	if err := applyThemeSetting("solarized"); err == nil {
 		t.Fatal("an unknown theme should be reported, not ignored")
+	}
+}
+
+// keyMsgFor turns a binding's key name into the KeyMsg Bubble Tea would send
+// for it.
+func keyMsgFor(t *testing.T, name string) tea.KeyMsg {
+	t.Helper()
+	for _, kt := range []tea.KeyType{
+		tea.KeyEnter, tea.KeyEsc, tea.KeyTab, tea.KeyShiftTab,
+		tea.KeyUp, tea.KeyDown, tea.KeyLeft, tea.KeyRight,
+		tea.KeyHome, tea.KeyEnd, tea.KeyPgUp, tea.KeyPgDown,
+		tea.KeyCtrlC, tea.KeyCtrlD, tea.KeyCtrlU, tea.KeyCtrlS,
+	} {
+		if (tea.KeyMsg{Type: kt}).String() == name {
+			return tea.KeyMsg{Type: kt}
+		}
+	}
+	runes := []rune(name)
+	if len(runes) != 1 {
+		t.Fatalf("no KeyMsg for key %q", name)
+	}
+	return runeKey(runes[0])
+}
+
+// TestEveryAdvertisedBindingIsHandled walks every focus the dashboard can
+// have, takes the bindings its help advertises, and presses each of their
+// keys: every one has to change the screen or return a command. A binding
+// that is listed but not dispatched fails here.
+func TestEveryAdvertisedBindingIsHandled(t *testing.T) {
+	books := func(ids ...int) []model.UserBook {
+		out := make([]model.UserBook, 0, len(ids))
+		for _, id := range ids {
+			out = append(out, model.UserBook{Book: model.Book{ID: id, Title: fmt.Sprintf("Book %d", id), Pages: 300}, CurrentPage: 100})
+		}
+		return out
+	}
+	// Three books on each shelf and a cursor in the middle, so both up and
+	// down move; the demo stats so the stats page is tall enough to scroll.
+	base := func(w, h int) dashboardModel {
+		m := renderedDashboard(w, h)
+		m.readingBooks = books(1, 2, 3)
+		m.okuBooks = books(4, 5, 6)
+		m.refreshListItems()
+		m.readingList.Select(1)
+		m.okuList.Select(1)
+		m.readingStats, _ = demoLocalData()
+		return m
+	}
+	withResults := func(m dashboardModel) dashboardModel {
+		m.searchBooks = []model.SearchResult{{ID: 7, Title: "Dune"}, {ID: 8, Title: "Dune Messiah"}, {ID: 9, Title: "Children of Dune"}}
+		m.refreshSearchResultItems()
+		m.searchList.Select(1)
+		m.searchInput.SetValue("dune")
+		return m
+	}
+	inSection := func(s focusSection) func() dashboardModel {
+		return func() dashboardModel {
+			m := base(120, 40)
+			m.setSection(s)
+			return m
+		}
+	}
+	confirmWithCursor := func(cursor int) func() dashboardModel {
+		return func() dashboardModel {
+			m := inSection(sectionReading)()
+			updated, _ := m.Update(runeKey('x'))
+			m = updated.(dashboardModel)
+			m.confirm.Cursor = cursor
+			return m
+		}
+	}
+
+	states := []struct {
+		name string
+		// variants are arrangements of the same focus; a key passes when it
+		// does something in any of them (a two-button dialog cannot move
+		// left and right from one cursor).
+		variants []func() dashboardModel
+	}{
+		{"intro", []func() dashboardModel{inSection(sectionIntro)}},
+		{"reading", []func() dashboardModel{inSection(sectionReading)}},
+		{"oku", []func() dashboardModel{inSection(sectionOku)}},
+		{"search input, normal mode", []func() dashboardModel{func() dashboardModel {
+			m := withResults(inSection(sectionSearch)())
+			m.searchSub = searchSubInput
+			m.enterSearchNormalMode()
+			return m
+		}}},
+		{"search input, insert mode", []func() dashboardModel{func() dashboardModel {
+			m := withResults(inSection(sectionSearch)())
+			m.searchSub = searchSubInput
+			m.enterSearchInsertMode()
+			return m
+		}}},
+		{"search results", []func() dashboardModel{func() dashboardModel {
+			m := withResults(inSection(sectionSearch)())
+			m.searchSub = searchSubResults
+			m.enterSearchNormalMode()
+			return m
+		}}},
+		{"stats", []func() dashboardModel{func() dashboardModel {
+			// One row down: the page can still scroll either way.
+			m := inSection(sectionStats)()
+			m.statsScroll = 1
+			return m
+		}}},
+		{"timer, idle", []func() dashboardModel{inSection(sectionTimer)}},
+		{"timer, picking a book", []func() dashboardModel{func() dashboardModel {
+			m := inSection(sectionTimer)()
+			m.timerSelecting = true
+			m.timerSelectIdx = 1
+			return m
+		}}},
+		{"timer, running", []func() dashboardModel{func() dashboardModel {
+			m := inSection(sectionTimer)()
+			m.timerState = &model.TimerState{BookID: 1, StartedAt: time.Now()}
+			return m
+		}}},
+		{"help modal", []func() dashboardModel{func() dashboardModel {
+			// Short enough that the body scrolls, scrolled one row so every
+			// direction has somewhere to go.
+			m := base(80, 24)
+			m.setSection(sectionReading)
+			m.openHelp()
+			m.helpViewport.SetYOffset(1)
+			return m
+		}}},
+		{"confirm", []func() dashboardModel{confirmWithCursor(1), confirmWithCursor(0)}},
+		{"page prompt", []func() dashboardModel{func() dashboardModel {
+			m := inSection(sectionReading)()
+			m.openPageModal(m.readingBooks[1])
+			return m
+		}}},
+		{"review modal", []func() dashboardModel{func() dashboardModel {
+			m := inSection(sectionReading)()
+			m.openReviewRatingModal(m.readingBooks[1])
+			m.reviewRatingInput.SetValue("3")
+			return m
+		}}},
+	}
+
+	for _, state := range states {
+		groups := state.variants[0]().activeKeys().FullHelp()
+		if len(groups) == 0 {
+			t.Fatalf("%s: no bindings are advertised", state.name)
+		}
+		for _, group := range groups {
+			for _, b := range group {
+				for _, name := range b.Keys() {
+					msg := keyMsgFor(t, name)
+					handled := false
+					for _, arrange := range state.variants {
+						m := arrange()
+						before := stripANSI(m.frame())
+						updated, cmd := m.Update(msg)
+						if cmd != nil || stripANSI(updated.(dashboardModel).frame()) != before {
+							handled = true
+							break
+						}
+					}
+					if !handled {
+						t.Errorf("%s: %q (%s: %s) is advertised but does nothing", state.name, name, b.Help().Key, b.Help().Desc)
+					}
+				}
+			}
+		}
 	}
 }
 
