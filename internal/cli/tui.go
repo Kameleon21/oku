@@ -1540,18 +1540,39 @@ func (m dashboardModel) renderLayout() string {
 	panelInnerH := m.rightPanelContentHeight()
 	leftW := max(28, totalW*2/5)
 
+	// The left frame is only a frame: the focus cue belongs to the card
+	// inside it, or to the right pane when the cursor is over there.
 	leftContent := clampPanelContent(m.renderSections(leftW-2, panelInnerH), leftW, panelInnerH)
-	leftPanel := panelFocusedStyle.Width(leftW).Height(panelInnerH).Render(leftContent)
+	leftPanel := panelStyle.Width(leftW).Height(panelInnerH).Render(leftContent)
 
 	// Right panel: context-sensitive.
 	rightW := max(28, m.width-lipgloss.Width(leftPanel)-2)
 	rightContent := clampPanelContent(m.rightPanelView(rightW-4), rightW, panelInnerH)
-	rightPanel := panelStyle.
+	rightStyle := panelStyle
+	if m.rightPaneFocused() {
+		rightStyle = panelFocusedStyle
+	}
+	rightPanel := rightStyle.
 		Width(rightW).
 		Height(panelInnerH).
 		Render(rightContent)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
+}
+
+// rightPaneFocused reports whether j/k act on the right pane: over the search
+// results, the timer's book picker or the stats page. The pane then carries
+// the focus border, and the section card keeps its marker.
+func (m dashboardModel) rightPaneFocused() bool {
+	switch m.section {
+	case sectionSearch:
+		return m.searchSub == searchSubResults
+	case sectionTimer:
+		return m.timerSelecting && m.timerState == nil
+	case sectionStats:
+		return true
+	}
+	return false
 }
 
 // clampPanelContent pins a panel's content to its box: over-long lines are cut

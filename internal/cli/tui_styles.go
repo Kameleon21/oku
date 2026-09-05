@@ -63,9 +63,12 @@ var th = defaultTheme()
 
 // ── Panel Styles ────────────────────────────────────────────────────────────
 
+// The focused panel differs from the others in shape as well as colour: a
+// thick border survives NO_COLOR and a 16-colour terminal, where the accent
+// alone would not.
 var (
 	panelFocusedStyle = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
+				Border(lipgloss.ThickBorder()).
 				BorderForeground(th.borderFocused)
 
 	panelStyle = lipgloss.NewStyle().

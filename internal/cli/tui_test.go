@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 )
 
@@ -1700,5 +1701,40 @@ func TestApplyThemeSetting(t *testing.T) {
 	}
 	if err := applyThemeSetting("solarized"); err == nil {
 		t.Fatal("an unknown theme should be reported, not ignored")
+	}
+}
+
+func TestFocusIsVisibleWithoutColour(t *testing.T) {
+	m := renderedDashboard(120, 40)
+	def := sectionDef{sectionReading, "Reading", 2}
+
+	focused := ansi.Strip(m.renderSectionCard(def, 40, 8, true))
+	blurred := ansi.Strip(m.renderSectionCard(def, 40, 8, false))
+	if focused == blurred {
+		t.Fatal("a focused and an unfocused card render the same once colour is stripped")
+	}
+	if !strings.Contains(focused, "▸") || strings.Contains(blurred, "▸") {
+		t.Fatalf("the marker should follow the focus:\n%s\n%s", focused, blurred)
+	}
+	if !strings.Contains(focused, "┃") || strings.Contains(blurred, "┃") {
+		t.Fatalf("the thick border should follow the focus:\n%s\n%s", focused, blurred)
+	}
+
+	// The right pane takes the focus border when the cursor moves into it.
+	m.setSection(sectionSearch)
+	m.searchSub = searchSubInput
+	inputFrame := ansi.Strip(m.frame())
+	m.searchSub = searchSubResults
+	resultsFrame := ansi.Strip(m.frame())
+	if inputFrame == resultsFrame {
+		t.Fatal("focusing the search results should change the frame without colour")
+	}
+	if !m.rightPaneFocused() {
+		t.Fatal("the search results live in the right pane")
+	}
+	// Two thick verticals per row: the focused card and the focused pane
+	// never coexist, so the marked card is the only other thick border.
+	if strings.Count(strings.Split(resultsFrame, "\n")[3], "┃") < 2 {
+		t.Fatalf("the right pane should carry the thick border:\n%s", resultsFrame)
 	}
 }
