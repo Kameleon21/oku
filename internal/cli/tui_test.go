@@ -1326,15 +1326,7 @@ func TestPageModalShowsTitleAndKeepsFormatHint(t *testing.T) {
 }
 
 func TestHelpModalFitsTheTerminalAndScrolls(t *testing.T) {
-	// The body lists the keys of the focus behind the modal, so on a tall
-	// terminal it fits and only a short one has to scroll.
-	tall := renderedDashboard(80, 40)
-	updated, _ := tall.Update(runeKey('?'))
-	if got := updated.(dashboardModel); strings.Contains(got.renderHelpModal(), "j/k scroll") {
-		t.Fatal("height 40: the help body fits, so it should not offer to scroll")
-	}
-
-	for _, h := range []int{24} {
+	for _, h := range []int{24, 40} {
 		m := renderedDashboard(80, h)
 
 		updated, _ := m.Update(runeKey('?'))
@@ -1882,6 +1874,118 @@ func TestEveryAdvertisedBindingIsHandled(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestHelpModalListsEveryGroupWithTheActiveOnesFirst checks the modal still
+// teaches the other sections' keys: from Reading it names the search keys,
+// dimmed, after the groups that apply.
+func TestHelpModalListsEveryGroupWithTheActiveOnesFirst(t *testing.T) {
+	m := renderedDashboard(120, 40)
+	m.setSection(sectionReading)
+	body := stripANSI(m.helpModalBody())
+
+	for _, want := range []string{"Actions", "Navigation", "General", "Confirm", "Review", "Timer", "Data",
+		"insert", "cycle mode", "book / author / genre", "undo the last change", "stop timer"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("help body is missing %q:\n%s", want, body)
+		}
+	}
+	// Confirm and Review have no live key from Reading, so they come after
+	// every group that does.
+	if strings.Index(body, "Confirm") < strings.Index(body, "General") {
+		t.Fatalf("inactive groups should follow the active ones:\n%s", body)
+	}
+	// Dimming is the only difference, so the raw render of a live key and a
+	// dead one must differ.
+	raw := m.helpModalBody()
+	live := modalKeyStyle.Width(12).Render("u")
+	if !strings.Contains(raw, live) {
+		t.Fatal("a live key should be drawn in the key style")
+	}
+	if strings.Contains(raw, modalKeyStyle.Width(12).Render("i")) {
+		t.Fatal("a key the focus does not understand should not be drawn as live")
+	}
+}
+
+// TestOverloadedKeysMatchTheirHelp pins the help-modal labels of keys that
+// mean different things in different places to what the handler does there.
+func TestOverloadedKeysMatchTheirHelp(t *testing.T) {
+	modalRows := func(m dashboardModel) string { return stripANSI(m.helpModalBody()) }
+
+	// Over the search results h goes back to the input, so the section hint
+	// must not claim it.
+	m := renderedDashboard(120, 40)
+	m.setSection(sectionSearch)
+	m.searchBooks = []model.SearchResult{{ID: 1, Title: "Dune"}}
+	m.refreshSearchResultItems()
+	m.searchSub = searchSubResults
+	m.enterSearchNormalMode()
+
+	updated, _ := m.Update(runeKey('h'))
+	if got := updated.(dashboardModel); got.searchSub != searchSubInput || got.section != sectionSearch {
+		t.Fatalf("h over the results: searchSub=%v section=%v, want back to the input", got.searchSub, got.section)
+	}
+	k := m.activeKeys()
+	for _, key := range k.PrevSection.Keys() {
+		if key == "h" || key == "left" {
+			t.Fatalf("PrevSection still claims %q over the results", key)
+		}
+	}
+	rows := modalRows(m)
+	// The Confirm group (dimmed) still lists "h/l pick a button"; it is the
+	// section row that must not claim h here.
+	if !strings.Contains(rows, "Esc/h") || !strings.Contains(rows, "S-Tab/l") || strings.Contains(rows, "h/l           section") {
+		t.Fatalf("results help should say Esc/h goes back and S-Tab goes to the previous section:\n%s", rows)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if got := updated.(dashboardModel); got.section != sectionOku {
+		t.Fatalf("shift+tab over the results: section=%v, want the previous section", got.section)
+	}
+
+	// In Intro k goes to the previous section, so j/k cannot be labelled
+	// "next section".
+	intro := renderedDashboard(120, 40)
+	intro.setSection(sectionIntro)
+	updated, _ = intro.Update(runeKey('k'))
+	if got := updated.(dashboardModel); got.section != sectionTimer {
+		t.Fatalf("k in Intro: section=%v, want the previous section (Timer)", got.section)
+	}
+	updated, _ = intro.Update(runeKey('j'))
+	if got := updated.(dashboardModel); got.section != sectionReading {
+		t.Fatalf("j in Intro: section=%v, want the next section (Reading)", got.section)
+	}
+	if rows := modalRows(intro); strings.Contains(rows, "j/k           next section") || !strings.Contains(rows, "j/k           section") {
+		t.Fatalf("Intro help should label j/k as moving between sections, not one way:\n%s", rows)
+	}
+	if d := intro.activeKeys().upDownDesc(); d != "section" {
+		t.Fatalf("upDownDesc in Intro = %q, want section", d)
+	}
+}
+
+func TestLaterToastDropsThePendingUndo(t *testing.T) {
+	m := renderedDashboard(120, 40)
+	m.setSection(sectionReading)
+	m.showUndoToast("Moved 'Dune' to Read", undoAction{op: opStatus, bookID: 1,
+		fromStatus: model.StatusRead, toStatus: model.StatusCurrentlyReading})
+	if m.undo == nil {
+		t.Fatal("the undo should be on offer")
+	}
+
+	// Something else fails before U is pressed: the toast that named the
+	// undo is gone, and so is the undo.
+	updated, _ := m.Update(opDoneMsg{op: opSync, err: errors.New("offline")})
+	got := updated.(dashboardModel)
+	if got.undo != nil {
+		t.Fatal("a later toast must drop the pending undo")
+	}
+	if got.activeKeys().Undo.Enabled() {
+		t.Fatal("U should not be advertised once its toast is gone")
+	}
+	before := got.inflight
+	updated, cmd := got.Update(runeKey('U'))
+	if cmd != nil || updated.(dashboardModel).inflight != before {
+		t.Fatal("U after a later toast must do nothing")
 	}
 }
 

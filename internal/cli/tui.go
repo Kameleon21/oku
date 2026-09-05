@@ -271,7 +271,8 @@ type undoAction struct {
 type toastLevel int
 
 const (
-	toastInfo toastLevel = iota
+	toastInfo    toastLevel = iota // a note: a mode, a cancel, a hint
+	toastSuccess                   // something was done
 	toastWarn
 	toastError
 )
@@ -604,7 +605,8 @@ func (m dashboardModel) updateCommon(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.localLoaded = true
 
 		if msg.err != nil {
-			return m, m.showToast(toastError, msg.err.Error())
+			cmd := m.showToast(toastError, msg.err.Error())
+			return m, cmd
 		}
 		m.readingStats = msg.readingStats
 		if msg.readingStats != nil {
@@ -626,7 +628,7 @@ func (m dashboardModel) updateCommon(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			toastCmd = m.showToast(toastError, msg.err.Error())
 		} else {
-			toastCmd = m.showToast(toastInfo, msg.info)
+			toastCmd = m.showToast(toastSuccess, msg.info)
 		}
 		// Reload local data after timer operations. The toast tick is not
 		// work, so it stays out of the in-flight count.
@@ -695,7 +697,8 @@ func (m dashboardModel) applyLibraryLoaded(msg libraryLoadedMsg) (tea.Model, tea
 	}
 	if msg.err != nil {
 		// dirty stays set: the local mutations are still unreconciled.
-		return m, m.showToast(toastError, msg.err.Error())
+		cmd := m.showToast(toastError, msg.err.Error())
+		return m, cmd
 	}
 	m.readingBooks = msg.reading
 	m.okuBooks = msg.oku
@@ -729,7 +732,8 @@ func (m dashboardModel) applySearchLoaded(msg searchLoadedMsg) (tea.Model, tea.C
 		// The previous results are still on screen, so the header keeps
 		// naming them - including how many there are.
 		m.refreshSearchTitle()
-		return m, m.showToast(toastError, msg.err.Error())
+		cmd := m.showToast(toastError, msg.err.Error())
+		return m, cmd
 	}
 	// Labels come from the mode the results were fetched with; the user may
 	// have switched modes since.
@@ -748,7 +752,7 @@ func (m dashboardModel) applySearchLoaded(msg searchLoadedMsg) (tea.Model, tea.C
 	if len(msg.results) == 0 {
 		toastCmd = m.showToast(toastInfo, fmt.Sprintf("%s mode: no results for %q", strings.ToLower(label), msg.query))
 	} else {
-		toastCmd = m.showToast(toastInfo, fmt.Sprintf("%s mode: loaded %d results", strings.ToLower(label), len(msg.results)))
+		toastCmd = m.showToast(toastSuccess, fmt.Sprintf("%s mode: loaded %d results", strings.ToLower(label), len(msg.results)))
 	}
 	saveCmd := m.addRecentSearchQuery(msg.query)
 	m.updateSearchSuggestions()
@@ -791,7 +795,7 @@ func (m dashboardModel) applyReviewSaveDone(msg opDoneMsg) (tea.Model, tea.Cmd) 
 		m.reviewErr = msg.err.Error()
 		return m, nil
 	}
-	toastCmd := m.showToast(toastInfo, msg.info)
+	toastCmd := m.showToast(toastSuccess, msg.info)
 	if msg.markDirty {
 		m.dirty = true
 		m.lastMutationAt = time.Now()
@@ -824,7 +828,7 @@ func (m *dashboardModel) showToast(level toastLevel, text string) tea.Cmd {
 // showUndoToast is showToast for a change that can be reversed while the
 // toast is up.
 func (m *dashboardModel) showUndoToast(text string, undo undoAction) tea.Cmd {
-	cmd := m.showToast(toastInfo, text)
+	cmd := m.showToast(toastSuccess, text)
 	m.undo = &undo
 	return cmd
 }
@@ -852,7 +856,7 @@ func (m *dashboardModel) toastFor(msg opDoneMsg) tea.Cmd {
 	if msg.info == "" {
 		return nil
 	}
-	return m.showToast(toastInfo, msg.info)
+	return m.showToast(toastSuccess, msg.info)
 }
 
 // runUndo reverses the change the current toast reports, if there is one.
@@ -1070,9 +1074,11 @@ func (m dashboardModel) handleLibraryKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// the detail pane; g/w/f/d still change the status.
 		b := m.selectedLibraryBook()
 		if b == nil {
-			return m, m.showToast(toastError, "no book selected")
+			cmd := m.showToast(toastError, "no book selected")
+			return m, cmd
 		}
-		return m, m.showToast(toastInfo, b.Book.Title)
+		cmd := m.showToast(toastInfo, b.Book.Title)
+		return m, cmd
 	case key.Matches(msg, k.ProgressUp):
 		return m.quickProgress(+10)
 	case key.Matches(msg, k.ProgressDown):
@@ -1110,17 +1116,20 @@ func (m dashboardModel) toggleTimerForSelection() (tea.Model, tea.Cmd) {
 	if m.isLoading() {
 		// timerState only catches up when the load lands, so two quick presses
 		// would otherwise start two sessions.
-		return m, m.showToast(toastWarn, inFlightNotice)
+		cmd := m.showToast(toastWarn, inFlightNotice)
+		return m, cmd
 	}
 	if m.timerState != nil {
 		return m.startOp(stopTimerCmd(m.app))
 	}
 	if m.section != sectionReading {
-		return m, m.showToast(toastWarn, "Timers track a book you are reading — press t in the Reading list")
+		cmd := m.showToast(toastWarn, "Timers track a book you are reading — press t in the Reading list")
+		return m, cmd
 	}
 	b := m.selectedLibraryBook()
 	if b == nil {
-		return m, m.showToast(toastError, "no book selected")
+		cmd := m.showToast(toastError, "no book selected")
+		return m, cmd
 	}
 	return m.startOp(startTimerForBookCmd(m.app, b.Book.ID))
 }
@@ -1129,12 +1138,13 @@ func (m dashboardModel) toggleTimerForSelection() (tea.Model, tea.Cmd) {
 const inFlightNotice = "Please wait — an update is still in flight"
 
 // confirmStatusChange asks first. Ignoring a book takes it out of the library
-// and a DNF closes the read, and neither can be undone from the dashboard, so
-// they should not happen because a finger slipped one key.
+// and a DNF closes the read; U can put the shelf back while the toast is up,
+// but neither should happen because a finger slipped one key.
 func (m dashboardModel) confirmStatusChange(status model.Status) (tea.Model, tea.Cmd) {
 	b := m.selectedLibraryBook()
 	if b == nil {
-		return m, m.showToast(toastError, "no book selected")
+		cmd := m.showToast(toastError, "no book selected")
+		return m, cmd
 	}
 	m.confirm = newConfirmState(fmt.Sprintf("Mark '%s' as %s?", b.Book.Title, status.Label()))
 	m.confirmCmd = changeStatusCmd(m.ctx, m.app, b.Book.ID, b.Book.Title, b.StatusID, status)
@@ -1159,7 +1169,8 @@ func (m dashboardModel) updateConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.confirm = confirmState{}
 	m.confirmCmd = nil
 	if !confirmed {
-		return m, m.showToast(toastInfo, "Cancelled")
+		cmd := m.showToast(toastInfo, "Cancelled")
+		return m, cmd
 	}
 	return m.startOp(pending)
 }
@@ -1182,13 +1193,17 @@ func (m dashboardModel) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.searchInput.CursorEnd()
 				return m, nil
 			case key.Matches(msg, k.SearchMode):
-				return m, m.setSearchQueryMode(m.searchQueryMode.Next())
+				cmd := m.setSearchQueryMode(m.searchQueryMode.Next())
+				return m, cmd
 			case key.Matches(msg, k.SearchModeBook):
-				return m, m.setSearchQueryMode(model.SearchModeBook)
+				cmd := m.setSearchQueryMode(model.SearchModeBook)
+				return m, cmd
 			case key.Matches(msg, k.SearchModeAuthor):
-				return m, m.setSearchQueryMode(model.SearchModeAuthor)
+				cmd := m.setSearchQueryMode(model.SearchModeAuthor)
+				return m, cmd
 			case key.Matches(msg, k.SearchModeGenre):
-				return m, m.setSearchQueryMode(model.SearchModeGenre)
+				cmd := m.setSearchQueryMode(model.SearchModeGenre)
+				return m, cmd
 			case key.Matches(msg, k.Density):
 				cmd := m.cycleDensity()
 				return m, cmd
@@ -1282,7 +1297,8 @@ func (m dashboardModel) handleTimerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case key.Matches(msg, k.Back):
 			m.timerSelecting = false
-			return m, m.showToast(toastInfo, "Timer start cancelled")
+			cmd := m.showToast(toastInfo, "Timer start cancelled")
+			return m, cmd
 		case key.Matches(msg, k.Down):
 			if m.timerSelectIdx < len(m.readingBooks)-1 {
 				m.timerSelectIdx++
@@ -1296,7 +1312,8 @@ func (m dashboardModel) handleTimerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, k.Select):
 			if len(m.readingBooks) == 0 {
 				m.timerSelecting = false
-				return m, m.showToast(toastError, "no currently reading books available")
+				cmd := m.showToast(toastError, "no currently reading books available")
+				return m, cmd
 			}
 			// Background sync can shrink readingBooks while the picker is open.
 			if m.timerSelectIdx >= len(m.readingBooks) {
@@ -1330,7 +1347,8 @@ func (m dashboardModel) handleTimerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.startOp(stopTimerCmd(m.app))
 		}
 		if len(m.readingBooks) == 0 {
-			return m, m.showToast(toastError, "no currently reading books available — add a book to Reading first")
+			cmd := m.showToast(toastError, "no currently reading books available — add a book to Reading first")
+			return m, cmd
 		}
 
 		m.timerSelecting = true
@@ -1343,7 +1361,8 @@ func (m dashboardModel) handleTimerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		return m, m.showToast(toastInfo, "Select a book and press Enter to start timer")
+		cmd := m.showToast(toastInfo, "Select a book and press Enter to start timer")
+		return m, cmd
 	case key.Matches(msg, k.TimerStop):
 		// Only enabled while a timer runs.
 		return m.startOp(stopTimerCmd(m.app))
@@ -1364,10 +1383,12 @@ func (m dashboardModel) updatePageMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, k.Select):
 		raw := strings.TrimSpace(m.pageInput.Value())
 		if raw == "" {
-			return m, m.showToast(toastError, "page value cannot be empty")
+			cmd := m.showToast(toastError, "page value cannot be empty")
+			return m, cmd
 		}
 		if m.isLoading() {
-			return m, m.showToast(toastWarn, inFlightNotice)
+			cmd := m.showToast(toastWarn, inFlightNotice)
+			return m, cmd
 		}
 		m.pageSubmitting = true
 		return m.startOp(updateProgressCmd(m.ctx, m.app, m.pendingBookID, m.pageBookTitle, m.pageCurrentPage, raw))
@@ -1430,7 +1451,8 @@ func (m dashboardModel) quickProgress(delta int) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.isLoading() {
-		return m, m.showToast(toastWarn, inFlightNotice)
+		cmd := m.showToast(toastWarn, inFlightNotice)
+		return m, cmd
 	}
 	return m.startOp(quickProgressCmd(m.ctx, m.app, b.Book.ID, b.Book.Title, currentPage(*b), delta))
 }
@@ -1456,7 +1478,8 @@ func (m dashboardModel) updateReviewRatingMode(msg tea.KeyMsg) (tea.Model, tea.C
 			return m, tea.Quit
 		case key.Matches(msg, k.Back):
 			m.closeReviewRatingModal()
-			return m, m.showToast(toastInfo, "Review update cancelled")
+			cmd := m.showToast(toastInfo, "Review update cancelled")
+			return m, cmd
 		}
 		return m, nil
 	}
@@ -1466,7 +1489,8 @@ func (m dashboardModel) updateReviewRatingMode(msg tea.KeyMsg) (tea.Model, tea.C
 		return m, tea.Quit
 	case key.Matches(msg, k.Back):
 		m.closeReviewRatingModal()
-		return m, m.showToast(toastInfo, "Review update cancelled")
+		cmd := m.showToast(toastInfo, "Review update cancelled")
+		return m, cmd
 	case key.Matches(msg, k.ReviewNextField):
 		if m.reviewFocus == dashboardReviewFocusRating {
 			m.focusReviewTextField()
@@ -1574,6 +1598,8 @@ func (m dashboardModel) renderToast(avail int) string {
 	}
 	style, glyph := statusBarInfoStyle, ""
 	switch m.toast.level {
+	case toastSuccess:
+		style = statusBarSuccessStyle
 	case toastWarn:
 		style, glyph = statusBarWarnStyle, "! "
 	case toastError:
@@ -2251,32 +2277,47 @@ func (m dashboardModel) helpModalRows() string {
 	return strings.Join(rows, "\n")
 }
 
-// helpModalBody lists the keys the focus behind the modal understands, group
-// by group, from the same bindings the handlers dispatch on.
+// helpModalBody lists every key, group by group, from the same bindings the
+// handlers dispatch on. The keys the focus behind the modal understands are
+// drawn in full and their groups come first; the rest are dimmed, so the
+// modal still teaches what the other sections can do.
 func (m dashboardModel) helpModalBody() string {
 	behind := m
 	behind.showHelp = false
 	k := behind.activeKeys()
 
-	sections := make([]string, 0, 8)
-	for _, g := range k.helpGroups() {
+	groups := k.helpGroups()
+	active := make([]helpGroup, 0, len(groups))
+	inactive := make([]helpGroup, 0, len(groups))
+	for _, g := range groups {
+		if g.hasEnabled() {
+			active = append(active, g)
+		} else {
+			inactive = append(inactive, g)
+		}
+	}
+
+	sections := make([]string, 0, len(groups))
+	for _, g := range append(active, inactive...) {
 		rows := ""
 		for _, b := range g.bindings {
-			if !b.Enabled() {
-				continue
-			}
 			// Every run carries the modal background, including the gaps: a
 			// style that only sets a foreground ends with a reset, which would
 			// stripe the row with the terminal's own background.
+			keyStyle, descStyle := modalKeyStyle, modalDescStyle
+			if !b.Enabled() {
+				keyStyle, descStyle = modalDimStyle.Bold(true), modalDimStyle
+			}
 			rows += modalBgStyle.Render("  ") +
-				modalKeyStyle.Width(12).Render(b.Help().Key) +
+				keyStyle.Width(12).Render(b.Help().Key) +
 				modalBgStyle.Render("  ") +
-				modalDescStyle.Render(b.Help().Desc) + "\n"
+				descStyle.Render(b.Help().Desc) + "\n"
 		}
-		if rows == "" {
-			continue
+		title := modalHeadStyle
+		if !g.hasEnabled() {
+			title = modalDimStyle.Bold(true)
 		}
-		sections = append(sections, modalHeadStyle.Render(g.title)+"\n"+rows)
+		sections = append(sections, title.Render(g.title)+"\n"+rows)
 	}
 
 	// Joined by hand: lipgloss.JoinVertical pads every row out to the widest
@@ -2291,7 +2332,6 @@ func (m dashboardModel) overlayModal(modal string) string {
 		lipgloss.Center, lipgloss.Center,
 		modal,
 		lipgloss.WithWhitespaceChars(" "),
-		lipgloss.WithWhitespaceForeground(lipgloss.Color("0")),
 	)
 }
 
@@ -2350,6 +2390,16 @@ type helpGroup struct {
 	bindings []key.Binding
 }
 
+// hasEnabled reports whether any key in the group applies right now.
+func (g helpGroup) hasEnabled() bool {
+	for _, b := range g.bindings {
+		if b.Enabled() {
+			return true
+		}
+	}
+	return false
+}
+
 // bind makes a disabled binding: activeKeys turns on the ones that apply.
 func bind(label, desc string, keys ...string) key.Binding {
 	return key.NewBinding(key.WithKeys(keys...), key.WithHelp(label, desc), key.WithDisabled())
@@ -2370,8 +2420,8 @@ func newKeyMap() keyMap {
 		Search:       bind("/", "search", "/"),
 		ScrollTop:    bind("g", "top", "g", "home"),
 		ScrollBottom: bind("G", "bottom", "G", "end"),
-		HalfPageUp:   bind("ctrl+u", "half page up", "ctrl+u", "pgup"),
-		HalfPageDown: bind("ctrl+d", "half page down", "ctrl+d", "pgdown"),
+		HalfPageUp:   bind("C-u", "half page up", "ctrl+u", "pgup"),
+		HalfPageDown: bind("C-d", "half page down", "ctrl+d", "pgdown"),
 
 		Details:      bind("↵", "details", "enter"),
 		ProgressUp:   bind("+", "+10 pages", "+", "="),
@@ -2405,9 +2455,9 @@ func newKeyMap() keyMap {
 		ConfirmNo:       bind("n", "no, leave it", "n", "N", "esc"),
 		ConfirmLeft:     bind("h", "pick left", "h", "left", "k", "up", "H", "K"),
 		ConfirmRight:    bind("l", "pick right", "l", "right", "j", "down", "L", "J"),
-		ReviewSave:      bind("ctrl+s", "save", "ctrl+s"),
+		ReviewSave:      bind("C-s", "save", "ctrl+s"),
 		ReviewNextField: bind("Tab", "next field", "tab"),
-		ReviewPrevField: bind("Shift+Tab", "previous field", "shift+tab"),
+		ReviewPrevField: bind("S-Tab", "previous field", "shift+tab"),
 	}
 }
 
@@ -2472,12 +2522,22 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return out
 }
 
+// upDownDesc labels the merged j/k row. activeKeys gives the two the same
+// description wherever they are a pair; anywhere else (the defaults, say)
+// the row can only say that they move.
+func (k keyMap) upDownDesc() string {
+	if up, down := k.Up.Help().Desc, k.Down.Help().Desc; up == down {
+		return up
+	}
+	return "move"
+}
+
 // helpGroups is the help modal's structure. Every binding is listed; the
-// ones the current focus has not enabled are skipped when it is drawn.
+// ones the current focus has not enabled are drawn dimmed.
 func (k keyMap) helpGroups() []helpGroup {
 	return []helpGroup{
 		{"Navigation", []key.Binding{
-			hint(k.Down.Help().Desc, k.Down, k.Up),
+			hint(k.upDownDesc(), k.Down, k.Up),
 			hint("section", k.PrevSection, k.NextSection),
 			hintAs("Tab/S-Tab", "section (alias)", k.NextSection, k.PrevSection),
 			k.Search,
@@ -2606,6 +2666,11 @@ func (m dashboardModel) activeKeys() keyMap {
 		case m.searchSub == searchSubResults:
 			k.Up.SetHelp("k", "navigate")
 			k.Down.SetHelp("j", "navigate")
+			// h and left go back to the input here, so the previous-section
+			// binding is left with the one key it really has.
+			k.PrevSection.SetKeys("shift+tab")
+			k.PrevSection.SetHelp("S-Tab", "previous section")
+			k.SearchBack.SetHelp("Esc/h", "back to input")
 			k.SetReading.SetHelp("g", "add as reading")
 			k.SetWant.SetHelp("w", "add as want to read")
 			k.SetFinished.SetHelp("f", "add as finished")
@@ -2619,7 +2684,7 @@ func (m dashboardModel) activeKeys() keyMap {
 				hint("status", k.SetReading, k.SetWant, k.SetFinished, k.SetDNF),
 				hintAs("h/l", "input/next", k.SearchBack, k.NextSection),
 				k.Density,
-				k.SearchBack,
+				hintAs("Esc", "back", k.SearchBack),
 			}
 		case m.searchMode == searchModeInsert:
 			// ? is typed here, not a shortcut.
@@ -2627,8 +2692,10 @@ func (m dashboardModel) activeKeys() keyMap {
 			enable(&k.SearchSubmit, &k.Back)
 			k.short = []key.Binding{k.SearchSubmit, k.Back}
 		default:
-			k.Up.SetHelp("k", "previous section")
-			k.Down.SetHelp("j", "results / next section")
+			// j goes down into the results (or on to the next section), k
+			// up to the previous one: one label that fits both.
+			k.Up.SetHelp("k", "results / section")
+			k.Down.SetHelp("j", "results / section")
 			enable(&k.Help, &k.SearchInsert, &k.SearchAppend, &k.SearchMode,
 				&k.SearchModeBook, &k.SearchModeAuthor, &k.SearchModeGenre,
 				&k.Density, &k.SearchSubmit, &k.NextSection, &k.PrevSection, &k.Back, &k.Up, &k.Down)
@@ -2664,23 +2731,23 @@ func (m dashboardModel) activeKeys() keyMap {
 			enable(&k.Quit, &k.Help, &k.Up, &k.Down, &k.Select, &k.Back)
 			k.short = []key.Binding{k.Help, hint("choose", k.Down, k.Up), k.Select, k.Back, k.Quit}
 		case m.timerState != nil:
-			k.Up.SetHelp("k", "previous section")
-			k.Down.SetHelp("j", "next section")
+			k.Up.SetHelp("k", "section")
+			k.Down.SetHelp("j", "section")
 			k.Timer.SetHelp("t", "stop timer")
 			enable(&k.Quit, &k.Help, &k.Up, &k.Down, &k.NextSection, &k.PrevSection, &k.Search,
 				&k.Timer, &k.TimerStop)
 			k.short = []key.Binding{k.Help, hint("stop", k.Timer, k.TimerStop), sectionHint, k.Search, k.Quit}
 		default:
-			k.Up.SetHelp("k", "previous section")
-			k.Down.SetHelp("j", "next section")
+			k.Up.SetHelp("k", "section")
+			k.Down.SetHelp("j", "section")
 			k.Timer.SetHelp("t", "choose + start")
 			enable(&k.Quit, &k.Help, &k.Up, &k.Down, &k.NextSection, &k.PrevSection, &k.Search, &k.Timer)
 			k.short = []key.Binding{k.Help, k.Timer, sectionHint, k.Search, k.Quit}
 		}
 
 	default:
-		k.Up.SetHelp("k", "previous section")
-		k.Down.SetHelp("j", "next section")
+		k.Up.SetHelp("k", "section")
+		k.Down.SetHelp("j", "section")
 		enable(&k.Quit, &k.Help, &k.Up, &k.Down, &k.NextSection, &k.PrevSection, &k.Search)
 		k.short = []key.Binding{k.Help, sectionHint, hintAs("Tab", "next", k.NextSection), k.Search, k.Quit}
 	}
@@ -3115,7 +3182,8 @@ func (m dashboardModel) selectedSearchResult() *model.SearchResult {
 func (m dashboardModel) changeSelectedLibraryStatus(status model.Status) (tea.Model, tea.Cmd) {
 	b := m.selectedLibraryBook()
 	if b == nil {
-		return m, m.showToast(toastError, "no book selected")
+		cmd := m.showToast(toastError, "no book selected")
+		return m, cmd
 	}
 	return m.startOp(changeStatusCmd(m.ctx, m.app, b.Book.ID, b.Book.Title, b.StatusID, status))
 }
@@ -3123,7 +3191,8 @@ func (m dashboardModel) changeSelectedLibraryStatus(status model.Status) (tea.Mo
 func (m dashboardModel) changeSelectedSearchStatus(status model.Status) (tea.Model, tea.Cmd) {
 	r := m.selectedSearchResult()
 	if r == nil {
-		return m, m.showToast(toastError, "no search result selected")
+		cmd := m.showToast(toastError, "no search result selected")
+		return m, cmd
 	}
 	return m.startOp(addFromSearchCmd(m.ctx, m.app, r.ID, status))
 }
@@ -3549,12 +3618,6 @@ func runDashboard() error {
 		return err
 	}
 	defer a.Store.Close()
-
-	// The palette is adaptive; the config key only overrides what the
-	// terminal reports about its background.
-	if err := applyThemeSetting(a.Config.Theme); err != nil {
-		return err
-	}
 
 	// Bubble Tea runs commands in goroutines it does not track, so cancel the
 	// command context as soon as the program exits: in-flight API calls abort

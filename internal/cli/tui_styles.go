@@ -96,12 +96,13 @@ var (
 	// Every status-bar segment carries the bar's background. A nested style
 	// ends with a reset, so a segment without one drops the background for the
 	// rest of the line.
-	statusBarFillStyle   = lipgloss.NewStyle().Background(th.surface)
-	statusBarTitleStyle  = statusBarFillStyle.Bold(true).Foreground(th.heading)
-	statusBarAccentStyle = statusBarFillStyle.Bold(true).Foreground(th.accent)
-	statusBarInfoStyle   = statusBarFillStyle.Foreground(th.success)
-	statusBarWarnStyle   = statusBarFillStyle.Foreground(th.warning)
-	statusBarErrorStyle  = statusBarFillStyle.Bold(true).Foreground(th.error)
+	statusBarFillStyle    = lipgloss.NewStyle().Background(th.surface)
+	statusBarTitleStyle   = statusBarFillStyle.Bold(true).Foreground(th.heading)
+	statusBarAccentStyle  = statusBarFillStyle.Bold(true).Foreground(th.accent)
+	statusBarInfoStyle    = statusBarFillStyle.Foreground(th.text)
+	statusBarSuccessStyle = statusBarFillStyle.Foreground(th.success)
+	statusBarWarnStyle    = statusBarFillStyle.Foreground(th.warning)
+	statusBarErrorStyle   = statusBarFillStyle.Bold(true).Foreground(th.error)
 
 	// listHeaderStyle titles a list that has no section card of its own.
 	listHeaderStyle = lipgloss.NewStyle().

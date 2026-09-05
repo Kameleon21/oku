@@ -107,7 +107,7 @@ default_list = "reading"
 theme = "auto" # auto | dark | light
 ```
 
-The TUI adapts its palette to a light or dark terminal on its own. Set `theme` when your terminal does not report its background (or reports it wrongly). `NO_COLOR` is honoured: focus is also shown by a thick border and a `▸` marker, not by colour alone.
+The TUI and the coloured CLI output adapt their palette to a light or dark terminal on their own. Set `theme` when your terminal does not report its background (or reports it wrongly); it applies to every command. `NO_COLOR` is honoured: focus is also shown by a thick border and a `▸` marker, not by colour alone.
 
 ## Development
 
