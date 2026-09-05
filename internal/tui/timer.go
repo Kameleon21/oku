@@ -203,19 +203,11 @@ func (m Model) timerView(w int) string {
 		sb.WriteString(m.st.label.Render("  Recent"))
 		sb.WriteString("\n")
 
-		yesterday := today.AddDate(0, 0, -1)
 		for i, s := range m.recentSessions {
 			if i >= 5 {
 				break
 			}
-			started := s.StartedAt.Local()
-			dateStr := started.Format("Jan 02")
-			sessionDate := time.Date(started.Year(), started.Month(), started.Day(), 0, 0, 0, 0, started.Location())
-			if sessionDate.Equal(today) {
-				dateStr = "Today"
-			} else if sessionDate.Equal(yesterday) {
-				dateStr = "Yest."
-			}
+			dateStr := format.DayLabel(s.StartedAt, now)
 
 			dur := ""
 			if s.EndedAt != nil {

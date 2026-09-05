@@ -8,7 +8,6 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // ── List item types ────────────────────────────────────────────────────────
@@ -215,34 +214,17 @@ func (m *Model) refreshListItems() tea.Cmd {
 
 // newListDelegate is the item renderer every list shares: title over
 // description, the selection marked by a bar in the accent colour.
-func newListDelegate(spacing int, th Theme) list.DefaultDelegate {
+func newListDelegate(spacing int, st styles) list.DefaultDelegate {
 	delegate := list.NewDefaultDelegate()
 	delegate.ShowDescription = true
 	delegate.SetSpacing(spacing)
 
-	delegate.Styles.NormalTitle = lipgloss.NewStyle().
-		Foreground(th.Text).
-		Padding(0, 0, 0, 2)
-	delegate.Styles.NormalDesc = lipgloss.NewStyle().
-		Foreground(th.TextMuted).
-		Padding(0, 0, 0, 2)
-	delegate.Styles.SelectedTitle = lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), false, false, false, true).
-		BorderForeground(th.Accent).
-		Foreground(th.Accent).
-		Bold(true).
-		Padding(0, 0, 0, 1)
-	delegate.Styles.SelectedDesc = lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), false, false, false, true).
-		BorderForeground(th.Accent).
-		Foreground(th.TextMuted).
-		Padding(0, 0, 0, 1)
-	delegate.Styles.DimmedTitle = lipgloss.NewStyle().
-		Foreground(th.TextDim).
-		Padding(0, 0, 0, 2)
-	delegate.Styles.DimmedDesc = lipgloss.NewStyle().
-		Foreground(th.Border).
-		Padding(0, 0, 0, 2)
+	delegate.Styles.NormalTitle = st.listNormalTitle
+	delegate.Styles.NormalDesc = st.listNormalDesc
+	delegate.Styles.SelectedTitle = st.listSelectedTitle
+	delegate.Styles.SelectedDesc = st.listSelectedDesc
+	delegate.Styles.DimmedTitle = st.listDimmedTitle
+	delegate.Styles.DimmedDesc = st.listDimmedDesc
 	return delegate
 }
 

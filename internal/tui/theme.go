@@ -127,6 +127,20 @@ type styles struct {
 	goldBar             lipgloss.Style
 	oliveBar            lipgloss.Style
 
+	// Text inputs and the spinner.
+	inputPrompt lipgloss.Style
+	inputText   lipgloss.Style
+	spinner     lipgloss.Style
+
+	// The shared list delegate: title over description, the selection marked
+	// by a bar in the accent colour.
+	listNormalTitle   lipgloss.Style
+	listNormalDesc    lipgloss.Style
+	listSelectedTitle lipgloss.Style
+	listSelectedDesc  lipgloss.Style
+	listDimmedTitle   lipgloss.Style
+	listDimmedDesc    lipgloss.Style
+
 	// The activity ramp, from an empty day to the busiest one.
 	heat0 lipgloss.Style
 	heat1 lipgloss.Style
@@ -232,6 +246,34 @@ func newStyles(th Theme) styles {
 			Foreground(th.Accent),
 		oliveBar: lipgloss.NewStyle().
 			Foreground(th.Success),
+
+		inputPrompt: lipgloss.NewStyle().Foreground(th.Accent).Bold(true),
+		inputText:   lipgloss.NewStyle().Foreground(th.Text),
+		spinner:     lipgloss.NewStyle().Foreground(th.Accent),
+
+		listNormalTitle: lipgloss.NewStyle().
+			Foreground(th.Text).
+			Padding(0, 0, 0, 2),
+		listNormalDesc: lipgloss.NewStyle().
+			Foreground(th.TextMuted).
+			Padding(0, 0, 0, 2),
+		listSelectedTitle: lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder(), false, false, false, true).
+			BorderForeground(th.Accent).
+			Foreground(th.Accent).
+			Bold(true).
+			Padding(0, 0, 0, 1),
+		listSelectedDesc: lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder(), false, false, false, true).
+			BorderForeground(th.Accent).
+			Foreground(th.TextMuted).
+			Padding(0, 0, 0, 1),
+		listDimmedTitle: lipgloss.NewStyle().
+			Foreground(th.TextDim).
+			Padding(0, 0, 0, 2),
+		listDimmedDesc: lipgloss.NewStyle().
+			Foreground(th.Border).
+			Padding(0, 0, 0, 2),
 
 		heat0: lipgloss.NewStyle().Foreground(th.Border),
 		heat1: lipgloss.NewStyle().Foreground(th.Heat1),

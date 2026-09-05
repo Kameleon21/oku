@@ -64,6 +64,35 @@ func Thousands(n int) string {
 	return sb.String()
 }
 
+// Clock is the time of day a session started, in the reader's own zone:
+// 24-hour, no seconds. Sessions are listed one per row against a date, so the
+// hour is all that distinguishes them.
+func Clock(t time.Time) string {
+	return t.Local().Format("15:04")
+}
+
+// DayLabel names the day t falls on, relative to now: "Today", "Yest.", or the
+// date. Both are bucketed to local midnight, so a session at 23:50 and one at
+// 00:10 read as different days even though they are twenty minutes apart, and
+// a session logged late in the evening is not "yesterday" because UTC has
+// already rolled over.
+func DayLabel(t, now time.Time) string {
+	day := midnight(t.Local())
+	today := midnight(now.Local())
+	switch {
+	case day.Equal(today):
+		return "Today"
+	case day.Equal(today.AddDate(0, 0, -1)):
+		return "Yest."
+	default:
+		return t.Local().Format("Jan 02")
+	}
+}
+
+func midnight(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+}
+
 // BookMeta is the one-line summary under a book: rating, readers, release date
 // and series, in that order, joined by " · ". Parts with no data are omitted,
 // so an unrated book gets a shorter line rather than an empty one.

@@ -458,7 +458,7 @@ func (m *Model) applySearchListDensityLayout() {
 	if m.density == DensityVerbose {
 		spacing = 1
 	}
-	m.searchList.SetDelegate(newListDelegate(spacing, m.th))
+	m.searchList.SetDelegate(newListDelegate(spacing, m.st))
 }
 
 func (m Model) selectedSearchResult() *model.SearchResult {

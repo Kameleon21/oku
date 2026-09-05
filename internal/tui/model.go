@@ -29,12 +29,10 @@ type Model struct {
 	app *app.App
 	// ctx is cancelled when the program exits so in-flight API calls abort
 	// instead of outliving the store.
-	ctx     context.Context
-	version string
+	ctx context.Context
 
-	// th is the palette, st the styles derived from it. Both are values on
-	// the model so a future theme change can rebuild them mid-run.
-	th Theme
+	// st is every style the dashboard draws with, derived from a Theme. It is
+	// a value on the model so a theme change can rebuild it mid-run.
 	st styles
 
 	mode    viewMode
@@ -146,10 +144,9 @@ func New(ctx context.Context, a *app.App, density Density) Model {
 		ctx = context.Background()
 	}
 
-	th := DefaultTheme()
-	st := newStyles(th)
+	st := newStyles(DefaultTheme())
 
-	delegate := newListDelegate(0, th)
+	delegate := newListDelegate(0, st)
 
 	// The section card already prints the name and the count, and the panels
 	// are only a handful of rows tall, so a list spends none of them on its
@@ -176,8 +173,8 @@ func New(ctx context.Context, a *app.App, density Density) Model {
 	searchIn.Placeholder = "Search books..."
 	searchIn.CharLimit = 120
 	searchIn.Prompt = "/ "
-	searchIn.PromptStyle = lipgloss.NewStyle().Foreground(th.Accent).Bold(true)
-	searchIn.TextStyle = lipgloss.NewStyle().Foreground(th.Text)
+	searchIn.PromptStyle = st.inputPrompt
+	searchIn.TextStyle = st.inputText
 	// Suggestions are the user's own search history, loaded with the rest of
 	// the local data; there are none until they have searched for something.
 	searchIn.ShowSuggestions = true
@@ -186,8 +183,8 @@ func New(ctx context.Context, a *app.App, density Density) Model {
 	pageIn.Placeholder = "370 or +10 or -5"
 	pageIn.CharLimit = 32
 	pageIn.Prompt = "› "
-	pageIn.PromptStyle = lipgloss.NewStyle().Foreground(th.Accent).Bold(true)
-	pageIn.TextStyle = lipgloss.NewStyle().Foreground(th.Text)
+	pageIn.PromptStyle = st.inputPrompt
+	pageIn.TextStyle = st.inputText
 
 	// The review fields sit inside a modal, so they carry its background: a
 	// style that only sets a foreground would leave the field on the
@@ -216,7 +213,7 @@ func New(ctx context.Context, a *app.App, density Density) Model {
 
 	s := spinner.New()
 	s.Spinner = spinner.MiniDot
-	s.Style = lipgloss.NewStyle().Foreground(th.Accent)
+	s.Style = st.spinner
 
 	hlp := help.New()
 	hlp.ShortSeparator = " · "
@@ -228,7 +225,6 @@ func New(ctx context.Context, a *app.App, density Density) Model {
 	return Model{
 		app:               a,
 		ctx:               ctx,
-		th:                th,
 		st:                st,
 		mode:              modeLibrary,
 		section:           sectionReading,

@@ -278,5 +278,3 @@ func newTimerListCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 10, "Number of sessions to show")
 	return cmd
 }
-
-// formatDuration returns a human-friendly duration string like "1h 20m" or "45m 12s".

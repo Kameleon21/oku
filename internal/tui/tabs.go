@@ -69,9 +69,6 @@ func (m Model) introView(w int) string {
 		sb.WriteString("\n")
 	}
 
-	if m.version != "" {
-		writeField("Version", m.version)
-	}
 	writeField("Reading", fmt.Sprintf("%d books", len(m.readingBooks)))
 	writeField("Oku", fmt.Sprintf("%d books", len(m.okuBooks)))
 
