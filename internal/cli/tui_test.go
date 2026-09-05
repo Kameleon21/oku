@@ -1286,3 +1286,40 @@ func TestPageModalShowsTitleAndKeepsFormatHint(t *testing.T) {
 		t.Fatalf("page prompt frame has %d lines, want 40", len(lines))
 	}
 }
+
+func TestHelpModalFitsTheTerminalAndScrolls(t *testing.T) {
+	for _, h := range []int{24, 40} {
+		m := renderedDashboard(80, h)
+
+		updated, _ := m.Update(runeKey('?'))
+		opened := updated.(dashboardModel)
+		if !opened.showHelp {
+			t.Fatalf("height %d: ? should open the help modal", h)
+		}
+		if lines := strings.Split(opened.frame(), "\n"); len(lines) != h {
+			t.Fatalf("height %d: help frame has %d lines, want %d", h, len(lines), h)
+		}
+		if opened.helpViewport.TotalLineCount() <= opened.helpViewport.Height {
+			t.Fatalf("height %d: the help body should be taller than the window", h)
+		}
+		if !strings.Contains(opened.renderHelpModal(), "j/k scroll") {
+			t.Fatalf("height %d: an overflowing help modal should say it scrolls", h)
+		}
+
+		updated, _ = opened.Update(runeKey('j'))
+		scrolled := updated.(dashboardModel)
+		if scrolled.helpViewport.YOffset != 1 {
+			t.Fatalf("height %d: j should scroll the body, YOffset = %d", h, scrolled.helpViewport.YOffset)
+		}
+
+		updated, _ = scrolled.Update(runeKey('k'))
+		if got := updated.(dashboardModel).helpViewport.YOffset; got != 0 {
+			t.Fatalf("height %d: k should scroll back, YOffset = %d", h, got)
+		}
+
+		updated, _ = scrolled.Update(runeKey('?'))
+		if updated.(dashboardModel).showHelp {
+			t.Fatalf("height %d: ? should close the help modal", h)
+		}
+	}
+}

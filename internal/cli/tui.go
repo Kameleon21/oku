@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -46,6 +47,16 @@ const pagePromptRows = 3
 const (
 	recentSearchesKey = "recent_searches"
 	maxRecentSearches = 10
+)
+
+const (
+	helpModalWidth = 50
+	// helpModalChromeRows counts the modal rows that are not the scrollable
+	// body: the title, the blank line under it, the footer, the padding and
+	// the border.
+	helpModalChromeRows = 7
+	// helpModalMinBodyRows keeps the body scrollable on a very short terminal.
+	helpModalMinBodyRows = 3
 )
 
 // minHelpBarWidth keeps the footer hints readable on a very narrow terminal.
@@ -330,6 +341,9 @@ type dashboardModel struct {
 	density            outputDensity
 
 	showHelp bool
+	// helpViewport scrolls the help modal, whose body is taller than a short
+	// terminal.
+	helpViewport viewport.Model
 
 	// Local data for stats/timer sections.
 	timerState     *model.TimerState
@@ -798,6 +812,18 @@ func (m dashboardModel) updateLibraryMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.showHelp = false
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "j", "down":
+			m.helpViewport.LineDown(1)
+		case "k", "up":
+			m.helpViewport.LineUp(1)
+		case "ctrl+d", "pgdown":
+			m.helpViewport.HalfViewDown()
+		case "ctrl+u", "pgup":
+			m.helpViewport.HalfViewUp()
+		case "g", "home":
+			m.helpViewport.GotoTop()
+		case "G", "end":
+			m.helpViewport.GotoBottom()
 		}
 		return m, nil
 	}
@@ -824,7 +850,7 @@ func (m dashboardModel) handleGenericKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		return m, tea.Quit
 	case "?":
-		m.showHelp = true
+		m.openHelp()
 		return m, nil
 	case "j", "down", "l", "right", "tab":
 		m.nextSection()
@@ -880,7 +906,7 @@ func (m dashboardModel) handleLibraryKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		return m, tea.Quit
 	case "?":
-		m.showHelp = true
+		m.openHelp()
 		return m, nil
 	case "l", "right", "tab":
 		m.nextSection()
@@ -991,7 +1017,7 @@ func (m dashboardModel) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case "ctrl+c":
 				return m, tea.Quit
 			case "?":
-				m.showHelp = true
+				m.openHelp()
 				return m, nil
 			case "i":
 				m.enterSearchInsertMode()
@@ -1063,7 +1089,7 @@ func (m dashboardModel) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m, tea.Quit
 	case "?":
-		m.showHelp = true
+		m.openHelp()
 		return m, nil
 	case "esc", "h", "left":
 		m.searchSub = searchSubInput
@@ -1103,7 +1129,7 @@ func (m dashboardModel) handleTimerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "?":
-			m.showHelp = true
+			m.openHelp()
 			return m, nil
 		case "esc":
 			m.timerSelecting = false
@@ -1141,7 +1167,7 @@ func (m dashboardModel) handleTimerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		return m, tea.Quit
 	case "?":
-		m.showHelp = true
+		m.openHelp()
 		return m, nil
 	case "j", "down", "l", "right", "tab":
 		m.nextSection()
@@ -1912,7 +1938,41 @@ func (m dashboardModel) reviewRatingOverlay() string {
 
 // ── Help ───────────────────────────────────────────────────────────────────
 
+// openHelp shows the help modal, scrolled back to the top.
+func (m *dashboardModel) openHelp() {
+	m.showHelp = true
+	m.syncHelpViewport()
+	m.helpViewport.GotoTop()
+}
+
+// syncHelpViewport fits the help body to the terminal. The body is taller than
+// a 40-row window, so it scrolls rather than spilling off the screen.
+func (m *dashboardModel) syncHelpViewport() {
+	body := helpModalBody()
+	h := lipgloss.Height(body)
+	if m.height > 0 {
+		h = min(h, max(helpModalMinBodyRows, m.height-helpModalChromeRows))
+	}
+
+	offset := m.helpViewport.YOffset
+	m.helpViewport = viewport.New(helpModalWidth-helpModalStyle.GetHorizontalPadding(), h)
+	m.helpViewport.SetContent(body)
+	m.helpViewport.SetYOffset(offset)
+}
+
 func (m dashboardModel) renderHelpModal() string {
+	footer := "? or esc close"
+	if m.helpViewport.TotalLineCount() > m.helpViewport.Height {
+		footer = "j/k scroll · ? or esc close"
+	}
+	return renderModalPanel(
+		"Help",
+		m.helpViewport.View()+"\n"+dimStyleTUI.Render(footer),
+		helpModalWidth,
+	)
+}
+
+func helpModalBody() string {
 	section := func(title string, keys [][2]string) string {
 		s := headStyle.Render(title) + "\n"
 		for _, k := range keys {
@@ -1924,7 +1984,7 @@ func (m dashboardModel) renderHelpModal() string {
 		return s
 	}
 
-	body := lipgloss.JoinVertical(lipgloss.Left,
+	return lipgloss.JoinVertical(lipgloss.Left,
 		section("Navigation", [][2]string{
 			{"j / k", "Move up / down in list"},
 			{"h / l", "Move section left / right"},
@@ -1967,9 +2027,6 @@ func (m dashboardModel) renderHelpModal() string {
 			{"q", "Quit"},
 		}),
 	)
-
-	footer := "\n" + dimStyleTUI.Render("Press ? or Esc to close")
-	return renderModalPanel("Help", body+footer, 50)
 }
 
 func (m dashboardModel) overlayModal(modal string) string {
@@ -2356,6 +2413,10 @@ func (m *dashboardModel) resize() {
 	m.readingList.SetSize(leftContentW, readingContentH)
 	m.okuList.SetSize(leftContentW, okuContentH)
 	m.searchList.SetSize(rightW-4, max(1, panelInnerH-1))
+
+	if m.showHelp {
+		m.syncHelpViewport()
+	}
 }
 
 // ── List helpers ───────────────────────────────────────────────────────────
