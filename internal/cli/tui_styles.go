@@ -43,7 +43,6 @@ var (
 var (
 	headStyle     = lipgloss.NewStyle().Bold(true).Foreground(colorCream)
 	dimStyleTUI   = lipgloss.NewStyle().Foreground(colorDimGray)
-	infoStyleTUI  = lipgloss.NewStyle().Foreground(colorGreen)
 	errorStyleTUI = lipgloss.NewStyle().Foreground(colorWarmRed).Bold(true)
 
 	keyStyle   = lipgloss.NewStyle().Bold(true).Foreground(colorGold)
@@ -51,14 +50,19 @@ var (
 	labelStyle = lipgloss.NewStyle().Foreground(colorDimGray).Bold(true)
 	valueStyle = lipgloss.NewStyle().Foreground(colorLightGray)
 
-	titleBarStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(colorCream)
-
 	statusBarStyle = lipgloss.NewStyle().
 			Background(colorCharcoal).
 			Foreground(colorLightGray).
 			Padding(0, 1)
+
+	// Every status-bar segment carries the bar's background. A nested style
+	// ends with a reset, so a segment without one drops the background for the
+	// rest of the line.
+	statusBarFillStyle   = lipgloss.NewStyle().Background(colorCharcoal)
+	statusBarTitleStyle  = statusBarFillStyle.Bold(true).Foreground(colorCream)
+	statusBarAccentStyle = statusBarFillStyle.Foreground(colorGold)
+	statusBarInfoStyle   = statusBarFillStyle.Foreground(colorGreen)
+	statusBarErrorStyle  = statusBarFillStyle.Bold(true).Foreground(colorWarmRed)
 
 	// listHeaderStyle titles a list that has no section card of its own.
 	listHeaderStyle = lipgloss.NewStyle().

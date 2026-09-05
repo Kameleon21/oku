@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/spf13/cobra"
 )
 
@@ -36,6 +37,10 @@ const (
 // pagePromptRows is how many rows View spends on the page-update prompt it
 // draws under the layout.
 const pagePromptRows = 1
+
+// minStatusMessageWidth is the narrowest a status message may be cut to before
+// it is dropped instead: an ellipsis and a couple of letters say nothing.
+const minStatusMessageWidth = 8
 
 type focusSection int
 
@@ -1262,27 +1267,7 @@ func (m dashboardModel) frame() string {
 		return "\n  " + m.spin.View() + " Loading dashboard..."
 	}
 
-	// Status bar.
-	left := titleBarStyle.Render(" oku")
-	if m.isLoading() {
-
-		left += " " + m.spin.View()
-	}
-
-	rightContent := ""
-	if m.errMsg != "" {
-		rightContent = errorStyleTUI.Render(m.errMsg)
-	} else if m.infoMsg != "" {
-		rightContent = infoStyleTUI.Render(m.infoMsg)
-	}
-
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(rightContent) - 4
-	if gap < 1 {
-		gap = 1
-	}
-	statusBar := statusBarStyle.Width(max(60, m.width)).Render(
-		left + strings.Repeat(" ", gap) + rightContent,
-	)
+	statusBar := m.statusBar()
 
 	// Body.
 	var body string
@@ -1302,6 +1287,35 @@ func (m dashboardModel) frame() string {
 		return m.overlayModal(m.renderHelpModal())
 	}
 	return body
+}
+
+// statusBar renders the top bar: the app name and spinner on the left, the
+// latest message on the right, over an unbroken background.
+func (m dashboardModel) statusBar() string {
+	width := max(20, m.width)
+	inner := max(1, width-statusBarStyle.GetHorizontalPadding())
+
+	left := statusBarTitleStyle.Render("oku")
+	if m.isLoading() {
+		left += statusBarAccentStyle.Render(" " + m.spin.View())
+	}
+
+	msg, msgStyle := m.errMsg, statusBarErrorStyle
+	if msg == "" {
+		msg, msgStyle = m.infoMsg, statusBarInfoStyle
+	}
+
+	right := ""
+	// A message wider than the bar would wrap it onto a second line and push
+	// the layout down a row, so it is cut to the room that is left.
+	if avail := inner - lipgloss.Width(left) - 2; msg != "" && avail >= minStatusMessageWidth {
+		right = msgStyle.Render(ansi.Truncate(msg, avail, "…"))
+	}
+
+	gap := max(1, inner-lipgloss.Width(left)-lipgloss.Width(right))
+	return statusBarStyle.Width(width).Render(
+		left + statusBarFillStyle.Render(strings.Repeat(" ", gap)) + right,
+	)
 }
 
 // fitToScreen pads the frame to the terminal and clamps it to those bounds, so
