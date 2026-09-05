@@ -11,20 +11,20 @@ import (
 func (m Model) detailsView(w int) string {
 	b := m.selectedLibraryBook()
 	if b == nil {
-		return dimStyleTUI.Render("  No book selected")
+		return m.st.dim.Render("  No book selected")
 	}
 
 	var sb strings.Builder
 
-	sb.WriteString(headStyle.Render(b.Book.Title))
+	sb.WriteString(m.st.head.Render(b.Book.Title))
 	sb.WriteString("\n")
 	author := fallback(b.Book.AuthorString(), "Unknown author")
-	sb.WriteString(dimStyleTUI.Render(author))
+	sb.WriteString(m.st.dim.Render(author))
 	sb.WriteString("\n\n")
 
 	writeField := func(label, value string) {
-		sb.WriteString(labelStyle.Render(fmt.Sprintf("  %-10s ", label)))
-		sb.WriteString(valueStyle.Render(value))
+		sb.WriteString(m.st.label.Render(fmt.Sprintf("  %-10s ", label)))
+		sb.WriteString(m.st.value.Render(value))
 		sb.WriteString("\n")
 	}
 
@@ -39,7 +39,7 @@ func (m Model) detailsView(w int) string {
 		// The field is 13 columns of label, then the text, two spaces, the bar
 		// and " 100%". Size the bar to what is left so the row is never cut.
 		barW := clampInt(w-20-lipgloss.Width(progressText), 8, 20)
-		progressText += "  " + progressBar(page, b.Book.Pages, barW)
+		progressText += "  " + progressBar(page, b.Book.Pages, barW, m.st)
 	}
 	writeField("Progress", progressText)
 

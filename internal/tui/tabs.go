@@ -58,14 +58,14 @@ const okuASCII = `
 func (m Model) introView(w int) string {
 	var sb strings.Builder
 
-	sb.WriteString(headStyle.Render(okuASCII))
+	sb.WriteString(m.st.head.Render(okuASCII))
 	sb.WriteString("\n")
-	sb.WriteString(dimStyleTUI.Render("  a reading companion"))
+	sb.WriteString(m.st.dim.Render("  a reading companion"))
 	sb.WriteString("\n\n")
 
 	writeField := func(label, value string) {
-		sb.WriteString(labelStyle.Render(fmt.Sprintf("  %-10s ", label)))
-		sb.WriteString(valueStyle.Render(value))
+		sb.WriteString(m.st.label.Render(fmt.Sprintf("  %-10s ", label)))
+		sb.WriteString(m.st.value.Render(value))
 		sb.WriteString("\n")
 	}
 
@@ -96,7 +96,7 @@ func (m Model) introView(w int) string {
 	}
 
 	sb.WriteString("\n")
-	sb.WriteString(dimStyleTUI.Render("  j/k navigate   h/l section   ? help"))
+	sb.WriteString(m.st.dim.Render("  j/k navigate   h/l section   ? help"))
 
 	return sb.String()
 }

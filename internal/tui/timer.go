@@ -98,17 +98,17 @@ func (m Model) handleTimerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) timerView(w int) string {
 	var sb strings.Builder
 
-	sb.WriteString(headStyle.Render("Reading Timer"))
+	sb.WriteString(m.st.head.Render("Reading Timer"))
 	sb.WriteString("\n\n")
 
 	if m.timerSelecting && m.timerState == nil {
-		sb.WriteString(labelStyle.Render("  Select a book"))
+		sb.WriteString(m.st.label.Render("  Select a book"))
 		sb.WriteString("\n")
-		sb.WriteString(dimStyleTUI.Render("  j/k move   Enter start   Esc cancel"))
+		sb.WriteString(m.st.dim.Render("  j/k move   Enter start   Esc cancel"))
 		sb.WriteString("\n\n")
 
 		if len(m.readingBooks) == 0 {
-			sb.WriteString(dimStyleTUI.Render("  No books in Reading."))
+			sb.WriteString(m.st.dim.Render("  No books in Reading."))
 			return sb.String()
 		}
 
@@ -130,31 +130,31 @@ func (m Model) timerView(w int) string {
 			}
 
 			prefix := "  "
-			titleStyle := valueStyle
+			titleStyle := m.st.value
 			if i == m.timerSelectIdx {
 				prefix = "▸ "
-				titleStyle = keyStyle
+				titleStyle = m.st.keyHint
 			}
 
 			sb.WriteString(titleStyle.Render(prefix + title))
 			sb.WriteString("\n")
-			sb.WriteString(dimStyleTUI.Render("  " + author))
+			sb.WriteString(m.st.dim.Render("  " + author))
 			sb.WriteString("\n")
 		}
 		return strings.TrimRight(sb.String(), "\n")
 	}
 
 	if m.timerState == nil {
-		sb.WriteString(dimStyleTUI.Render("  No timer running."))
+		sb.WriteString(m.st.dim.Render("  No timer running."))
 		sb.WriteString("\n\n")
-		sb.WriteString(dimStyleTUI.Render("  Press [t] to choose a book, or [t] in Reading."))
+		sb.WriteString(m.st.dim.Render("  Press [t] to choose a book, or [t] in Reading."))
 	} else {
 		// Book info.
 		if m.timerBook != nil {
-			sb.WriteString(valueStyle.Render("  " + m.timerBook.Title))
+			sb.WriteString(m.st.value.Render("  " + m.timerBook.Title))
 			sb.WriteString("\n")
 			if author := m.timerBook.AuthorString(); author != "" {
-				sb.WriteString(dimStyleTUI.Render("  " + author))
+				sb.WriteString(m.st.dim.Render("  " + author))
 				sb.WriteString("\n")
 			}
 			sb.WriteString("\n")
@@ -167,12 +167,12 @@ func (m Model) timerView(w int) string {
 		sec := int(elapsed.Seconds()) % 60
 		timeStr := fmt.Sprintf("%02d:%02d:%02d", h, min, sec)
 
-		sb.WriteString(timerDisplayStyle.Render(fmt.Sprintf("       %s", timeStr)))
+		sb.WriteString(m.st.timerDisplay.Render(fmt.Sprintf("       %s", timeStr)))
 		sb.WriteString("\n")
-		sb.WriteString(timerLabelStyle.Render("        elapsed"))
+		sb.WriteString(m.st.timerLabel.Render("        elapsed"))
 		sb.WriteString("\n\n")
 
-		sb.WriteString(dimStyleTUI.Render(fmt.Sprintf("  Started: %s",
+		sb.WriteString(m.st.dim.Render(fmt.Sprintf("  Started: %s",
 			m.timerState.StartedAt.Local().Format("3:04 PM"))))
 	}
 
@@ -198,9 +198,9 @@ func (m Model) timerView(w int) string {
 	// Recent sessions.
 	if len(m.recentSessions) > 0 {
 		sb.WriteString("\n")
-		sb.WriteString(dimStyleTUI.Render("  ────────────────────────────────"))
+		sb.WriteString(m.st.dim.Render("  ────────────────────────────────"))
 		sb.WriteString("\n")
-		sb.WriteString(labelStyle.Render("  Recent"))
+		sb.WriteString(m.st.label.Render("  Recent"))
 		sb.WriteString("\n")
 
 		yesterday := today.AddDate(0, 0, -1)
@@ -239,9 +239,9 @@ func (m Model) timerView(w int) string {
 	// Keybindings hint.
 	sb.WriteString("\n")
 	if m.timerState != nil {
-		sb.WriteString(dimStyleTUI.Render("  [t] or [s] stop"))
+		sb.WriteString(m.st.dim.Render("  [t] or [s] stop"))
 	} else {
-		sb.WriteString(dimStyleTUI.Render("  [t] start"))
+		sb.WriteString(m.st.dim.Render("  [t] start"))
 	}
 
 	return sb.String()

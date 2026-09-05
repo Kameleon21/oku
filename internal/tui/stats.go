@@ -49,53 +49,53 @@ func (m Model) handleStatsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // renderStatLine renders value/label pairs on one line:
 //
 //	"12 books   1,748 pages   ★ 3.9 avg"
-func renderStatLine(pairs [][2]string) string {
+func renderStatLine(pairs [][2]string, st styles) string {
 	parts := make([]string, 0, len(pairs))
 	for _, p := range pairs {
-		parts = append(parts, timerDisplayStyle.Render(p[0])+" "+dimStyleTUI.Render(p[1]))
+		parts = append(parts, st.timerDisplay.Render(p[0])+" "+st.dim.Render(p[1]))
 	}
 	return "  " + strings.Join(parts, "   ")
 }
 
 // paint turns a lipgloss style into the single-string decorator charts want.
-func paint(st lipgloss.Style) func(string) string {
-	return func(s string) string { return st.Render(s) }
+func paint(style lipgloss.Style) func(string) string {
+	return func(s string) string { return style.Render(s) }
 }
 
 // barPalette colours a bar chart; only the filled run differs between charts.
-func barPalette(filled lipgloss.Style) charts.Palette {
+func (st styles) barPalette(filled lipgloss.Style) charts.Palette {
 	return charts.Palette{
 		Fill:  paint(filled),
-		Empty: paint(statsBarEmptyStyle),
-		Dim:   paint(dimStyleTUI),
+		Empty: paint(st.statsBarEmpty),
+		Dim:   paint(st.dim),
 	}
 }
 
 // heatPalette colours the activity heatmap with the theme's four-step ramp.
-func heatPalette() charts.Palette {
-	return charts.Palette{Cell: heatmapCellStyled, Dim: paint(dimStyleTUI)}
+func (st styles) heatPalette() charts.Palette {
+	return charts.Palette{Cell: st.heatCell, Dim: paint(st.dim)}
 }
 
-// heatmapCellStyled renders an intensity level with TUI colors.
-func heatmapCellStyled(level int) string {
+// heatCell renders an intensity level with the theme's activity ramp.
+func (st styles) heatCell(level int) string {
 	switch level {
 	case 4:
-		return heatmapLevel4Style.Render("█")
+		return st.heat4.Render("█")
 	case 3:
-		return heatmapLevel3Style.Render("▓")
+		return st.heat3.Render("▓")
 	case 2:
-		return heatmapLevel2Style.Render("▒")
+		return st.heat2.Render("▒")
 	case 1:
-		return heatmapLevel1Style.Render("░")
+		return st.heat1.Render("░")
 	default:
-		return heatmapEmptyStyle.Render("·")
+		return st.heat0.Render("·")
 	}
 }
 
 // renderHeatmapTUI returns a heatmap string for the TUI (no printing to
 // stdout), narrowed to the weeks the pane can actually draw.
-func renderHeatmapTUI(activities []model.DayActivity, weeks, availWidth int) string {
-	return charts.Heatmap(activities, charts.FitHeatmapWeeks(weeks, availWidth), heatPalette())
+func renderHeatmapTUI(activities []model.DayActivity, weeks, availWidth int, st styles) string {
+	return charts.Heatmap(activities, charts.FitHeatmapWeeks(weeks, availWidth), st.heatPalette())
 }
 
 // clipLines returns at most height lines of s starting at offset, clamping the
@@ -126,11 +126,11 @@ func (m Model) statsView(w int) string {
 	if rs != nil {
 		title = fmt.Sprintf("Reading Stats · %d", rs.Year.Year)
 	}
-	sb.WriteString(headStyle.Render(title))
+	sb.WriteString(m.st.head.Render(title))
 	sb.WriteString("\n\n")
 
 	if rs == nil {
-		sb.WriteString(dimStyleTUI.Render("  No stats yet. Press s to sync with Hardcover."))
+		sb.WriteString(m.st.dim.Render("  No stats yet. Press s to sync with Hardcover."))
 		return sb.String()
 	}
 
@@ -142,7 +142,7 @@ func (m Model) statsView(w int) string {
 	if rs.Year.AvgRating > 0 {
 		pairs = append(pairs, [2]string{fmt.Sprintf("★ %.1f", rs.Year.AvgRating), "avg"})
 	}
-	sb.WriteString(renderStatLine(pairs))
+	sb.WriteString(renderStatLine(pairs, m.st))
 	sb.WriteString("\n\n")
 
 	// Reading goal.
@@ -151,31 +151,31 @@ func (m Model) statsView(w int) string {
 		if !g.EndDate.IsZero() {
 			goalLabel += " by " + g.EndDate.Format("Jan 2")
 		}
-		sb.WriteString(labelStyle.Render("  " + goalLabel))
+		sb.WriteString(m.st.label.Render("  " + goalLabel))
 		sb.WriteString("\n")
 		barW := clampInt(w-14, 10, 30)
-		sb.WriteString("  " + progressBar(int(g.Progress), g.Target, barW))
-		sb.WriteString(dimStyleTUI.Render(fmt.Sprintf("  %d/%d", int(g.Progress), g.Target)))
+		sb.WriteString("  " + progressBar(int(g.Progress), g.Target, barW, m.st))
+		sb.WriteString(m.st.dim.Render(fmt.Sprintf("  %d/%d", int(g.Progress), g.Target)))
 		sb.WriteString("\n\n")
 	}
 
 	// Activity heatmap.
 	if len(rs.Heatmap) > 0 {
-		sb.WriteString(labelStyle.Render("  Activity"))
+		sb.WriteString(m.st.label.Render("  Activity"))
 		sb.WriteString("\n")
-		sb.WriteString(renderHeatmapTUI(rs.Heatmap, 26, w))
+		sb.WriteString(renderHeatmapTUI(rs.Heatmap, 26, w, m.st))
 		sb.WriteString("\n\n")
 	}
 
 	// Books per month next to ratings distribution when width allows.
 	monthChart := m.monthsChart(rs)
 	ratingChart := m.ratingsChart(rs)
-	sb.WriteString(joinChartsResponsive(w, monthChart, ratingChart))
+	sb.WriteString(joinChartsResponsive(w, monthChart, ratingChart, m.st))
 
 	// Books per year next to top genres.
 	yearChart := m.yearsChart(rs)
 	genreChart := m.genresChart(rs)
-	sb.WriteString(joinChartsResponsive(w, yearChart, genreChart))
+	sb.WriteString(joinChartsResponsive(w, yearChart, genreChart, m.st))
 
 	// Timer week.
 	sb.WriteString(m.weeklyTimerBlock(w))
@@ -191,9 +191,9 @@ type chartBlock struct {
 
 // joinChartsResponsive lays two chart blocks side by side when width allows,
 // stacked otherwise. Empty blocks are skipped.
-func joinChartsResponsive(w int, left, right chartBlock) string {
+func joinChartsResponsive(w int, left, right chartBlock, st styles) string {
 	render := func(b chartBlock) string {
-		return labelStyle.Render("  "+b.title) + "\n" + b.body
+		return st.label.Render("  "+b.title) + "\n" + b.body
 	}
 	switch {
 	case left.body == "" && right.body == "":
@@ -224,7 +224,7 @@ func (m Model) monthsChart(rs *model.ReadingStats) chartBlock {
 			Count: rs.Months[i],
 		})
 	}
-	return chartBlock{"Books per month", charts.BarChartH(rows, 3, 10, barPalette(statsBarFilledStyle))}
+	return chartBlock{"Books per month", charts.BarChartH(rows, 3, 10, m.st.barPalette(m.st.statsBarFilled))}
 }
 
 func (m Model) ratingsChart(rs *model.ReadingStats) chartBlock {
@@ -241,7 +241,7 @@ func (m Model) ratingsChart(rs *model.ReadingStats) chartBlock {
 	if len(rows) == 0 {
 		return chartBlock{}
 	}
-	return chartBlock{"Ratings", charts.BarChartH(rows, 4, 10, barPalette(goldBarStyle))}
+	return chartBlock{"Ratings", charts.BarChartH(rows, 4, 10, m.st.barPalette(m.st.goldBar))}
 }
 
 func (m Model) yearsChart(rs *model.ReadingStats) chartBlock {
@@ -252,7 +252,7 @@ func (m Model) yearsChart(rs *model.ReadingStats) chartBlock {
 	if len(rows) > 6 {
 		rows = rows[len(rows)-6:]
 	}
-	return chartBlock{"Books per year", charts.BarChartH(rows, 4, 10, barPalette(statsBarFilledStyle))}
+	return chartBlock{"Books per year", charts.BarChartH(rows, 4, 10, m.st.barPalette(m.st.statsBarFilled))}
 }
 
 func (m Model) genresChart(rs *model.ReadingStats) chartBlock {
@@ -271,17 +271,17 @@ func (m Model) genresChart(rs *model.ReadingStats) chartBlock {
 		}
 		rows = append(rows, model.LabelCount{Label: label, Count: g.Count})
 	}
-	return chartBlock{"Top genres", charts.BarChartH(rows, labelW, 10, barPalette(oliveBarStyle))}
+	return chartBlock{"Top genres", charts.BarChartH(rows, labelW, 10, m.st.barPalette(m.st.oliveBar))}
 }
 
 // weeklyTimerBlock renders this week's timer minutes as day bars.
 func (m Model) weeklyTimerBlock(w int) string {
 	if m.weeklyStats.Sessions == 0 {
-		return dimStyleTUI.Render("  No timer sessions this week — press t in Timer to track time.")
+		return m.st.dim.Render("  No timer sessions this week — press t in Timer to track time.")
 	}
 
 	var sb strings.Builder
-	sb.WriteString(labelStyle.Render("  This week"))
+	sb.WriteString(m.st.label.Render("  This week"))
 	sb.WriteString("\n")
 
 	dayNames := [7]string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
@@ -298,13 +298,13 @@ func (m Model) weeklyTimerBlock(w int) string {
 		if mins > 0 && filled == 0 {
 			filled = 1
 		}
-		bar := statsBarFilledStyle.Render(strings.Repeat("█", filled)) +
-			statsBarEmptyStyle.Render(strings.Repeat("░", barWidth-filled))
+		bar := m.st.statsBarFilled.Render(strings.Repeat("█", filled)) +
+			m.st.statsBarEmpty.Render(strings.Repeat("░", barWidth-filled))
 		timeStr := "    —"
 		if mins > 0 {
 			timeStr = fmt.Sprintf("%5s", format.Duration(time.Duration(mins)*time.Minute))
 		}
-		sb.WriteString(fmt.Sprintf("  %s  %s %s\n", dayNames[i], bar, dimStyleTUI.Render(timeStr)))
+		sb.WriteString(fmt.Sprintf("  %s  %s %s\n", dayNames[i], bar, m.st.dim.Render(timeStr)))
 	}
 
 	avg := m.weeklyStats.Total / max(1, m.weeklyStats.Sessions)

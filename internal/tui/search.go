@@ -205,11 +205,11 @@ func (m Model) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) searchSectionContent(w int) string {
-	mode := dimStyleTUI.Render("[NORMAL]")
+	mode := m.st.dim.Render("[NORMAL]")
 	if m.searchMode == searchModeInsert {
-		mode = keyStyle.Render("[INSERT]")
+		mode = m.st.keyHint.Render("[INSERT]")
 	}
-	queryMode := keyStyle.Render("[" + m.searchQueryMode.Label() + "]")
+	queryMode := m.st.keyHint.Render("[" + m.searchQueryMode.Label() + "]")
 	return "  " + mode + " " + queryMode + " " + m.searchInput.View()
 }
 
@@ -228,16 +228,16 @@ func (m Model) searchPanelView() string {
 
 	if len(m.searchList.Items()) == 0 {
 		if strings.TrimSpace(m.lastQuery) == "" {
-			return dimStyleTUI.Render(
+			return m.st.dim.Render(
 				fmt.Sprintf("  %s mode (%s). Type a query and press Enter.",
 					strings.ToLower(m.searchQueryMode.Label()), m.searchQueryMode.Description(),
 				),
 			)
 		}
-		return dimStyleTUI.Render(fmt.Sprintf("  No results for %q", m.lastQuery))
+		return m.st.dim.Render(fmt.Sprintf("  No results for %q", m.lastQuery))
 	}
 
-	return listHeaderStyle.Render(m.searchList.Title) + "\n" + m.searchList.View()
+	return m.st.listHeader.Render(m.searchList.Title) + "\n" + m.searchList.View()
 }
 
 // ── Search helpers ─────────────────────────────────────────────────────────
@@ -458,7 +458,7 @@ func (m *Model) applySearchListDensityLayout() {
 	if m.density == DensityVerbose {
 		spacing = 1
 	}
-	m.searchList.SetDelegate(newListDelegate(spacing))
+	m.searchList.SetDelegate(newListDelegate(spacing, m.th))
 }
 
 func (m Model) selectedSearchResult() *model.SearchResult {

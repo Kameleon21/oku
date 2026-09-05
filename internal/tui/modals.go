@@ -54,7 +54,7 @@ func (c *confirmState) handleKey(msg tea.KeyMsg, k keyMap) (confirmed bool, hand
 	return false, false
 }
 
-func renderConfirmModal(c confirmState, width int) string {
+func renderConfirmModal(c confirmState, width int, st styles) string {
 	if width <= 0 {
 		width = 50
 	}
@@ -62,43 +62,28 @@ func renderConfirmModal(c confirmState, width int) string {
 		width = 36
 	}
 
-	confirmStyle := lipgloss.NewStyle().
-		Foreground(th.Surface).
-		Background(th.Error).
-		Bold(true).
-		Padding(0, 2)
-	cancelStyle := lipgloss.NewStyle().
-		Foreground(th.Surface).
-		Background(th.Success).
-		Bold(true).
-		Padding(0, 2)
-	idleStyle := lipgloss.NewStyle().
-		Foreground(th.TextMuted).
-		Background(th.Surface).
-		Padding(0, 2)
-
 	// The chosen button is marked as well as coloured, so the choice is
 	// visible on a terminal without colour.
-	left := idleStyle.Render("  " + c.ConfirmText)
-	right := idleStyle.Render("  " + c.CancelText)
+	left := st.idleButton.Render("  " + c.ConfirmText)
+	right := st.idleButton.Render("  " + c.CancelText)
 	if c.Cursor == 0 {
-		left = confirmStyle.Render("▸ " + c.ConfirmText)
+		left = st.confirmButton.Render("▸ " + c.ConfirmText)
 	} else {
-		right = cancelStyle.Render("▸ " + c.CancelText)
+		right = st.cancelButton.Render("▸ " + c.CancelText)
 	}
 
 	// Every part of the row carries the modal background: the gap between the
 	// buttons and the space either side of them included, or a black band
 	// shows through the charcoal panel.
-	buttons := modalBgStyle.
+	buttons := st.modalBg.
 		Width(width - 6).
 		Align(lipgloss.Center).
-		Render(lipgloss.JoinHorizontal(lipgloss.Center, left, modalBgStyle.Render("  "), right))
+		Render(lipgloss.JoinHorizontal(lipgloss.Center, left, st.modalBg.Render("  "), right))
 
-	content := modalValueStyle.Render(c.Message) + "\n\n" +
+	content := st.modalValue.Render(c.Message) + "\n\n" +
 		buttons + "\n\n" +
-		modalDimStyle.Render("y/n or Enter/Esc")
-	return renderModalPanel("Confirm", content, width)
+		st.modalDim.Render("y/n or Enter/Esc")
+	return renderModalPanel("Confirm", content, width, st)
 }
 
 // ── View & Focus types ─────────────────────────────────────────────────────
@@ -225,9 +210,9 @@ func (m Model) pagePrompt() string {
 		current = fmt.Sprintf("current: %d/%d", m.pageCurrentPage, m.pageTotalPages)
 	}
 	return "\n" + strings.Join([]string{
-		" " + keyStyle.Render("Update page") + "  " + valueStyle.Render(m.pageBookTitle),
-		" " + dimStyleTUI.Render(current),
-		" " + m.pageInput.View() + dimStyleTUI.Render("   Enter save · Esc cancel"),
+		" " + m.st.keyHint.Render("Update page") + "  " + m.st.value.Render(m.pageBookTitle),
+		" " + m.st.dim.Render(current),
+		" " + m.pageInput.View() + m.st.dim.Render("   Enter save · Esc cancel"),
 	}, "\n")
 }
 
@@ -349,7 +334,7 @@ func (m *Model) focusReviewTextField() {
 
 func (m Model) reviewRatingOverlay() string {
 	if m.reviewBook == nil {
-		return renderModalPanel("Review / Rate Book", modalDimStyle.Render("No book selected"), 48)
+		return renderModalPanel("Review / Rate Book", m.st.modalDim.Render("No book selected"), 48, m.st)
 	}
 
 	rating, err := model.ParseRating(m.reviewRatingInput.Value())
@@ -361,41 +346,41 @@ func (m Model) reviewRatingOverlay() string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(modalValueStyle.Render(m.reviewBook.Book.Title))
+	sb.WriteString(m.st.modalValue.Render(m.reviewBook.Book.Title))
 	sb.WriteString("\n")
-	sb.WriteString(modalDimStyle.Render(fallback(m.reviewBook.Book.AuthorString(), "Unknown author")))
+	sb.WriteString(m.st.modalDim.Render(fallback(m.reviewBook.Book.AuthorString(), "Unknown author")))
 	sb.WriteString("\n\n")
 	sb.WriteString(m.reviewRatingInput.View())
-	sb.WriteString(modalBgStyle.Render("  "))
-	sb.WriteString(modalKeyStyle.Render(stars))
-	sb.WriteString(modalBgStyle.Render(" "))
-	sb.WriteString(modalDimStyle.Render("(" + ratingLabel + ")"))
+	sb.WriteString(m.st.modalBg.Render("  "))
+	sb.WriteString(m.st.modalKey.Render(stars))
+	sb.WriteString(m.st.modalBg.Render(" "))
+	sb.WriteString(m.st.modalDim.Render("(" + ratingLabel + ")"))
 	sb.WriteString("\n\n")
 	reviewMarker := reviewFieldBlurred
 	if m.reviewFocus == dashboardReviewFocusText {
 		reviewMarker = reviewFieldFocused
 	}
-	sb.WriteString(modalLabelStyle.Render(reviewMarker + "Review"))
+	sb.WriteString(m.st.modalLabel.Render(reviewMarker + "Review"))
 	sb.WriteString("\n")
 	sb.WriteString(m.reviewTextInput.View())
 	sb.WriteString("\n\n")
 	switch {
 	case m.reviewSubmitting:
-		sb.WriteString(modalDimStyle.Render("Saving..."))
+		sb.WriteString(m.st.modalDim.Render("Saving..."))
 		sb.WriteString("\n")
 	case m.reviewErr != "":
 		// The status bar sits behind the modal, so surface the failure here.
-		sb.WriteString(modalErrorStyle.Render(m.reviewErr))
+		sb.WriteString(m.st.modalError.Render(m.reviewErr))
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString(modalDimStyle.Render("Tab/Shift+Tab switch fields   Ctrl+S save   Esc cancel"))
+	sb.WriteString(m.st.modalDim.Render("Tab/Shift+Tab switch fields   Ctrl+S save   Esc cancel"))
 
 	width := max(70, m.width-10)
 	if width > 100 {
 		width = 100
 	}
-	return renderModalPanel("Review / Rate Book", sb.String(), width)
+	return renderModalPanel("Review / Rate Book", sb.String(), width, m.st)
 }
 
 // ── Help ───────────────────────────────────────────────────────────────────
@@ -417,7 +402,7 @@ func (m *Model) syncHelpViewport() {
 	}
 
 	offset := m.helpViewport.YOffset
-	m.helpViewport = viewport.New(helpModalWidth-helpModalStyle.GetHorizontalPadding(), h)
+	m.helpViewport = viewport.New(helpModalWidth-m.st.helpModal.GetHorizontalPadding(), h)
 	m.helpViewport.SetContent(body)
 	m.helpViewport.SetYOffset(offset)
 }
@@ -429,8 +414,9 @@ func (m Model) renderHelpModal() string {
 	}
 	return renderModalPanel(
 		"Help",
-		m.helpModalRows()+"\n"+modalDimStyle.Render(footer),
+		m.helpModalRows()+"\n"+m.st.modalDim.Render(footer),
 		helpModalWidth,
+		m.st,
 	)
 }
 
@@ -478,18 +464,18 @@ func (m Model) helpModalBody() string {
 			// Every run carries the modal background, including the gaps: a
 			// style that only sets a foreground ends with a reset, which would
 			// stripe the row with the terminal's own background.
-			keyStyle, descStyle := modalKeyStyle, modalDescStyle
+			keySt, descSt := m.st.modalKey, m.st.modalDesc
 			if !b.Enabled() {
-				keyStyle, descStyle = modalDimStyle.Bold(true), modalDimStyle
+				keySt, descSt = m.st.modalDim.Bold(true), m.st.modalDim
 			}
-			rows += modalBgStyle.Render("  ") +
-				keyStyle.Width(12).Render(b.Help().Key) +
-				modalBgStyle.Render("  ") +
-				descStyle.Render(b.Help().Desc) + "\n"
+			rows += m.st.modalBg.Render("  ") +
+				keySt.Width(12).Render(b.Help().Key) +
+				m.st.modalBg.Render("  ") +
+				descSt.Render(b.Help().Desc) + "\n"
 		}
-		title := modalHeadStyle
+		title := m.st.modalHead
 		if !g.hasEnabled() {
-			title = modalDimStyle.Bold(true)
+			title = m.st.modalDim.Bold(true)
 		}
 		sections = append(sections, title.Render(g.title)+"\n"+rows)
 	}
@@ -509,15 +495,15 @@ func (m Model) overlayModal(modal string) string {
 	)
 }
 
-func renderModalPanel(title, content string, width int) string {
-	style := helpModalStyle
+func renderModalPanel(title, content string, width int, st styles) string {
+	style := st.helpModal
 	if width > 0 {
 		style = style.Width(width)
 	}
 
 	body := content
 	if strings.TrimSpace(title) != "" {
-		body = modalTitleStyle.Render(title) + "\n\n" + content
+		body = st.modalTitle.Render(title) + "\n\n" + content
 	}
 	// The rows are left short on purpose: lipgloss fills them out to the panel
 	// width with the style's own background, which is the only fill that

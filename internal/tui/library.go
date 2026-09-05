@@ -215,7 +215,7 @@ func (m *Model) refreshListItems() tea.Cmd {
 
 // newListDelegate is the item renderer every list shares: title over
 // description, the selection marked by a bar in the accent colour.
-func newListDelegate(spacing int) list.DefaultDelegate {
+func newListDelegate(spacing int, th Theme) list.DefaultDelegate {
 	delegate := list.NewDefaultDelegate()
 	delegate.ShowDescription = true
 	delegate.SetSpacing(spacing)

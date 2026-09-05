@@ -458,7 +458,7 @@ func (m Model) renderHelpBar(bindings []key.Binding) string {
 		return view
 	}
 
-	ellipsis := dimStyleTUI.Render("…")
+	ellipsis := m.st.dim.Render("…")
 	for n := len(bindings) - 1; n >= 1; n-- {
 		candidate := h.ShortHelpView(bindings[:n]) + " " + ellipsis
 		if lipgloss.Width(candidate)+2 <= limit {

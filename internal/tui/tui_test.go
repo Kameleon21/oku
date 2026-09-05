@@ -1899,11 +1899,11 @@ func TestHelpModalListsEveryGroupWithTheActiveOnesFirst(t *testing.T) {
 	// Dimming is the only difference, so the raw render of a live key and a
 	// dead one must differ.
 	raw := m.helpModalBody()
-	live := modalKeyStyle.Width(12).Render("u")
+	live := m.st.modalKey.Width(12).Render("u")
 	if !strings.Contains(raw, live) {
 		t.Fatal("a live key should be drawn in the key style")
 	}
-	if strings.Contains(raw, modalKeyStyle.Width(12).Render("i")) {
+	if strings.Contains(raw, m.st.modalKey.Width(12).Render("i")) {
 		t.Fatal("a key the focus does not understand should not be drawn as live")
 	}
 }

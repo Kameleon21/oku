@@ -58,140 +58,188 @@ func DefaultTheme() Theme {
 	}
 }
 
-// th is the palette every style below is derived from.
-var th = DefaultTheme()
+// ── Styles ──────────────────────────────────────────────────────────────────
 
-// ── Panel Styles ────────────────────────────────────────────────────────────
+// styles is every style the dashboard draws with, derived from one Theme. It
+// is a value on the Model rather than a set of package vars because the theme
+// is about to become a runtime answer: lipgloss v2 drops AdaptiveColor and
+// hands the terminal's background to the program as a message, so the whole
+// set has to be rebuildable mid-run.
+type styles struct {
+	// Panels. The focused one differs in shape as well as colour: a thick
+	// border survives NO_COLOR and a 16-colour terminal, where the accent
+	// alone would not.
+	paneFocused lipgloss.Style
+	pane        lipgloss.Style
 
-// The focused panel differs from the others in shape as well as colour: a
-// thick border survives NO_COLOR and a 16-colour terminal, where the accent
-// alone would not.
-var (
-	panelFocusedStyle = lipgloss.NewStyle().
-				Border(lipgloss.ThickBorder()).
-				BorderForeground(th.BorderFocused)
+	// Text.
+	head    lipgloss.Style
+	dim     lipgloss.Style
+	errText lipgloss.Style
+	keyHint lipgloss.Style
+	desc    lipgloss.Style
+	label   lipgloss.Style
+	value   lipgloss.Style
 
-	panelStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(th.Border)
-)
-
-// ── Text Styles ─────────────────────────────────────────────────────────────
-
-var (
-	headStyle     = lipgloss.NewStyle().Bold(true).Foreground(th.Heading)
-	dimStyleTUI   = lipgloss.NewStyle().Foreground(th.TextDim)
-	errorStyleTUI = lipgloss.NewStyle().Foreground(th.Error).Bold(true)
-
-	keyStyle   = lipgloss.NewStyle().Bold(true).Foreground(th.Accent)
-	descStyle  = lipgloss.NewStyle().Foreground(th.TextMuted)
-	labelStyle = lipgloss.NewStyle().Foreground(th.TextDim).Bold(true)
-	valueStyle = lipgloss.NewStyle().Foreground(th.Text)
-
-	statusBarStyle = lipgloss.NewStyle().
-			Background(th.Surface).
-			Foreground(th.Text).
-			Padding(0, 1)
-
-	// Every status-bar segment carries the bar's background. A nested style
+	// Status bar. Every segment carries the bar's background: a nested style
 	// ends with a reset, so a segment without one drops the background for the
 	// rest of the line.
-	statusBarFillStyle    = lipgloss.NewStyle().Background(th.Surface)
-	statusBarTitleStyle   = statusBarFillStyle.Bold(true).Foreground(th.Heading)
-	statusBarAccentStyle  = statusBarFillStyle.Bold(true).Foreground(th.Accent)
-	statusBarInfoStyle    = statusBarFillStyle.Foreground(th.Text)
-	statusBarSuccessStyle = statusBarFillStyle.Foreground(th.Success)
-	statusBarWarnStyle    = statusBarFillStyle.Foreground(th.Warning)
-	statusBarErrorStyle   = statusBarFillStyle.Bold(true).Foreground(th.Error)
+	statusBar        lipgloss.Style
+	statusBarFill    lipgloss.Style
+	statusBarTitle   lipgloss.Style
+	statusBarAccent  lipgloss.Style
+	statusBarInfo    lipgloss.Style
+	statusBarSuccess lipgloss.Style
+	statusBarWarn    lipgloss.Style
+	statusBarError   lipgloss.Style
 
-	// listHeaderStyle titles a list that has no section card of its own.
-	listHeaderStyle = lipgloss.NewStyle().
+	// listHeader titles a list that has no section card of its own.
+	listHeader lipgloss.Style
+
+	// Modals. Modal text carries the modal's own background for the same
+	// reason the status bar's does.
+	helpModal  lipgloss.Style
+	modalBg    lipgloss.Style
+	modalTitle lipgloss.Style
+	modalHead  lipgloss.Style
+	modalKey   lipgloss.Style
+	modalDesc  lipgloss.Style
+	modalDim   lipgloss.Style
+	modalLabel lipgloss.Style
+	modalValue lipgloss.Style
+	modalError lipgloss.Style
+
+	// The confirm modal's buttons.
+	confirmButton lipgloss.Style
+	cancelButton  lipgloss.Style
+	idleButton    lipgloss.Style
+
+	// Sections and their contents.
+	sectionLabel        lipgloss.Style
+	sectionLabelFocused lipgloss.Style
+	sectionCountLabel   lipgloss.Style
+	timerDisplay        lipgloss.Style
+	timerLabel          lipgloss.Style
+	progressFilled      lipgloss.Style
+	progressEmpty       lipgloss.Style
+	statsBarFilled      lipgloss.Style
+	statsBarEmpty       lipgloss.Style
+	goldBar             lipgloss.Style
+	oliveBar            lipgloss.Style
+
+	// The activity ramp, from an empty day to the busiest one.
+	heat0 lipgloss.Style
+	heat1 lipgloss.Style
+	heat2 lipgloss.Style
+	heat3 lipgloss.Style
+	heat4 lipgloss.Style
+}
+
+// newStyles derives every style from th. It is called once per Model.
+func newStyles(th Theme) styles {
+	statusBarFill := lipgloss.NewStyle().Background(th.Surface)
+	modalBg := lipgloss.NewStyle().Background(th.Surface)
+
+	return styles{
+		paneFocused: lipgloss.NewStyle().
+			Border(lipgloss.ThickBorder()).
+			BorderForeground(th.BorderFocused),
+		pane: lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(th.Border),
+
+		head:    lipgloss.NewStyle().Bold(true).Foreground(th.Heading),
+		dim:     lipgloss.NewStyle().Foreground(th.TextDim),
+		errText: lipgloss.NewStyle().Foreground(th.Error).Bold(true),
+		keyHint: lipgloss.NewStyle().Bold(true).Foreground(th.Accent),
+		desc:    lipgloss.NewStyle().Foreground(th.TextMuted),
+		label:   lipgloss.NewStyle().Foreground(th.TextDim).Bold(true),
+		value:   lipgloss.NewStyle().Foreground(th.Text),
+
+		statusBar: lipgloss.NewStyle().
+			Background(th.Surface).
+			Foreground(th.Text).
+			Padding(0, 1),
+		statusBarFill:    statusBarFill,
+		statusBarTitle:   statusBarFill.Bold(true).Foreground(th.Heading),
+		statusBarAccent:  statusBarFill.Bold(true).Foreground(th.Accent),
+		statusBarInfo:    statusBarFill.Foreground(th.Text),
+		statusBarSuccess: statusBarFill.Foreground(th.Success),
+		statusBarWarn:    statusBarFill.Foreground(th.Warning),
+		statusBarError:   statusBarFill.Bold(true).Foreground(th.Error),
+
+		listHeader: lipgloss.NewStyle().
 			Bold(true).
 			Foreground(th.Heading).
 			Background(th.Surface).
-			Padding(0, 1)
-)
+			Padding(0, 1),
 
-// ── Help Modal Style ────────────────────────────────────────────────────────
+		helpModal: lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(th.BorderFocused).
+			Background(th.Surface).
+			Padding(1, 2).
+			Width(helpModalWidth),
+		modalBg:    modalBg,
+		modalTitle: modalBg.Bold(true).Foreground(th.Heading),
+		modalHead:  modalBg.Bold(true).Foreground(th.Heading),
+		modalKey:   modalBg.Bold(true).Foreground(th.Accent),
+		modalDesc:  modalBg.Foreground(th.TextMuted),
+		modalDim:   modalBg.Foreground(th.TextDim),
+		modalLabel: modalBg.Bold(true).Foreground(th.TextDim),
+		modalValue: modalBg.Foreground(th.Text),
+		modalError: modalBg.Bold(true).Foreground(th.Error),
 
-var helpModalStyle = lipgloss.NewStyle().
-	Border(lipgloss.RoundedBorder()).
-	BorderForeground(th.BorderFocused).
-	Background(th.Surface).
-	Padding(1, 2).
-	Width(50)
+		confirmButton: lipgloss.NewStyle().
+			Foreground(th.Surface).
+			Background(th.Error).
+			Bold(true).
+			Padding(0, 2),
+		cancelButton: lipgloss.NewStyle().
+			Foreground(th.Surface).
+			Background(th.Success).
+			Bold(true).
+			Padding(0, 2),
+		idleButton: lipgloss.NewStyle().
+			Foreground(th.TextMuted).
+			Background(th.Surface).
+			Padding(0, 2),
 
-// Modal text carries the modal's own background. A style that only sets a
-// foreground ends its run with a reset, which drops the background for the
-// rest of the row and stripes the panel with the terminal's own colour.
-var (
-	modalBgStyle    = lipgloss.NewStyle().Background(th.Surface)
-	modalTitleStyle = modalBgStyle.Bold(true).Foreground(th.Heading)
-	modalHeadStyle  = modalBgStyle.Bold(true).Foreground(th.Heading)
-	modalKeyStyle   = modalBgStyle.Bold(true).Foreground(th.Accent)
-	modalDescStyle  = modalBgStyle.Foreground(th.TextMuted)
-	modalDimStyle   = modalBgStyle.Foreground(th.TextDim)
-	modalLabelStyle = modalBgStyle.Bold(true).Foreground(th.TextDim)
-	modalValueStyle = modalBgStyle.Foreground(th.Text)
-	modalErrorStyle = modalBgStyle.Bold(true).Foreground(th.Error)
-)
+		sectionLabel: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(th.TextMuted).
+			Padding(0, 0, 0, 1),
+		sectionLabelFocused: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(th.Accent).
+			Padding(0, 0, 0, 1),
+		sectionCountLabel: lipgloss.NewStyle().
+			Foreground(th.TextDim),
+		timerDisplay: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(th.Heading),
+		timerLabel: lipgloss.NewStyle().
+			Foreground(th.TextDim),
+		progressFilled: lipgloss.NewStyle().
+			Foreground(th.Success),
+		progressEmpty: lipgloss.NewStyle().
+			Foreground(th.Border),
+		statsBarFilled: lipgloss.NewStyle().
+			Foreground(th.Heat3),
+		statsBarEmpty: lipgloss.NewStyle().
+			Foreground(th.Border),
+		goldBar: lipgloss.NewStyle().
+			Foreground(th.Accent),
+		oliveBar: lipgloss.NewStyle().
+			Foreground(th.Success),
 
-// ── Section Styles ─────────────────────────────────────────────────────────
-
-var (
-	sectionLabelStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(th.TextMuted).
-				Padding(0, 0, 0, 1)
-
-	sectionLabelFocusedStyle = lipgloss.NewStyle().
-					Bold(true).
-					Foreground(th.Accent).
-					Padding(0, 0, 0, 1)
-
-	sectionCountStyle = lipgloss.NewStyle().
-				Foreground(th.TextDim)
-
-	timerDisplayStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(th.Heading)
-
-	timerLabelStyle = lipgloss.NewStyle().
-			Foreground(th.TextDim)
-
-	progressFilledStyle = lipgloss.NewStyle().
-				Foreground(th.Success)
-
-	progressEmptyStyle = lipgloss.NewStyle().
-				Foreground(th.Border)
-
-	statsBarFilledStyle = lipgloss.NewStyle().
-				Foreground(th.Heat3)
-
-	statsBarEmptyStyle = lipgloss.NewStyle().
-				Foreground(th.Border)
-
-	goldBarStyle = lipgloss.NewStyle().
-			Foreground(th.Accent)
-
-	oliveBarStyle = lipgloss.NewStyle().
-			Foreground(th.Success)
-
-	heatmapEmptyStyle = lipgloss.NewStyle().
-				Foreground(th.Border)
-
-	heatmapLevel1Style = lipgloss.NewStyle().
-				Foreground(th.Heat1)
-
-	heatmapLevel2Style = lipgloss.NewStyle().
-				Foreground(th.Heat2)
-
-	heatmapLevel3Style = lipgloss.NewStyle().
-				Foreground(th.Heat3)
-
-	heatmapLevel4Style = lipgloss.NewStyle().
-				Foreground(th.Heat4)
-)
+		heat0: lipgloss.NewStyle().Foreground(th.Border),
+		heat1: lipgloss.NewStyle().Foreground(th.Heat1),
+		heat2: lipgloss.NewStyle().Foreground(th.Heat2),
+		heat3: lipgloss.NewStyle().Foreground(th.Heat3),
+		heat4: lipgloss.NewStyle().Foreground(th.Heat4),
+	}
+}
 
 // ── Theme setting ───────────────────────────────────────────────────────────
 

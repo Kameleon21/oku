@@ -32,6 +32,11 @@ type Model struct {
 	ctx     context.Context
 	version string
 
+	// th is the palette, st the styles derived from it. Both are values on
+	// the model so a future theme change can rebuild them mid-run.
+	th Theme
+	st styles
+
 	mode    viewMode
 	section focusSection
 	loaded  bool
@@ -141,7 +146,10 @@ func New(ctx context.Context, a *app.App, density Density) Model {
 		ctx = context.Background()
 	}
 
-	delegate := newListDelegate(0)
+	th := DefaultTheme()
+	st := newStyles(th)
+
+	delegate := newListDelegate(0, th)
 
 	// The section card already prints the name and the count, and the panels
 	// are only a handful of rows tall, so a list spends none of them on its
@@ -188,22 +196,22 @@ func New(ctx context.Context, a *app.App, density Density) Model {
 	reviewRatingIn.Placeholder = "4.5"
 	reviewRatingIn.CharLimit = 4
 	reviewRatingIn.Prompt = reviewFieldFocused + "Rating: "
-	reviewRatingIn.PromptStyle = modalKeyStyle
-	reviewRatingIn.TextStyle = modalValueStyle
-	reviewRatingIn.PlaceholderStyle = modalDimStyle
+	reviewRatingIn.PromptStyle = st.modalKey
+	reviewRatingIn.TextStyle = st.modalValue
+	reviewRatingIn.PlaceholderStyle = st.modalDim
 
 	reviewTextIn := textarea.New()
 	reviewTextIn.Placeholder = "Write your review..."
 	reviewTextIn.SetWidth(60)
 	reviewTextIn.SetHeight(8)
 	reviewTextIn.ShowLineNumbers = false
-	for _, st := range []*textarea.Style{&reviewTextIn.FocusedStyle, &reviewTextIn.BlurredStyle} {
-		st.Base = modalBgStyle
-		st.Text = modalValueStyle
-		st.Placeholder = modalDimStyle
-		st.Prompt = modalKeyStyle
-		st.CursorLine = modalBgStyle
-		st.EndOfBuffer = modalBgStyle
+	for _, fs := range []*textarea.Style{&reviewTextIn.FocusedStyle, &reviewTextIn.BlurredStyle} {
+		fs.Base = st.modalBg
+		fs.Text = st.modalValue
+		fs.Placeholder = st.modalDim
+		fs.Prompt = st.modalKey
+		fs.CursorLine = st.modalBg
+		fs.EndOfBuffer = st.modalBg
 	}
 
 	s := spinner.New()
@@ -212,14 +220,16 @@ func New(ctx context.Context, a *app.App, density Density) Model {
 
 	hlp := help.New()
 	hlp.ShortSeparator = " · "
-	hlp.Styles.ShortKey = keyStyle
-	hlp.Styles.ShortDesc = descStyle
-	hlp.Styles.ShortSeparator = dimStyleTUI
-	hlp.Styles.Ellipsis = dimStyleTUI
+	hlp.Styles.ShortKey = st.keyHint
+	hlp.Styles.ShortDesc = st.desc
+	hlp.Styles.ShortSeparator = st.dim
+	hlp.Styles.Ellipsis = st.dim
 
 	return Model{
 		app:               a,
 		ctx:               ctx,
+		th:                th,
+		st:                st,
 		mode:              modeLibrary,
 		section:           sectionReading,
 		searchMode:        searchModeNormal,
@@ -670,7 +680,7 @@ func (m Model) frame() string {
 		return m.overlayModal(m.reviewRatingOverlay())
 	}
 	if m.confirm.Active {
-		return m.overlayModal(renderConfirmModal(m.confirm, max(36, min(60, m.width-10))))
+		return m.overlayModal(renderConfirmModal(m.confirm, max(36, min(60, m.width-10)), m.st))
 	}
 	if m.showHelp {
 		return m.overlayModal(m.renderHelpModal())
@@ -682,18 +692,18 @@ func (m Model) frame() string {
 // latest message on the right, over an unbroken background.
 func (m Model) statusBar() string {
 	width := max(20, m.width)
-	inner := max(1, width-statusBarStyle.GetHorizontalPadding())
+	inner := max(1, width-m.st.statusBar.GetHorizontalPadding())
 
-	left := statusBarTitleStyle.Render("oku")
+	left := m.st.statusBarTitle.Render("oku")
 	if m.isLoading() {
-		left += statusBarAccentStyle.Render(" " + m.spin.View())
+		left += m.st.statusBarAccent.Render(" " + m.spin.View())
 	}
 
 	right := m.renderToast(inner - lipgloss.Width(left) - 2)
 
 	gap := max(1, inner-lipgloss.Width(left)-lipgloss.Width(right))
-	return statusBarStyle.Width(width).Render(
-		left + statusBarFillStyle.Render(strings.Repeat(" ", gap)) + right,
+	return m.st.statusBar.Width(width).Render(
+		left + m.st.statusBarFill.Render(strings.Repeat(" ", gap)) + right,
 	)
 }
 

@@ -65,14 +65,14 @@ func (m Model) renderLayout() string {
 	// The left frame is only a frame: the focus cue belongs to the card
 	// inside it, or to the right pane when the cursor is over there.
 	leftContent := clampPanelContent(m.renderSections(leftW-2, panelInnerH), leftW, panelInnerH)
-	leftPanel := panelStyle.Width(leftW).Height(panelInnerH).Render(leftContent)
+	leftPanel := m.st.pane.Width(leftW).Height(panelInnerH).Render(leftContent)
 
 	// Right panel: context-sensitive.
 	rightW := max(28, m.width-lipgloss.Width(leftPanel)-2)
 	rightContent := clampPanelContent(m.rightPanelView(rightW-4), rightW, panelInnerH)
-	rightStyle := panelStyle
+	rightStyle := m.st.pane
 	if m.rightPaneFocused() {
-		rightStyle = panelFocusedStyle
+		rightStyle = m.st.paneFocused
 	}
 	rightPanel := rightStyle.
 		Width(rightW).
@@ -266,15 +266,15 @@ func (m Model) renderSectionCard(def sectionDef, w, h int, focused bool) string 
 		}
 	}
 
-	style := panelStyle
+	style := m.st.pane
 	if focused {
-		style = panelFocusedStyle
+		style = m.st.paneFocused
 	}
 	// A list whose items are taller than the rows it was given renders past
 	// them; clip so the overflow cannot push the cards below this one off the
 	// panel.
 	clipped := clampPanelContent(content, w, innerH)
-	clipped = stampOverflowBadge(clipped, m.listOverflowBadge(def.id), w)
+	clipped = stampOverflowBadge(clipped, m.listOverflowBadge(def.id), w, m.st)
 	return style.Width(w).Height(innerH).Render(clipped)
 }
 
@@ -303,7 +303,7 @@ func (m Model) listOverflowBadge(id focusSection) string {
 // space the pagination dots used to take. The row is overwritten rather than
 // appended to: a list pads its rows out to the full card width, so there is
 // never anything left to append to.
-func stampOverflowBadge(content, badge string, w int) string {
+func stampOverflowBadge(content, badge string, w int, st styles) string {
 	if badge == "" {
 		return content
 	}
@@ -318,7 +318,7 @@ func stampOverflowBadge(content, badge string, w int) string {
 	if pad := w - badgeW - 1 - lipgloss.Width(head); pad > 0 {
 		head += strings.Repeat(" ", pad)
 	}
-	lines[last] = head + dimStyleTUI.Render(badge)
+	lines[last] = head + st.dim.Render(badge)
 	return strings.Join(lines, "\n")
 }
 
@@ -326,19 +326,19 @@ func (m Model) formatSectionLabel(id focusSection, label string, count int, focu
 	num := fmt.Sprintf("%d", int(id)+1)
 	countStr := ""
 	if count >= 0 {
-		countStr = sectionCountStyle.Render(fmt.Sprintf(" (%d)", count))
+		countStr = m.st.sectionCountLabel.Render(fmt.Sprintf(" (%d)", count))
 	}
 
 	// Timer running indicator.
 	if id == sectionTimer && m.timerState != nil {
 		elapsed := time.Since(m.timerState.StartedAt)
-		countStr = " " + keyStyle.Render(format.Duration(elapsed))
+		countStr = " " + m.st.keyHint.Render(format.Duration(elapsed))
 	}
 
 	if focused {
-		return sectionLabelFocusedStyle.Render("▸ "+num+"  "+label) + countStr
+		return m.st.sectionLabelFocused.Render("▸ "+num+"  "+label) + countStr
 	}
-	return sectionLabelStyle.Render("  "+num+"  "+label) + countStr
+	return m.st.sectionLabel.Render("  "+num+"  "+label) + countStr
 }
 
 // sectionContent returns the expanded content for a focused section.
@@ -352,7 +352,7 @@ func (m Model) sectionContent(id focusSection, w int) string {
 		return m.searchSectionContent(w)
 	default:
 		// Intro, Stats, Timer use the right pane for full details.
-		return dimStyleTUI.Render("  See Output panel")
+		return m.st.dim.Render("  See Output panel")
 	}
 }
 
@@ -423,9 +423,9 @@ func clampInt(v, lo, hi int) int {
 // progressBar renders a Unicode block-character progress bar.
 //
 //	progressBar(45, 300, 20) → "███░░░░░░░░░░░░░░░░░  15%"
-func progressBar(current, total, width int) string {
+func progressBar(current, total, width int, st styles) string {
 	if total <= 0 {
-		return dimStyleTUI.Render(fmt.Sprintf("p.%d", current))
+		return st.dim.Render(fmt.Sprintf("p.%d", current))
 	}
 	pct := float64(current) / float64(total)
 	if pct > 1.0 {
@@ -440,11 +440,11 @@ func progressBar(current, total, width int) string {
 	}
 	empty := width - filled
 
-	bar := progressFilledStyle.Render(strings.Repeat("█", filled)) +
-		progressEmptyStyle.Render(strings.Repeat("░", empty))
+	bar := st.progressFilled.Render(strings.Repeat("█", filled)) +
+		st.progressEmpty.Render(strings.Repeat("░", empty))
 
 	pctStr := fmt.Sprintf("%3d%%", int(pct*100))
-	return fmt.Sprintf("%s %s", bar, dimStyleTUI.Render(pctStr))
+	return fmt.Sprintf("%s %s", bar, st.dim.Render(pctStr))
 }
 
 // miniProgressBar renders a compact progress bar for inline list items.

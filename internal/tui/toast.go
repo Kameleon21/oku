@@ -130,20 +130,20 @@ func (m Model) renderToast(avail int) string {
 	if m.toast.text == "" {
 		return ""
 	}
-	style, glyph := statusBarInfoStyle, ""
+	style, glyph := m.st.statusBarInfo, ""
 	switch m.toast.level {
 	case toastSuccess:
-		style = statusBarSuccessStyle
+		style = m.st.statusBarSuccess
 	case toastWarn:
-		style, glyph = statusBarWarnStyle, "! "
+		style, glyph = m.st.statusBarWarn, "! "
 	case toastError:
-		style, glyph = statusBarErrorStyle, "✗ "
+		style, glyph = m.st.statusBarError, "✗ "
 	}
 	undoHint := ""
 	if m.undo != nil {
-		undoHint = statusBarFillStyle.Render(" · ") +
-			statusBarAccentStyle.Render("U") +
-			statusBarFillStyle.Render(" undo")
+		undoHint = m.st.statusBarFill.Render(" · ") +
+			m.st.statusBarAccent.Render("U") +
+			m.st.statusBarFill.Render(" undo")
 	}
 
 	// An API error can carry newlines and runs of whitespace. Left alone they
