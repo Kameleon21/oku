@@ -20,7 +20,10 @@ func runeKey(r rune) tea.KeyMsg {
 // newTestDashboard builds a dashboard with no app, so every command that would
 // touch the network or the store reports an error instead.
 func newTestDashboard() dashboardModel {
-	return newDashboardModel(context.Background(), nil)
+	m := newDashboardModel(context.Background(), nil)
+	// Tests drive Update directly and never run Init, so nothing is in flight.
+	m.inflight = 0
+	return m
 }
 
 func TestSearchInputNormalModeNavigation(t *testing.T) {
@@ -88,7 +91,7 @@ func TestStaleCachedLibraryRendersBeforeRefresh(t *testing.T) {
 	if !got.loaded {
 		t.Fatal("cached library should mark dashboard loaded")
 	}
-	if !got.loading {
+	if !got.isLoading() {
 		t.Fatal("stale cache should start a background refresh")
 	}
 	if len(got.readingBooks) != 1 || got.readingBooks[0].Book.Title != "Dune" {
@@ -167,9 +170,10 @@ func TestSubmitSearchSetsLoadingState(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("submitSearch() returned nil cmd for non-empty query")
 	}
-	if !m.loading || !m.searchLoading {
-		t.Fatalf("loading flags = loading:%v searchLoading:%v, want true/true", m.loading, m.searchLoading)
+	if !m.isLoading() || !m.searchLoading {
+		t.Fatalf("loading flags = loading:%v searchLoading:%v, want true/true", m.isLoading(), m.searchLoading)
 	}
+
 	if m.searchLoadingQuery != "dune" {
 		t.Fatalf("searchLoadingQuery = %q, want dune", m.searchLoadingQuery)
 	}
@@ -201,7 +205,7 @@ func TestSubmitSearchGuardAndEmptyValidation(t *testing.T) {
 
 func TestSearchLoadedMsgTransitionsToResults(t *testing.T) {
 	m := newTestDashboard()
-	m.loading = true
+	m.inflight = 1
 	m.searchLoading = true
 	m.section = sectionSearch
 	m.searchSub = searchSubInput
@@ -214,9 +218,10 @@ func TestSearchLoadedMsgTransitionsToResults(t *testing.T) {
 	})
 	got := updated.(dashboardModel)
 
-	if got.loading || got.searchLoading {
-		t.Fatalf("loading flags after response = loading:%v searchLoading:%v, want false/false", got.loading, got.searchLoading)
+	if got.isLoading() || got.searchLoading {
+		t.Fatalf("loading flags after response = loading:%v searchLoading:%v, want false/false", got.isLoading(), got.searchLoading)
 	}
+
 	if got.searchSub != searchSubResults {
 		t.Fatalf("searchSub = %v, want %v", got.searchSub, searchSubResults)
 	}
@@ -378,7 +383,7 @@ func TestReviewSaveKeepsModalOpenWhileSaving(t *testing.T) {
 	if got.reviewBook == nil {
 		t.Fatal("review modal should stay open until the save succeeds")
 	}
-	if !got.loading {
+	if !got.isLoading() {
 		t.Fatal("loading should be true while save is in flight")
 	}
 	if got.infoMsg != "Saving review..." {
@@ -454,7 +459,7 @@ func TestAsyncResultsAreAppliedInEveryMode(t *testing.T) {
 			if got.searchLoading {
 				t.Fatal("searchLoading should be cleared by the result, whatever the mode")
 			}
-			if got.loading {
+			if got.isLoading() {
 				t.Fatal("loading should be cleared by the result, whatever the mode")
 			}
 			if len(got.searchBooks) != 1 {
@@ -547,16 +552,18 @@ func TestSearchResultKeepsUserSelectedMode(t *testing.T) {
 	}
 }
 
-func TestTimerOpDoneClearsLoading(t *testing.T) {
+func TestTimerOpDoneReleasesItsSlot(t *testing.T) {
 	m := newTestDashboard()
-	m.loading = true
+	m.inflight = 1
 	m.timerSelecting = true
 
 	updated, cmd := m.Update(timerOpDoneMsg{info: "Timer started — Dune"})
 	got := updated.(dashboardModel)
 
-	if got.loading {
-		t.Fatal("timerOpDoneMsg should clear loading")
+	// The timer operation's slot is released; only the local-data reload it
+	// starts is left in flight.
+	if got.inflight != 1 {
+		t.Fatalf("inflight = %d, want 1 (the reload): the timer op must release its slot", got.inflight)
 	}
 	if got.timerSelecting {
 		t.Fatal("timerOpDoneMsg should close the timer picker")
@@ -567,11 +574,16 @@ func TestTimerOpDoneClearsLoading(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("timer operations should reload local data")
 	}
+
+	updated, _ = got.Update(localDataLoadedMsg{})
+	if updated.(dashboardModel).isLoading() {
+		t.Fatal("loading should clear once the reload lands")
+	}
 }
 
 func TestLocalDataClearsLoadingAndArmsTimerTick(t *testing.T) {
 	m := newTestDashboard()
-	m.loading = true
+	m.inflight = 1
 	m.timerTicking = true
 
 	// With no timer running the one-second tick loop stops.
@@ -590,7 +602,7 @@ func TestLocalDataClearsLoadingAndArmsTimerTick(t *testing.T) {
 	})
 	got = updated.(dashboardModel)
 
-	if got.loading {
+	if got.isLoading() {
 		t.Fatal("localDataLoadedMsg should clear loading")
 	}
 	if cmd == nil || !got.timerTicking {
@@ -604,7 +616,6 @@ func TestLocalDataClearsLoadingAndArmsTimerTick(t *testing.T) {
 func TestSpinnerStopsWhenNothingIsInFlight(t *testing.T) {
 	m := newTestDashboard()
 	m.spinning = true
-	m.loading = false
 	m.searchLoading = false
 
 	updated, cmd := m.Update(spinner.TickMsg{})
@@ -616,18 +627,42 @@ func TestSpinnerStopsWhenNothingIsInFlight(t *testing.T) {
 	if got.spinning {
 		t.Fatal("spinning should be cleared once nothing is in flight")
 	}
-	if got.beginLoading() == nil {
+	if got.beginLoading(loadLocalDataCmd(got.app)) == nil {
 		t.Fatal("starting new work should re-arm the spinner")
 	}
-	if got.beginLoading() != nil {
-		t.Fatal("a second overlapping operation must not start a second tick loop")
+	if cmd := got.beginLoading(loadLocalDataCmd(got.app)); cmd == nil {
+		t.Fatal("the second operation should still be batched")
+	} else if !got.spinning || got.inflight != 2 {
+		t.Fatalf("inflight = %d, spinning = %v: a second operation must be counted without a second tick loop", got.inflight, got.spinning)
+	}
+}
+
+func TestOverlappingLoadsKeepLoadingUntilBothFinish(t *testing.T) {
+	m := newTestDashboard()
+	if cmd := m.beginLoading(loadLocalDataCmd(m.app), loadLibraryCmd(m.ctx, m.app, false)); cmd == nil {
+		t.Fatal("beginLoading() returned no command")
+	}
+	if !m.isLoading() {
+		t.Fatal("two commands are in flight")
+	}
+
+	updated, _ := m.Update(localDataLoadedMsg{})
+	got := updated.(dashboardModel)
+	if !got.isLoading() {
+		t.Fatal("the first result must not clear loading while the second load runs")
+	}
+
+	updated, _ = got.Update(libraryLoadedMsg{})
+	got = updated.(dashboardModel)
+	if got.isLoading() {
+		t.Fatal("loading should clear once every command has reported")
 	}
 }
 
 func TestQuickProgressIsGuardedWhileInFlight(t *testing.T) {
 	m := newTestDashboard()
 	m.loaded = true
-	m.loading = false
+	m.inflight = 0
 	m.section = sectionReading
 	m.readingBooks = []model.UserBook{{Book: model.Book{ID: 1, Title: "Dune"}}}
 	m.refreshListItems()
@@ -637,7 +672,7 @@ func TestQuickProgressIsGuardedWhileInFlight(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("the first + should start a progress update")
 	}
-	if !got.loading {
+	if !got.isLoading() {
 		t.Fatal("the first + should mark the update in flight")
 	}
 
@@ -673,7 +708,7 @@ func TestReviewSaveFailureKeepsModalOpen(t *testing.T) {
 	if got.reviewSubmitting {
 		t.Fatal("reviewSubmitting should be cleared once the save failed")
 	}
-	if got.loading {
+	if got.isLoading() {
 		t.Fatal("loading should be cleared once the save failed")
 	}
 	if got.reviewTextInput.Value() != "Strong first half." {
@@ -747,7 +782,7 @@ func TestReviewSaveSuccessClosesModal(t *testing.T) {
 func TestBackgroundReconcileClearsDirtyOnlyOnSuccess(t *testing.T) {
 	m := newTestDashboard()
 	m.loaded = true
-	m.loading = false
+	m.inflight = 0
 	m.dirty = true
 	m.lastMutationAt = time.Now().Add(-2 * backgroundSyncWindow)
 

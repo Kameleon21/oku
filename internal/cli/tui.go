@@ -233,7 +233,13 @@ type dashboardModel struct {
 	mode    viewMode
 	section focusSection
 	loaded  bool
-	loading bool
+	// inflight counts the commands that are running. A single boolean meant
+	// the first completion cleared the flag for every other operation, so a
+	// fast local load stopped the spinner mid-sync. Every command started
+	// through beginLoading must produce exactly one message whose handler
+	// calls endLoading.
+	inflight int
+
 	// spinning reports whether the spinner tick loop is armed. It only runs
 	// while work is in flight, so an idle dashboard does not re-render a
 	// dozen times a second.
@@ -405,8 +411,9 @@ func newDashboardModel(ctx context.Context, a *app.App) dashboardModel {
 		reviewRatingInput: reviewRatingIn,
 		reviewTextInput:   reviewTextIn,
 		spin:              s,
-		// Init starts the first loads, so the dashboard is busy already.
-		loading:  true,
+		// Init starts the cached-library and local-data loads, so two
+		// commands are already in flight.
+		inflight: 2,
 		spinning: true,
 	}
 }
@@ -447,7 +454,8 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m dashboardModel) updateCommon(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case spinner.TickMsg:
-		if !m.loading && !m.searchLoading {
+		if !m.isLoading() && !m.searchLoading {
+
 			// Nothing in flight: let the tick loop stop.
 			m.spinning = false
 			return m, nil
@@ -476,8 +484,9 @@ func (m dashboardModel) updateCommon(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyLibraryLoaded(msg)
 
 	case localDataLoadedMsg:
-		m.loading = false
+		m.endLoading()
 		m.localLoaded = true
+
 		if msg.err != nil {
 			m.errMsg = msg.err.Error()
 			return m, nil
@@ -493,8 +502,9 @@ func (m dashboardModel) updateCommon(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case timerOpDoneMsg:
-		m.loading = false
+		m.endLoading()
 		m.timerSelecting = false
+
 		if msg.err != nil {
 			m.errMsg = msg.err.Error()
 			m.infoMsg = ""
@@ -503,13 +513,14 @@ func (m dashboardModel) updateCommon(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.infoMsg = msg.info
 		}
 		// Reload local data after timer operations.
-		return m, loadLocalDataCmd(m.app)
+		return m.startOp(loadLocalDataCmd(m.app))
 
 	case searchLoadedMsg:
 		return m.applySearchLoaded(msg)
 
 	case backgroundCheckMsg:
-		if m.dirty && !m.loading && !m.reconciling && time.Since(m.lastMutationAt) >= backgroundSyncWindow {
+		if m.dirty && !m.isLoading() && !m.reconciling && time.Since(m.lastMutationAt) >= backgroundSyncWindow {
+
 			m.reconciling = true
 			cmd := m.beginLoading(loadLibraryCmd(m.ctx, m.app, true))
 			return m, tea.Batch(cmd, backgroundCheckCmd())
@@ -550,8 +561,9 @@ func (m dashboardModel) updateCommon(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m dashboardModel) applyLibraryLoaded(msg libraryLoadedMsg) (tea.Model, tea.Cmd) {
-	m.loading = false
+	m.endLoading()
 	m.loaded = true
+
 	reconciled := m.reconciling
 	m.reconciling = false
 	if msg.err != nil {
@@ -579,12 +591,14 @@ func (m dashboardModel) applyLibraryLoaded(msg libraryLoadedMsg) (tea.Model, tea
 }
 
 func (m dashboardModel) applySearchLoaded(msg searchLoadedMsg) (tea.Model, tea.Cmd) {
+	// The command has finished either way, so its slot is released first.
+	m.endLoading()
 	if msg.seq != m.searchSeq {
 		// A newer search superseded this one.
 		return m, nil
 	}
-	m.loading = false
 	m.searchLoading = false
+
 	m.searchLoadingQuery = ""
 	if msg.err != nil {
 		m.errMsg = msg.err.Error()
@@ -622,7 +636,7 @@ func (m dashboardModel) applyOpDone(msg opDoneMsg) (tea.Model, tea.Cmd) {
 		return m.applyReviewSaveDone(msg)
 	}
 
-	m.loading = false
+	m.endLoading()
 
 	if msg.err != nil {
 		m.errMsg = msg.err.Error()
@@ -647,8 +661,9 @@ func (m dashboardModel) applyOpDone(msg opDoneMsg) (tea.Model, tea.Cmd) {
 // applyReviewSaveDone keeps the review modal open until its own save
 // succeeds, so a failed save never throws away what was typed.
 func (m dashboardModel) applyReviewSaveDone(msg opDoneMsg) (tea.Model, tea.Cmd) {
-	m.loading = false
+	m.endLoading()
 	m.reviewSubmitting = false
+
 	if msg.err != nil {
 		// Shown in the overlay; the rating and review text are preserved.
 		m.reviewErr = msg.err.Error()
@@ -675,16 +690,34 @@ func (m dashboardModel) startOp(cmds ...tea.Cmd) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// beginLoading flags work as in flight and (re)starts the spinner tick loop.
+// beginLoading counts one in-flight command per cmd and (re)starts the spinner
+// tick loop. Each cmd must produce exactly one message whose handler calls
+// endLoading.
 func (m *dashboardModel) beginLoading(cmds ...tea.Cmd) tea.Cmd {
-	m.loading = true
+	for _, cmd := range cmds {
+		if cmd != nil {
+			m.inflight++
+		}
+	}
 	return tea.Batch(append(cmds, m.startSpinner())...)
 }
 
-// startSpinner returns the spinner tick only when no loop is armed, so
-// overlapping operations never run two of them at once.
+// endLoading records that one in-flight command has produced its result.
+func (m *dashboardModel) endLoading() {
+	if m.inflight > 0 {
+		m.inflight--
+	}
+}
+
+// isLoading reports whether any command is still running.
+func (m dashboardModel) isLoading() bool {
+	return m.inflight > 0
+}
+
+// startSpinner returns the spinner tick only when work is in flight and no
+// loop is armed, so overlapping operations never run two of them at once.
 func (m *dashboardModel) startSpinner() tea.Cmd {
-	if m.spinning {
+	if m.spinning || (m.inflight == 0 && !m.searchLoading) {
 		return nil
 	}
 	m.spinning = true
@@ -770,7 +803,8 @@ func (m dashboardModel) handleStatsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.statsScroll = 0
 		return m, nil
 	case "r":
-		return m, loadLocalDataCmd(m.app)
+		return m.startOp(loadLocalDataCmd(m.app))
+
 	case "s":
 		return m.startOp(syncAllAndReloadCmd(m.ctx, m.app))
 	case "l", "right", "tab":
@@ -1063,8 +1097,9 @@ func (m dashboardModel) handleTimerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "s":
 		if m.timerState != nil {
-			return m, stopTimerCmd(m.app)
+			return m.startOp(stopTimerCmd(m.app))
 		}
+
 	}
 	return m, nil
 }
@@ -1084,7 +1119,7 @@ func (m dashboardModel) updatePageMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.errMsg = "page value cannot be empty"
 			return m, nil
 		}
-		if m.loading {
+		if m.isLoading() {
 			m.infoMsg = "Please wait — an update is still in flight"
 			return m, nil
 		}
@@ -1110,11 +1145,12 @@ func (m dashboardModel) quickProgress(delta int) (tea.Model, tea.Cmd) {
 	if b == nil {
 		return m, nil
 	}
-	if m.loading {
+	if m.isLoading() {
 		m.infoMsg = "Please wait — an update is still in flight"
 		return m, nil
 	}
 	return m.startOp(quickProgressCmd(m.ctx, m.app, b.Book.ID, delta))
+
 }
 
 // ── Review/rating mode ─────────────────────────────────────────────────────
@@ -1177,7 +1213,8 @@ func (m dashboardModel) View() string {
 
 	// Status bar.
 	left := titleBarStyle.Render(" oku")
-	if m.loading {
+	if m.isLoading() {
+
 		left += " " + m.spin.View()
 	}
 
