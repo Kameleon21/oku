@@ -45,11 +45,10 @@ func (m dashboardModel) introView(w int) string {
 	if m.timerState != nil {
 		elapsed := time.Since(m.timerState.StartedAt)
 		bookTitle := ""
-		if m.timerState.BookID > 0 && m.app != nil {
-			if b, err := m.app.Store.GetBookByID(m.timerState.BookID); err == nil && b != nil {
-				bookTitle = b.Title
-			}
+		if m.timerBook != nil {
+			bookTitle = m.timerBook.Title
 		}
+
 		if bookTitle != "" {
 			writeField("Timer", fmt.Sprintf("%s (%s)", formatDuration(elapsed), bookTitle))
 		} else {
@@ -332,16 +331,14 @@ func (m dashboardModel) timerView(w int) string {
 		sb.WriteString(dimStyleTUI.Render("  Press [t] to choose a book and start."))
 	} else {
 		// Book info.
-		if m.timerState.BookID > 0 && m.app != nil {
-			if b, err := m.app.Store.GetBookByID(m.timerState.BookID); err == nil && b != nil {
-				sb.WriteString(valueStyle.Render("  " + b.Title))
-				sb.WriteString("\n")
-				if author := b.AuthorString(); author != "" {
-					sb.WriteString(dimStyleTUI.Render("  " + author))
-					sb.WriteString("\n")
-				}
+		if m.timerBook != nil {
+			sb.WriteString(valueStyle.Render("  " + m.timerBook.Title))
+			sb.WriteString("\n")
+			if author := m.timerBook.AuthorString(); author != "" {
+				sb.WriteString(dimStyleTUI.Render("  " + author))
 				sb.WriteString("\n")
 			}
+			sb.WriteString("\n")
 		}
 
 		// Large timer display.
@@ -366,7 +363,8 @@ func (m dashboardModel) timerView(w int) string {
 	now := time.Now()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	for _, s := range m.recentSessions {
-		sessionDate := time.Date(s.StartedAt.Year(), s.StartedAt.Month(), s.StartedAt.Day(), 0, 0, 0, 0, s.StartedAt.Location())
+		started := s.StartedAt.Local()
+		sessionDate := time.Date(started.Year(), started.Month(), started.Day(), 0, 0, 0, 0, started.Location())
 		if sessionDate.Equal(today) {
 			todayCount++
 			todayMinutes += int(s.Duration().Minutes())
@@ -391,8 +389,9 @@ func (m dashboardModel) timerView(w int) string {
 			if i >= 5 {
 				break
 			}
-			dateStr := s.StartedAt.Local().Format("Jan 02")
-			sessionDate := time.Date(s.StartedAt.Year(), s.StartedAt.Month(), s.StartedAt.Day(), 0, 0, 0, 0, s.StartedAt.Location())
+			started := s.StartedAt.Local()
+			dateStr := started.Format("Jan 02")
+			sessionDate := time.Date(started.Year(), started.Month(), started.Day(), 0, 0, 0, 0, started.Location())
 			if sessionDate.Equal(today) {
 				dateStr = "Today"
 			} else if sessionDate.Equal(yesterday) {
