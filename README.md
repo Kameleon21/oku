@@ -88,7 +88,7 @@ Oku uses vim-style keybindings throughout. Arrow keys also work.
 | `h/l`   | Move between panes     |
 | `j/k`   | Navigate lists         |
 | `/`     | Search                 |
-| `Enter` | Select / toggle status |
+| `Enter` | Open details           |
 | `+/-`   | Quick page update      |
 | `?`     | Help                   |
 | `q`     | Quit                   |

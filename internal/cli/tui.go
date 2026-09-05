@@ -879,10 +879,18 @@ func (m dashboardModel) handleLibraryKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		cmd := m.cycleDensity()
 		return m, cmd
 	case "enter":
-		if m.section == sectionOku {
-			return m.changeSelectedLibraryStatus(model.StatusCurrentlyReading)
+		// Enter used to move the book to another shelf, so a stray keypress
+		// silently rewrote the library. It now only brings the selection into
+		// the detail pane; g/w/f/d still change the status.
+		b := m.selectedLibraryBook()
+		if b == nil {
+			m.errMsg = "no book selected"
+			m.infoMsg = ""
+			return m, nil
 		}
-		return m.changeSelectedLibraryStatus(model.StatusWantToRead)
+		m.errMsg = ""
+		m.infoMsg = b.Book.Title
+		return m, nil
 	case "+", "=":
 		return m.quickProgress(+10)
 	case "-":
@@ -1771,7 +1779,7 @@ func (m dashboardModel) renderHelpModal() string {
 			{"Esc", "Back / cancel"},
 		}),
 		section("Library Actions", [][2]string{
-			{"Enter", "Toggle reading / oku"},
+			{"Enter", "Show book details"},
 			{"+ / -", "Quick page update (+/-10)"},
 			{"u", "Update page progress"},
 			{"v", "Review / rate book"},
@@ -1834,7 +1842,7 @@ func (m dashboardModel) contextHelpBar() string {
 			{"j/k", "navigate"},
 			{"h/l", "section"},
 			{"/", "search"},
-			{"↵", "toggle"},
+			{"↵", "details"},
 			{"+/-", "page"},
 			{"u", "update"},
 			{"v", "review/rate"},
