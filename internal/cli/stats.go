@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Kameleon21/oku/internal/charts"
+	"github.com/Kameleon21/oku/internal/format"
 	"github.com/Kameleon21/oku/internal/model"
 	"github.com/spf13/cobra"
 )
@@ -51,7 +53,7 @@ func newStatsCmd() *cobra.Command {
 
 			fmt.Printf("\nReading Stats · %d\n\n", stats.Year.Year)
 			fmt.Printf("  Books finished:  %d\n", stats.Year.BooksFinished)
-			fmt.Printf("  Pages read:      %s\n", groupThousands(stats.Year.PagesRead))
+			fmt.Printf("  Pages read:      %s\n", format.Thousands(stats.Year.PagesRead))
 			if stats.Year.AvgRating > 0 {
 				fmt.Printf("  Average rating:  %.1f (%d rated)\n", stats.Year.AvgRating, stats.Year.RatedCount)
 			}
@@ -128,5 +130,5 @@ func newStatsCmd() *cobra.Command {
 
 // renderHeatmap prints a GitHub-style heatmap of reading activity.
 func renderHeatmap(activities []model.DayActivity, weeks int) {
-	fmt.Println(buildHeatmap(activities, weeks, heatmapCellPlain, nil))
+	fmt.Println(charts.Heatmap(activities, weeks, charts.Plain))
 }

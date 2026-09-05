@@ -8,44 +8,30 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/Kameleon21/oku/internal/format"
 	"github.com/Kameleon21/oku/internal/model"
+	"github.com/Kameleon21/oku/internal/tui"
 )
 
-// The CLI output shares the dashboard's palette (tui_styles.go), so a book
-// looks the same in `oku reading` as it does in the TUI.
+// The CLI output shares the dashboard's palette, so a book looks the same in
+// `oku reading` as it does in the TUI.
 var (
-	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(th.accent)
-	authorStyle = lipgloss.NewStyle().Foreground(th.textMuted)
-	pageStyle   = lipgloss.NewStyle().Foreground(th.success)
-	statusStyle = lipgloss.NewStyle().Foreground(th.heading).Bold(true)
-	dimStyle    = lipgloss.NewStyle().Foreground(th.textDim)
+	th = tui.DefaultTheme()
+
+	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(th.Accent)
+	authorStyle = lipgloss.NewStyle().Foreground(th.TextMuted)
+	pageStyle   = lipgloss.NewStyle().Foreground(th.Success)
+	statusStyle = lipgloss.NewStyle().Foreground(th.Heading).Bold(true)
+	dimStyle    = lipgloss.NewStyle().Foreground(th.TextDim)
 )
 
-type outputDensity int
-
-const (
-	densityCompact outputDensity = iota
-	densityDefault
-	densityVerbose
-)
-
-func parseOutputDensity(raw string) (outputDensity, error) {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "", "default":
-		return densityDefault, nil
-	case "compact":
-		return densityCompact, nil
-	case "verbose":
-		return densityVerbose, nil
-	default:
-		return densityDefault, fmt.Errorf("invalid --view value %q (valid: compact, default, verbose)", raw)
-	}
-}
-
-func currentOutputDensity() outputDensity {
-	d, err := parseOutputDensity(outputView)
+// currentOutputDensity is the --view flag, already validated by the root
+// command's PersistentPreRunE, so a value that does not parse here can only be
+// a programming error and falls back to the default.
+func currentOutputDensity() tui.Density {
+	d, err := tui.ParseDensity(outputView)
 	if err != nil {
-		return densityDefault
+		return tui.DensityDefault
 	}
 	return d
 }
@@ -64,10 +50,10 @@ func printBooks(books []model.UserBook) error {
 		title := titleStyle.Render(ub.Book.Title)
 		author := authorStyle.Render(ub.Book.AuthorString())
 		progress := pageStyle.Render(ub.Progress())
-		meta := bookMetaLine(ub.Book)
+		meta := format.BookMeta(ub.Book)
 		detail := bookDetailLine(ub.Book)
 
-		if density == densityCompact {
+		if density == tui.DensityCompact {
 			if meta != "" {
 				fmt.Printf("%s %s  %s  %s\n", num, title, progress, dimStyle.Render(meta))
 			} else {
@@ -77,14 +63,14 @@ func printBooks(books []model.UserBook) error {
 		}
 
 		fmt.Printf("%s %s\n", num, title)
-		if author != "" && density != densityCompact {
+		if author != "" && density != tui.DensityCompact {
 			fmt.Printf("   %s\n", author)
 		}
 		fmt.Printf("   %s\n", progress)
 		if meta != "" {
 			fmt.Printf("   %s\n", dimStyle.Render(meta))
 		}
-		if density == densityVerbose && detail != "" {
+		if density == tui.DensityVerbose && detail != "" {
 			fmt.Printf("   %s\n", dimStyle.Render(detail))
 		}
 	}
@@ -132,10 +118,10 @@ func printActiveBooks(books []model.UserBook) error {
 	for i, ub := range books {
 		num := dimStyle.Render(fmt.Sprintf("%d.", i+1))
 		progress := pageStyle.Render(ub.Progress())
-		meta := bookMetaLine(ub.Book)
+		meta := format.BookMeta(ub.Book)
 		detail := bookDetailLine(ub.Book)
 
-		if density == densityCompact {
+		if density == tui.DensityCompact {
 			if meta != "" {
 				fmt.Printf("%s %s  %s  %s\n", num, titleStyle.Render(ub.Book.Title), progress, dimStyle.Render(meta))
 			} else {
@@ -154,41 +140,11 @@ func printActiveBooks(books []model.UserBook) error {
 		if meta != "" {
 			fmt.Printf("      %s\n", dimStyle.Render(meta))
 		}
-		if density == densityVerbose && detail != "" {
+		if density == tui.DensityVerbose && detail != "" {
 			fmt.Printf("      %s\n", dimStyle.Render(detail))
 		}
 	}
 	return nil
-}
-
-func bookMetaLine(b model.Book) string {
-	parts := make([]string, 0, 4)
-
-	if b.Rating > 0 {
-		rating := fmt.Sprintf("★ %.2f", b.Rating)
-		if b.RatingsCount > 0 {
-			rating += fmt.Sprintf(" (%s ratings)", formatCount(b.RatingsCount))
-		}
-		parts = append(parts, rating)
-	}
-
-	if b.UsersReadCount > 0 {
-		parts = append(parts, fmt.Sprintf("%s readers", formatCount(b.UsersReadCount)))
-	}
-
-	if b.ReleaseDate != "" {
-		parts = append(parts, "released "+b.ReleaseDate)
-	}
-
-	if b.FeaturedSeries != "" {
-		series := "series: " + b.FeaturedSeries
-		if b.FeaturedSeriesPosition > 0 {
-			series += fmt.Sprintf(" #%d", b.FeaturedSeriesPosition)
-		}
-		parts = append(parts, series)
-	}
-
-	return strings.Join(parts, " · ")
 }
 
 func bookDetailLine(b model.Book) string {
@@ -203,17 +159,6 @@ func bookDetailLine(b model.Book) string {
 		parts = append(parts, fmt.Sprintf("id:%d", b.ID))
 	}
 	return strings.Join(parts, " · ")
-}
-
-func formatCount(n int) string {
-	switch {
-	case n >= 1_000_000:
-		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
-	case n >= 1_000:
-		return fmt.Sprintf("%.1fK", float64(n)/1_000)
-	default:
-		return fmt.Sprintf("%d", n)
-	}
 }
 
 // printJSON writes v to stdout. The encode error is returned so a redirected

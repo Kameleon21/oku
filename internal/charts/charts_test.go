@@ -1,4 +1,4 @@
-package cli
+package charts
 
 import (
 	"strings"
@@ -26,8 +26,8 @@ func TestHeatmapLevel(t *testing.T) {
 		{"entries beat minutes", model.DayActivity{Minutes: 10, Entries: 6, HasActivity: true}, 100, 4},
 	}
 	for _, c := range cases {
-		if got := heatmapLevel(c.act, c.max); got != c.want {
-			t.Errorf("%s: heatmapLevel = %d, want %d", c.name, got, c.want)
+		if got := HeatmapLevel(c.act, c.max); got != c.want {
+			t.Errorf("%s: HeatmapLevel = %d, want %d", c.name, got, c.want)
 		}
 	}
 }
@@ -48,7 +48,7 @@ func TestBuildHeatmapShowsAllWeekdays(t *testing.T) {
 		})
 	}
 
-	out := buildHeatmap(acts, 4, heatmapCellPlain, nil)
+	out := Heatmap(acts, 4, Plain)
 	lines := strings.Split(out, "\n")
 
 	// Month row + 7 weekday rows + blank + legend.
@@ -85,9 +85,9 @@ func TestBuildHeatmapMonthLabelAlignsWithColumns(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			out := buildHeatmapAt(nil, weeks, c.now, heatmapCellPlain, nil)
+			out := HeatmapAt(nil, weeks, c.now, Plain)
 			monthRow := strings.Split(out, "\n")[0]
-			gridW := heatmapPrefixW + weeks*heatmapWeekW
+			gridW := HeatmapPrefixW + weeks*HeatmapWeekW
 			if len([]rune(monthRow)) > gridW+len("Jan") {
 				t.Fatalf("month row wider than grid: %q", monthRow)
 			}
@@ -106,7 +106,7 @@ func TestBuildHeatmapMonthLabelAlignsWithColumns(t *testing.T) {
 				for col := start; heatmapMonday(first).After(col); col = col.AddDate(0, 0, 7) {
 					week++
 				}
-				pos := heatmapPrefixW + week*heatmapWeekW
+				pos := HeatmapPrefixW + week*HeatmapWeekW
 				name := first.Format("Jan")
 				if got := string([]rune(monthRow)[pos : pos+len(name)]); got != name {
 					t.Errorf("%s: want %q at col %d (week %d), month row %q", first.Format("2006-01-02"), name, pos, week, monthRow)
@@ -121,5 +121,26 @@ func TestBuildHeatmapMonthLabelAlignsWithColumns(t *testing.T) {
 				t.Errorf("month row %q missing current month %q", monthRow, c.now.Format("Jan"))
 			}
 		})
+	}
+}
+
+func TestFitHeatmapWeeks(t *testing.T) {
+	cases := []struct {
+		weeks, width, want int
+	}{
+		// Room for more than was asked for: the request stands.
+		{26, 200, 26},
+		// Exactly enough: the gutter, two columns a week, and two of slack.
+		{26, HeatmapPrefixW + 26*HeatmapWeekW + 2, 26},
+		// One column short.
+		{26, HeatmapPrefixW + 26*HeatmapWeekW + 1, 25},
+		// A narrow pane still gets a stub of a grid rather than nothing.
+		{26, 10, 4},
+		{26, 0, 4},
+	}
+	for _, c := range cases {
+		if got := FitHeatmapWeeks(c.weeks, c.width); got != c.want {
+			t.Errorf("FitHeatmapWeeks(%d, %d) = %d, want %d", c.weeks, c.width, got, c.want)
+		}
 	}
 }

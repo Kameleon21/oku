@@ -10,6 +10,7 @@ import (
 	"github.com/Kameleon21/oku/internal/auth"
 	"github.com/Kameleon21/oku/internal/config"
 	"github.com/Kameleon21/oku/internal/store"
+	"github.com/Kameleon21/oku/internal/tui"
 	"github.com/spf13/cobra"
 )
 
@@ -24,7 +25,7 @@ func newRootCmd(version string) *cobra.Command {
 		Short:   "A fast CLI for Hardcover",
 		Version: version,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			if _, err := parseOutputDensity(outputView); err != nil {
+			if _, err := tui.ParseDensity(outputView); err != nil {
 				return err
 			}
 			// The palette is adaptive; the config key only overrides what
@@ -33,7 +34,7 @@ func newRootCmd(version string) *cobra.Command {
 			// left for the command to report (or, for `config edit`, to
 			// tolerate), so only the theme value itself is checked here.
 			if cfg, err := config.Load(); err == nil {
-				return applyThemeSetting(cfg.Theme)
+				return tui.ApplyThemeSetting(cfg.Theme)
 			}
 			return nil
 		},
