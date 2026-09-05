@@ -9,6 +9,8 @@ import (
 
 	"github.com/Kameleon21/oku/internal/app"
 	"github.com/Kameleon21/oku/internal/model"
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -37,6 +39,9 @@ const (
 // pagePromptRows is how many rows View spends on the page-update prompt it
 // draws under the layout.
 const pagePromptRows = 1
+
+// minHelpBarWidth keeps the footer hints readable on a very narrow terminal.
+const minHelpBarWidth = 20
 
 // minStatusMessageWidth is the narrowest a status message may be cut to before
 // it is dropped instead: an ellipsis and a couple of letters say nothing.
@@ -273,6 +278,7 @@ type dashboardModel struct {
 	reviewRatingInput textinput.Model
 	reviewTextInput   textarea.Model
 	spin              spinner.Model
+	help              help.Model
 
 	readingBooks []model.UserBook
 	okuBooks     []model.UserBook
@@ -416,6 +422,13 @@ func newDashboardModel(ctx context.Context, a *app.App) dashboardModel {
 	s.Spinner = spinner.MiniDot
 	s.Style = lipgloss.NewStyle().Foreground(colorGold)
 
+	hlp := help.New()
+	hlp.ShortSeparator = " · "
+	hlp.Styles.ShortKey = keyStyle
+	hlp.Styles.ShortDesc = descStyle
+	hlp.Styles.ShortSeparator = dimStyleTUI
+	hlp.Styles.Ellipsis = dimStyleTUI
+
 	return dashboardModel{
 		app:               a,
 		ctx:               ctx,
@@ -433,6 +446,7 @@ func newDashboardModel(ctx context.Context, a *app.App) dashboardModel {
 		reviewRatingInput: reviewRatingIn,
 		reviewTextInput:   reviewTextIn,
 		spin:              s,
+		help:              hlp,
 		// Init starts the cached-library and local-data loads, so two
 		// commands are already in flight.
 		inflight: 2,
@@ -1898,103 +1912,128 @@ func (m dashboardModel) overlayModal(modal string) string {
 	)
 }
 
+// helpKey describes a key for the help bar. The dashboard dispatches on the
+// key string itself, so these carry the label, not the binding: several of
+// them ("j/k", "1/2/3") stand for a group of keys rather than one.
+func helpKey(label, desc string) key.Binding {
+	return key.NewBinding(key.WithKeys(label), key.WithHelp(label, desc))
+}
+
+// helpBarWidth is the room the footer hints have. Zero means unbounded, which
+// is what a model that has not seen a window size yet should use.
+func (m dashboardModel) helpBarWidth() int {
+	if m.width <= 0 {
+		return 0
+	}
+	return max(minHelpBarWidth, m.width-2)
+}
+
+// contextHelpBar renders the hints for whatever has focus. help drops the
+// hints that do not fit and marks the cut with an ellipsis, so the bar always
+// stays on one line.
 func (m dashboardModel) contextHelpBar() string {
+	h := m.help
+	h.Width = m.helpBarWidth()
+
+	bar := " " + h.ShortHelpView(m.helpBindings())
+	if m.width <= 0 {
+		return bar
+	}
+	// The last hint help keeps can still spill by a column or two.
+	return ansi.Truncate(bar, m.width, "")
+}
+
+// helpBindings returns the hints for the focused section.
+func (m dashboardModel) helpBindings() []key.Binding {
 	switch m.section {
-	case sectionIntro:
-		return renderHelpBar([][2]string{
-			{"h/l", "section"},
-			{"Tab", "next"},
-			{"/", "search"},
-			{"?", "help"},
-			{"q", "quit"},
-		})
 	case sectionReading, sectionOku:
-		return renderHelpBar([][2]string{
-			{"j/k", "navigate"},
-			{"h/l", "section"},
-			{"/", "search"},
-			{"↵", "details"},
-			{"+/-", "page"},
-			{"u", "update"},
-			{"v", "review/rate"},
-			{"g/w/f/d", "status"},
-			{"z", "density"},
-			{"r", "refresh"},
-			{"s", "sync"},
-			{"?", "help"},
-		})
+		return []key.Binding{
+			helpKey("j/k", "navigate"),
+			helpKey("h/l", "section"),
+			helpKey("↵", "details"),
+			helpKey("+/-", "page"),
+			helpKey("u", "update"),
+			helpKey("v", "review/rate"),
+			helpKey("g/w/f/d", "status"),
+			helpKey("/", "search"),
+			helpKey("z", "density"),
+			helpKey("r", "refresh"),
+			helpKey("s", "sync"),
+			helpKey("?", "help"),
+		}
 	case sectionSearch:
 		if m.searchSub == searchSubResults {
-			return renderHelpBar([][2]string{
-				{"j/k", "navigate"},
-				{"↵", "add reading"},
-				{"g/w/f/d", "status"},
-				{"z", "density"},
-				{"h/l", "input/next"},
-				{"Esc", "back"},
-				{"?", "help"},
-			})
+			return []key.Binding{
+				helpKey("j/k", "navigate"),
+				helpKey("↵", "add reading"),
+				helpKey("g/w/f/d", "status"),
+				helpKey("z", "density"),
+				helpKey("h/l", "input/next"),
+				helpKey("Esc", "back"),
+				helpKey("?", "help"),
+			}
 		}
 		if m.searchMode == searchModeInsert {
-			return renderHelpBar([][2]string{
-				{"↵", "search"},
-				{"Esc", "normal"},
-				{"?", "help"},
-			})
+			return []key.Binding{
+				helpKey("↵", "search"),
+				helpKey("Esc", "normal"),
+				helpKey("?", "help"),
+			}
 		}
-		return renderHelpBar([][2]string{
-			{"↵", "search"},
-			{"i/a", "insert"},
-			{"m", "mode"},
-			{"1/2/3", "book/author/genre"},
-			{"h/l", "section"},
-			{"Esc", "back"},
-			{"?", "help"},
-		})
+		return []key.Binding{
+			helpKey("↵", "search"),
+			helpKey("i/a", "insert"),
+			helpKey("m", "mode"),
+			helpKey("1/2/3", "book/author/genre"),
+			helpKey("h/l", "section"),
+			helpKey("Esc", "back"),
+			helpKey("?", "help"),
+		}
 	case sectionStats:
-		return renderHelpBar([][2]string{
-			{"j/k", "scroll"},
-			{"g", "top"},
-			{"h/l", "section"},
-			{"s", "sync"},
-			{"/", "search"},
-			{"?", "help"},
-			{"q", "quit"},
-		})
+		return []key.Binding{
+			helpKey("j/k", "scroll"),
+			helpKey("g", "top"),
+			helpKey("h/l", "section"),
+			helpKey("s", "sync"),
+			helpKey("/", "search"),
+			helpKey("?", "help"),
+			helpKey("q", "quit"),
+		}
 	case sectionTimer:
-		if m.timerSelecting && m.timerState == nil {
-			return renderHelpBar([][2]string{
-				{"j/k", "choose"},
-				{"↵", "start"},
-				{"Esc", "cancel"},
-				{"?", "help"},
-				{"q", "quit"},
-			})
+		switch {
+		case m.timerSelecting && m.timerState == nil:
+			return []key.Binding{
+				helpKey("j/k", "choose"),
+				helpKey("↵", "start"),
+				helpKey("Esc", "cancel"),
+				helpKey("?", "help"),
+				helpKey("q", "quit"),
+			}
+		case m.timerState != nil:
+			return []key.Binding{
+				helpKey("s", "stop"),
+				helpKey("h/l", "section"),
+				helpKey("/", "search"),
+				helpKey("?", "help"),
+				helpKey("q", "quit"),
+			}
+		default:
+			return []key.Binding{
+				helpKey("t", "choose + start"),
+				helpKey("h/l", "section"),
+				helpKey("/", "search"),
+				helpKey("?", "help"),
+				helpKey("q", "quit"),
+			}
 		}
-		if m.timerState != nil {
-			return renderHelpBar([][2]string{
-				{"s", "stop"},
-				{"h/l", "section"},
-				{"/", "search"},
-				{"?", "help"},
-				{"q", "quit"},
-			})
-		}
-		return renderHelpBar([][2]string{
-			{"t", "choose + start"},
-			{"h/l", "section"},
-			{"/", "search"},
-			{"?", "help"},
-			{"q", "quit"},
-		})
 	default:
-		return renderHelpBar([][2]string{
-			{"h/l", "section"},
-			{"Tab", "next"},
-			{"/", "search"},
-			{"?", "help"},
-			{"q", "quit"},
-		})
+		return []key.Binding{
+			helpKey("h/l", "section"),
+			helpKey("Tab", "next"),
+			helpKey("/", "search"),
+			helpKey("?", "help"),
+			helpKey("q", "quit"),
+		}
 	}
 }
 
@@ -2209,6 +2248,8 @@ func (m *dashboardModel) enterSearchInsertMode() {
 // ── Resize ─────────────────────────────────────────────────────────────────
 
 func (m *dashboardModel) resize() {
+	m.help.Width = m.helpBarWidth()
+
 	totalW := max(60, m.width-2)
 	panelInnerH := m.rightPanelContentHeight()
 

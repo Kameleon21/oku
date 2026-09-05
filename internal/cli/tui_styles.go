@@ -199,19 +199,3 @@ var (
 	heatmapLevel4Style = lipgloss.NewStyle().
 				Foreground(colorGitHubG4)
 )
-
-// ── Help Bar (LazyGit-style) ────────────────────────────────────────────────
-
-// renderKeyHint renders a single key→description hint.
-func renderKeyHint(key, desc string) string {
-	return keyStyle.Render(key) + " " + descStyle.Render(desc)
-}
-
-// renderHelpBar renders a row of key hints with consistent spacing.
-func renderHelpBar(hints [][2]string) string {
-	parts := make([]string, 0, len(hints))
-	for _, h := range hints {
-		parts = append(parts, renderKeyHint(h[0], h[1]))
-	}
-	return "  " + strings.Join(parts, "   ")
-}

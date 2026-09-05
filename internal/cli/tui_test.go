@@ -1090,3 +1090,25 @@ func TestViewFillsTerminalExactly(t *testing.T) {
 		}
 	}
 }
+
+func TestHelpBarTruncatesToWidth(t *testing.T) {
+	m := renderedDashboard(60, 24)
+	m.setSection(sectionReading)
+
+	bar := m.contextHelpBar()
+	if strings.Contains(bar, "\n") {
+		t.Fatalf("help bar wrapped onto a second line: %q", bar)
+	}
+	if got := lipgloss.Width(bar); got > 60 {
+		t.Fatalf("help bar is %d wide, want <= 60", got)
+	}
+	if !strings.Contains(bar, "\u2026") {
+		t.Fatalf("help bar %q should mark the dropped hints with an ellipsis", bar)
+	}
+
+	wide := renderedDashboard(200, 24)
+	wide.setSection(sectionReading)
+	if strings.Contains(wide.contextHelpBar(), "\u2026") {
+		t.Fatal("a 200-column terminal has room for every hint")
+	}
+}
