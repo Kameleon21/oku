@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -39,6 +40,13 @@ const (
 // pagePromptRows is how many rows View spends on the page-update prompt it
 // draws under the layout.
 const pagePromptRows = 1
+
+// recentSearchesKey is the store state key the search history is kept under,
+// and maxRecentSearches caps how much of it is remembered.
+const (
+	recentSearchesKey = "recent_searches"
+	maxRecentSearches = 10
+)
 
 // minHelpBarWidth keeps the footer hints readable on a very narrow terminal.
 const minHelpBarWidth = 20
@@ -229,6 +237,7 @@ type timerTickMsg time.Time
 type localDataLoadedMsg struct {
 	readingStats   *model.ReadingStats
 	recentSessions []model.ReadingSession
+	recentSearches []string
 	timerState     *model.TimerState
 	timerBook      *model.Book
 	err            error
@@ -395,8 +404,9 @@ func newDashboardModel(ctx context.Context, a *app.App) dashboardModel {
 	searchIn.Prompt = "/ "
 	searchIn.PromptStyle = lipgloss.NewStyle().Foreground(colorGold).Bold(true)
 	searchIn.TextStyle = lipgloss.NewStyle().Foreground(colorLightGray)
+	// Suggestions are the user's own search history, loaded with the rest of
+	// the local data; there are none until they have searched for something.
 	searchIn.ShowSuggestions = true
-	searchIn.SetSuggestions(defaultSearchSuggestions(model.SearchModeBook))
 
 	pageIn := textinput.New()
 	pageIn.Placeholder = "370 or +10 or -5"
@@ -532,6 +542,8 @@ func (m dashboardModel) updateCommon(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.weeklyStats = msg.readingStats.Weekly
 		}
 		m.recentSessions = msg.recentSessions
+		m.mergeRecentSearches(msg.recentSearches)
+		m.updateSearchSuggestions()
 		m.timerState = msg.timerState
 		m.timerBook = msg.timerBook
 		cmd := m.startTimerTick()
@@ -662,9 +674,9 @@ func (m dashboardModel) applySearchLoaded(msg searchLoadedMsg) (tea.Model, tea.C
 	} else {
 		m.infoMsg = fmt.Sprintf("%s mode: loaded %d results", strings.ToLower(label), len(msg.results))
 	}
-	m.addRecentSearchQuery(msg.query)
+	saveCmd := m.addRecentSearchQuery(msg.query)
 	m.updateSearchSuggestions()
-	return m, cmd
+	return m, tea.Batch(cmd, saveCmd)
 }
 
 // applyOpDone applies the result of a mutating operation. Results other than
@@ -2140,22 +2152,64 @@ func (m *dashboardModel) setSearchQueryMode(mode model.SearchMode) {
 	m.updateSearchSuggestions()
 }
 
-func (m *dashboardModel) addRecentSearchQuery(query string) {
+// addRecentSearchQuery puts a query at the head of the history and returns the
+// command that writes it back to the store.
+func (m *dashboardModel) addRecentSearchQuery(query string) tea.Cmd {
 	query = strings.TrimSpace(query)
 	if query == "" {
-		return
+		return nil
 	}
-	next := []string{query}
-	for _, q := range m.recentSearches {
-		if strings.EqualFold(q, query) {
+	m.recentSearches = dedupeQueries(append([]string{query}, m.recentSearches...))
+	return saveRecentSearchesCmd(m.app, m.recentSearches)
+}
+
+// mergeRecentSearches keeps this session's queries ahead of the ones read back
+// from the store, so a load landing mid-session cannot drop them.
+func (m *dashboardModel) mergeRecentSearches(loaded []string) {
+	m.recentSearches = dedupeQueries(append(append([]string(nil), m.recentSearches...), loaded...))
+}
+
+// dedupeQueries keeps the first spelling of each query, compared without case,
+// and caps the history.
+func dedupeQueries(queries []string) []string {
+	seen := make(map[string]struct{}, len(queries))
+	out := make([]string, 0, min(len(queries), maxRecentSearches))
+	for _, q := range queries {
+		q = strings.TrimSpace(q)
+		if q == "" {
 			continue
 		}
-		next = append(next, q)
-		if len(next) >= 8 {
+		key := strings.ToLower(q)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, q)
+		if len(out) == maxRecentSearches {
 			break
 		}
 	}
-	m.recentSearches = next
+	return out
+}
+
+func encodeRecentSearches(queries []string) (string, error) {
+	raw, err := json.Marshal(dedupeQueries(queries))
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+func decodeRecentSearches(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var queries []string
+	if err := json.Unmarshal([]byte(raw), &queries); err != nil {
+		// A corrupt value is not worth reporting: the history is a nicety.
+		return nil
+	}
+	return dedupeQueries(queries)
 }
 
 func (m *dashboardModel) updateSearchSuggestions() {
@@ -2175,9 +2229,6 @@ func (m *dashboardModel) updateSearchSuggestions() {
 		out = append(out, s)
 	}
 
-	for _, s := range defaultSearchSuggestions(m.searchQueryMode) {
-		push(s)
-	}
 	for _, q := range m.recentSearches {
 		push(q)
 	}
@@ -2193,35 +2244,6 @@ func (m *dashboardModel) updateSearchSuggestions() {
 		out = out[:12]
 	}
 	m.searchInput.SetSuggestions(out)
-}
-
-func defaultSearchSuggestions(mode model.SearchMode) []string {
-	switch mode {
-	case model.SearchModeAuthor:
-		return []string{
-			"Ursula K. Le Guin",
-			"Octavia Butler",
-			"Neal Ford",
-			"Fyodor Dostoevsky",
-			"James Clear",
-		}
-	case model.SearchModeGenre:
-		return []string{
-			"science fiction",
-			"classics",
-			"philosophy",
-			"software architecture",
-			"psychology",
-		}
-	default:
-		return []string{
-			"east of eden",
-			"dune",
-			"atomic habits",
-			"clean code",
-			"the brothers karamazov",
-		}
-	}
 }
 
 func searchPlaceholderForMode(mode model.SearchMode) string {
@@ -2489,9 +2511,18 @@ func loadLocalDataCmd(a *app.App) tea.Cmd {
 			stats, sessions = demoLocalData()
 		}
 
+		// Best effort: an unreadable history is not a reason to fail the load.
+		var recentSearches []string
+		if a.Store != nil {
+			if raw, err := a.Store.GetState(recentSearchesKey); err == nil {
+				recentSearches = decodeRecentSearches(raw)
+			}
+		}
+
 		return localDataLoadedMsg{
 			readingStats:   stats,
 			recentSessions: sessions,
+			recentSearches: recentSearches,
 			timerState:     timer,
 			timerBook:      timerBook,
 		}
@@ -2594,6 +2625,21 @@ func demoLocalData() (*model.ReadingStats, []model.ReadingSession) {
 	}
 
 	return readingStats, sessions
+}
+
+// saveRecentSearchesCmd persists the search history off the update loop. It is
+// best effort: a failing write must not interrupt a search.
+func saveRecentSearchesCmd(a *app.App, queries []string) tea.Cmd {
+	if a == nil || a.Store == nil {
+		return nil
+	}
+	snapshot := append([]string(nil), queries...)
+	return func() tea.Msg {
+		if raw, err := encodeRecentSearches(snapshot); err == nil {
+			_ = a.Store.SetState(recentSearchesKey, raw)
+		}
+		return nil
+	}
 }
 
 func searchCmd(ctx context.Context, a *app.App, query string, mode model.SearchMode, seq int) tea.Cmd {

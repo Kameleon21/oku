@@ -1112,3 +1112,79 @@ func TestHelpBarTruncatesToWidth(t *testing.T) {
 		t.Fatal("a 200-column terminal has room for every hint")
 	}
 }
+
+func TestRecentSearchesRoundTrip(t *testing.T) {
+	queries := []string{"dune", "Dune", "  ", "east of eden", "clean code"}
+
+	raw, err := encodeRecentSearches(queries)
+	if err != nil {
+		t.Fatalf("encodeRecentSearches() error = %v", err)
+	}
+
+	got := decodeRecentSearches(raw)
+	want := []string{"dune", "east of eden", "clean code"}
+	if len(got) != len(want) {
+		t.Fatalf("decodeRecentSearches() = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("decodeRecentSearches()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+
+	if decodeRecentSearches("") != nil {
+		t.Fatal("an empty state value should decode to no history")
+	}
+	if decodeRecentSearches("{not json") != nil {
+		t.Fatal("a corrupt state value should decode to no history")
+	}
+
+	long := make([]string, 0, maxRecentSearches+5)
+	for i := 0; i < maxRecentSearches+5; i++ {
+		long = append(long, string(rune('a'+i)))
+	}
+	raw, err = encodeRecentSearches(long)
+	if err != nil {
+		t.Fatalf("encodeRecentSearches() error = %v", err)
+	}
+	if got := decodeRecentSearches(raw); len(got) != maxRecentSearches {
+		t.Fatalf("history kept %d queries, want the %d most recent", len(got), maxRecentSearches)
+	}
+}
+
+func TestSearchSuggestionsComeFromHistoryOnly(t *testing.T) {
+	m := newTestDashboard()
+	if got := m.searchInput.AvailableSuggestions(); len(got) != 0 {
+		t.Fatalf("a fresh dashboard suggests %#v, want nothing until the user searches", got)
+	}
+
+	// A nil app must not panic on the way to the (skipped) save.
+	if cmd := m.addRecentSearchQuery("east of eden"); cmd != nil {
+		t.Fatal("addRecentSearchQuery() should not try to save without a store")
+	}
+	m.updateSearchSuggestions()
+
+	got := m.searchInput.AvailableSuggestions()
+	if len(got) != 1 || got[0] != "east of eden" {
+		t.Fatalf("suggestions = %#v, want the query just searched for", got)
+	}
+}
+
+func TestLocalDataMergesStoredRecentSearches(t *testing.T) {
+	m := newTestDashboard()
+	m.inflight = 1
+	m.addRecentSearchQuery("dune")
+
+	updated, _ := m.Update(localDataLoadedMsg{recentSearches: []string{"dune", "clean code"}})
+	got := updated.(dashboardModel)
+
+	want := []string{"dune", "clean code"}
+	if len(got.recentSearches) != len(want) {
+		t.Fatalf("recentSearches = %#v, want %#v", got.recentSearches, want)
+	}
+	for i := range want {
+		if got.recentSearches[i] != want[i] {
+			t.Fatalf("recentSearches[%d] = %q, want %q", i, got.recentSearches[i], want[i])
+		}
+	}
+}
