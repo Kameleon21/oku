@@ -14,6 +14,9 @@ type Config struct {
 	Editor      string `toml:"editor"`
 	UseFzf      bool   `toml:"use_fzf"`
 	DefaultList string `toml:"default_list"`
+	// Theme pins the TUI palette to a "dark" or "light" terminal background;
+	// "auto" (the default) lets the terminal report it.
+	Theme string `toml:"theme"`
 }
 
 // Defaults returns a Config with sensible defaults.
@@ -22,6 +25,7 @@ func Defaults() Config {
 		Editor:      "",
 		UseFzf:      false,
 		DefaultList: "reading",
+		Theme:       "auto",
 	}
 }
 

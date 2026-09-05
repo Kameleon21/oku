@@ -11,12 +11,14 @@ import (
 	"github.com/Kameleon21/oku/internal/model"
 )
 
+// The CLI output shares the dashboard's palette (tui_styles.go), so a book
+// looks the same in `oku reading` as it does in the TUI.
 var (
-	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
-	authorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	pageStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
-	statusStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
-	dimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(th.accent)
+	authorStyle = lipgloss.NewStyle().Foreground(th.textMuted)
+	pageStyle   = lipgloss.NewStyle().Foreground(th.success)
+	statusStyle = lipgloss.NewStyle().Foreground(th.heading).Bold(true)
+	dimStyle    = lipgloss.NewStyle().Foreground(th.textDim)
 )
 
 type outputDensity int
