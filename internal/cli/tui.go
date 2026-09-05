@@ -376,33 +376,7 @@ func newDashboardModel(ctx context.Context, a *app.App) dashboardModel {
 		ctx = context.Background()
 	}
 
-	delegate := list.NewDefaultDelegate()
-	delegate.ShowDescription = true
-	delegate.SetSpacing(0)
-
-	delegate.Styles.NormalTitle = lipgloss.NewStyle().
-		Foreground(colorLightGray).
-		Padding(0, 0, 0, 2)
-	delegate.Styles.NormalDesc = lipgloss.NewStyle().
-		Foreground(colorMidGray).
-		Padding(0, 0, 0, 2)
-	delegate.Styles.SelectedTitle = lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), false, false, false, true).
-		BorderForeground(colorGold).
-		Foreground(colorGold).
-		Bold(true).
-		Padding(0, 0, 0, 1)
-	delegate.Styles.SelectedDesc = lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), false, false, false, true).
-		BorderForeground(colorGold).
-		Foreground(colorMidGray).
-		Padding(0, 0, 0, 1)
-	delegate.Styles.DimmedTitle = lipgloss.NewStyle().
-		Foreground(colorDimGray).
-		Padding(0, 0, 0, 2)
-	delegate.Styles.DimmedDesc = lipgloss.NewStyle().
-		Foreground(colorDarkGray).
-		Padding(0, 0, 0, 2)
+	delegate := newListDelegate(0)
 
 	// The section card already prints the name and the count, and the panels
 	// are only a handful of rows tall, so a list spends none of them on its
@@ -429,8 +403,8 @@ func newDashboardModel(ctx context.Context, a *app.App) dashboardModel {
 	searchIn.Placeholder = "Search books..."
 	searchIn.CharLimit = 120
 	searchIn.Prompt = "/ "
-	searchIn.PromptStyle = lipgloss.NewStyle().Foreground(colorGold).Bold(true)
-	searchIn.TextStyle = lipgloss.NewStyle().Foreground(colorLightGray)
+	searchIn.PromptStyle = lipgloss.NewStyle().Foreground(th.accent).Bold(true)
+	searchIn.TextStyle = lipgloss.NewStyle().Foreground(th.text)
 	// Suggestions are the user's own search history, loaded with the rest of
 	// the local data; there are none until they have searched for something.
 	searchIn.ShowSuggestions = true
@@ -439,8 +413,8 @@ func newDashboardModel(ctx context.Context, a *app.App) dashboardModel {
 	pageIn.Placeholder = "370 or +10 or -5"
 	pageIn.CharLimit = 32
 	pageIn.Prompt = "› "
-	pageIn.PromptStyle = lipgloss.NewStyle().Foreground(colorGold).Bold(true)
-	pageIn.TextStyle = lipgloss.NewStyle().Foreground(colorLightGray)
+	pageIn.PromptStyle = lipgloss.NewStyle().Foreground(th.accent).Bold(true)
+	pageIn.TextStyle = lipgloss.NewStyle().Foreground(th.text)
 
 	// The review fields sit inside a modal, so they carry its background: a
 	// style that only sets a foreground would leave the field on the
@@ -469,7 +443,7 @@ func newDashboardModel(ctx context.Context, a *app.App) dashboardModel {
 
 	s := spinner.New()
 	s.Spinner = spinner.MiniDot
-	s.Style = lipgloss.NewStyle().Foreground(colorGold)
+	s.Style = lipgloss.NewStyle().Foreground(th.accent)
 
 	hlp := help.New()
 	hlp.ShortSeparator = " · "
@@ -2672,39 +2646,44 @@ func (m *dashboardModel) refreshSearchResultItems() tea.Cmd {
 }
 
 func (m *dashboardModel) applySearchListDensityLayout() {
+	spacing := 0
+	if m.density == densityVerbose {
+		spacing = 1
+	}
+	m.searchList.SetDelegate(newListDelegate(spacing))
+}
+
+// newListDelegate is the item renderer every list shares: title over
+// description, the selection marked by a bar in the accent colour.
+func newListDelegate(spacing int) list.DefaultDelegate {
 	delegate := list.NewDefaultDelegate()
 	delegate.ShowDescription = true
-	if m.density == densityVerbose {
-		delegate.SetSpacing(1)
-	} else {
-		delegate.SetSpacing(0)
-	}
+	delegate.SetSpacing(spacing)
 
 	delegate.Styles.NormalTitle = lipgloss.NewStyle().
-		Foreground(colorLightGray).
+		Foreground(th.text).
 		Padding(0, 0, 0, 2)
 	delegate.Styles.NormalDesc = lipgloss.NewStyle().
-		Foreground(colorMidGray).
+		Foreground(th.textMuted).
 		Padding(0, 0, 0, 2)
 	delegate.Styles.SelectedTitle = lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder(), false, false, false, true).
-		BorderForeground(colorGold).
-		Foreground(colorGold).
+		BorderForeground(th.accent).
+		Foreground(th.accent).
 		Bold(true).
 		Padding(0, 0, 0, 1)
 	delegate.Styles.SelectedDesc = lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder(), false, false, false, true).
-		BorderForeground(colorGold).
-		Foreground(colorMidGray).
+		BorderForeground(th.accent).
+		Foreground(th.textMuted).
 		Padding(0, 0, 0, 1)
 	delegate.Styles.DimmedTitle = lipgloss.NewStyle().
-		Foreground(colorDimGray).
+		Foreground(th.textDim).
 		Padding(0, 0, 0, 2)
 	delegate.Styles.DimmedDesc = lipgloss.NewStyle().
-		Foreground(colorDarkGray).
+		Foreground(th.border).
 		Padding(0, 0, 0, 2)
-
-	m.searchList.SetDelegate(delegate)
+	return delegate
 }
 
 func (m dashboardModel) selectedLibraryBook() *model.UserBook {
@@ -3161,6 +3140,12 @@ func runDashboard() error {
 		return err
 	}
 	defer a.Store.Close()
+
+	// The palette is adaptive; the config key only overrides what the
+	// terminal reports about its background.
+	if err := applyThemeSetting(a.Config.Theme); err != nil {
+		return err
+	}
 
 	// Bubble Tea runs commands in goroutines it does not track, so cancel the
 	// command context as soon as the program exits: in-flight API calls abort

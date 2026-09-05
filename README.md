@@ -90,8 +90,11 @@ Oku uses vim-style keybindings throughout. Arrow keys also work.
 | `/`     | Search                 |
 | `Enter` | Open details           |
 | `+/-`   | Quick page update      |
+| `U`     | Undo the last change   |
 | `?`     | Help                   |
 | `q`     | Quit                   |
+
+Status changes and page updates show a toast for a few seconds; press `U` while it is up to put the book back where it was. Press `?` for every key the focused section understands.
 
 ## Config
 
@@ -101,7 +104,10 @@ Config lives at `~/.config/oku/config.toml`:
 editor = "nvim"
 use_fzf = false
 default_list = "reading"
+theme = "auto" # auto | dark | light
 ```
+
+The TUI adapts its palette to a light or dark terminal on its own. Set `theme` when your terminal does not report its background (or reports it wrongly). `NO_COLOR` is honoured: focus is also shown by a thick border and a `▸` marker, not by colour alone.
 
 ## Development
 

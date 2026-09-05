@@ -55,18 +55,18 @@ func renderConfirmModal(c confirmState, width int) string {
 	}
 
 	confirmStyle := lipgloss.NewStyle().
-		Foreground(colorCharcoal).
-		Background(colorWarmRed).
+		Foreground(th.surface).
+		Background(th.error).
 		Bold(true).
 		Padding(0, 2)
 	cancelStyle := lipgloss.NewStyle().
-		Foreground(colorCharcoal).
-		Background(colorOlive).
+		Foreground(th.surface).
+		Background(th.success).
 		Bold(true).
 		Padding(0, 2)
 	idleStyle := lipgloss.NewStyle().
-		Foreground(colorMidGray).
-		Background(colorCharcoal).
+		Foreground(th.textMuted).
+		Background(th.surface).
 		Padding(0, 2)
 
 	left := idleStyle.Render(c.ConfirmText)

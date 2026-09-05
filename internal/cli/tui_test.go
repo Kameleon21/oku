@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 func runeKey(r rune) tea.KeyMsg {
@@ -1615,5 +1616,89 @@ func TestSearchHeaderNamesTheResultsOnScreen(t *testing.T) {
 	failed := updated.(dashboardModel)
 	if failed.searchList.Title != "BOOK Results (2)" {
 		t.Fatalf("title after a failed search = %q, want the results still on screen", failed.searchList.Title)
+	}
+}
+
+// withColorProfile renders in colour for the duration of a test. Tests have
+// no terminal, so lipgloss would otherwise strip every colour and a light and
+// a dark render would be the same bytes.
+func withColorProfile(t *testing.T) {
+	t.Helper()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(termenv.Ascii)
+		lipgloss.SetHasDarkBackground(true)
+	})
+}
+
+func TestThemeResolvesDistinctColoursForLightAndDark(t *testing.T) {
+	withColorProfile(t)
+
+	th := defaultTheme()
+	colours := map[string]lipgloss.AdaptiveColor{
+		"accent": th.accent, "heading": th.heading, "text": th.text,
+		"textMuted": th.textMuted, "textDim": th.textDim, "border": th.border,
+		"borderFocused": th.borderFocused, "surface": th.surface,
+		"success": th.success, "warning": th.warning, "error": th.error,
+		"heat1": th.heat1, "heat2": th.heat2, "heat3": th.heat3, "heat4": th.heat4,
+	}
+	for name, c := range colours {
+		if c.Light == "" || c.Dark == "" {
+			t.Fatalf("%s: both sides of the theme must be set, got %+v", name, c)
+		}
+		if c.Light == c.Dark {
+			t.Fatalf("%s: light and dark are the same value %q", name, c.Light)
+		}
+
+		style := lipgloss.NewStyle().Foreground(c)
+		lipgloss.SetHasDarkBackground(true)
+		dark := style.Render("x")
+		lipgloss.SetHasDarkBackground(false)
+		light := style.Render("x")
+		if dark == light {
+			t.Fatalf("%s: renders the same on a light and a dark terminal: %q", name, dark)
+		}
+	}
+
+	// The heat ramp has four distinct steps on each side.
+	for _, side := range []struct {
+		name string
+		pick func(lipgloss.AdaptiveColor) string
+	}{
+		{"dark", func(c lipgloss.AdaptiveColor) string { return c.Dark }},
+		{"light", func(c lipgloss.AdaptiveColor) string { return c.Light }},
+	} {
+		seen := map[string]bool{}
+		for _, c := range []lipgloss.AdaptiveColor{th.heat1, th.heat2, th.heat3, th.heat4} {
+			if seen[side.pick(c)] {
+				t.Fatalf("%s heat ramp repeats %q", side.name, side.pick(c))
+			}
+			seen[side.pick(c)] = true
+		}
+	}
+}
+
+func TestApplyThemeSetting(t *testing.T) {
+	withColorProfile(t)
+
+	if err := applyThemeSetting("light"); err != nil {
+		t.Fatalf("applyThemeSetting(light) error = %v", err)
+	}
+	if lipgloss.HasDarkBackground() {
+		t.Fatal("theme = light should pin a light background")
+	}
+	if err := applyThemeSetting("Dark"); err != nil {
+		t.Fatalf("applyThemeSetting(Dark) error = %v", err)
+	}
+	if !lipgloss.HasDarkBackground() {
+		t.Fatal("theme = dark should pin a dark background")
+	}
+	for _, ok := range []string{"", "auto", " AUTO "} {
+		if err := applyThemeSetting(ok); err != nil {
+			t.Fatalf("applyThemeSetting(%q) error = %v, want none", ok, err)
+		}
+	}
+	if err := applyThemeSetting("solarized"); err == nil {
+		t.Fatal("an unknown theme should be reported, not ignored")
 	}
 }
