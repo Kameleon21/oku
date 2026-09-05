@@ -827,3 +827,41 @@ func TestSearchInsertModeTypesQuestionMark(t *testing.T) {
 		t.Fatalf("search input = %q, want ?", got.searchInput.Value())
 	}
 }
+
+func TestSectionFocusResizesLists(t *testing.T) {
+	m := newTestDashboard()
+	m.width, m.height = 100, 44
+	m.setSection(sectionReading)
+
+	readingFocused := m.readingList.Height()
+
+	m.nextSection() // Oku takes the focus, and with it the extra rows.
+	if m.section != sectionOku {
+		t.Fatalf("section = %v, want %v", m.section, sectionOku)
+	}
+	if m.readingList.Height() >= readingFocused {
+		t.Fatalf("reading list height = %d, want less than the focused %d", m.readingList.Height(), readingFocused)
+	}
+
+	heights := m.leftSectionHeights(m.rightPanelContentHeight())
+	if want := max(1, heights[sectionReading]-3); m.readingList.Height() != want {
+		t.Fatalf("reading list height = %d, want %d", m.readingList.Height(), want)
+	}
+	if want := max(1, heights[sectionOku]-3); m.okuList.Height() != want {
+		t.Fatalf("oku list height = %d, want %d", m.okuList.Height(), want)
+	}
+}
+
+func TestSlashFocusResizesLists(t *testing.T) {
+	m := newTestDashboard()
+	m.width, m.height = 100, 44
+	m.setSection(sectionReading)
+
+	updated, _ := m.Update(runeKey('/'))
+	got := updated.(dashboardModel)
+
+	heights := got.leftSectionHeights(got.rightPanelContentHeight())
+	if want := max(1, heights[sectionReading]-3); got.readingList.Height() != want {
+		t.Fatalf("reading list height after / = %d, want %d", got.readingList.Height(), want)
+	}
+}

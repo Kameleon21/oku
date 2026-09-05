@@ -777,7 +777,7 @@ func (m dashboardModel) handleGenericKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.prevSection()
 		return m, nil
 	case "/":
-		m.section = sectionSearch
+		m.setSection(sectionSearch)
 		m.searchSub = searchSubInput
 		m.enterSearchInsertMode()
 		m.searchInput.CursorEnd()
@@ -850,7 +850,7 @@ func (m dashboardModel) handleLibraryKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, cmd
 	case "/":
-		m.section = sectionSearch
+		m.setSection(sectionSearch)
 		m.searchSub = searchSubInput
 		m.enterSearchInsertMode()
 		m.searchInput.CursorEnd()
@@ -1067,7 +1067,7 @@ func (m dashboardModel) handleTimerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.prevSection()
 		return m, nil
 	case "/":
-		m.section = sectionSearch
+		m.setSection(sectionSearch)
 		m.searchSub = searchSubInput
 		m.enterSearchInsertMode()
 		m.searchInput.CursorEnd()
@@ -1889,14 +1889,22 @@ func (m dashboardModel) contextHelpBar() string {
 
 // ── Navigation helpers ─────────────────────────────────────────────────────
 
+// setSection focuses a section and re-sizes the lists. leftSectionHeights
+// gives the focused list extra rows, so the sizes have to follow the focus and
+// not only a window resize.
+func (m *dashboardModel) setSection(s focusSection) {
+	m.section = s
+	m.resize()
+}
+
 func (m *dashboardModel) nextSection() {
 	m.searchInput.Blur()
-	m.section = (m.section + 1) % sectionCount
+	m.setSection((m.section + 1) % sectionCount)
 }
 
 func (m *dashboardModel) prevSection() {
 	m.searchInput.Blur()
-	m.section = (m.section - 1 + sectionCount) % sectionCount
+	m.setSection((m.section - 1 + sectionCount) % sectionCount)
 }
 
 // ── Search helpers ─────────────────────────────────────────────────────────
