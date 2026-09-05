@@ -2054,6 +2054,7 @@ func helpModalBody() string {
 			{"+ / -", "Quick page update (+/-10)"},
 			{"u", "Update page progress"},
 			{"v", "Review / rate book"},
+			{"t", "Start / stop timer"},
 			{"g", "Set status: reading"},
 			{"w", "Set status: want to read"},
 			{"f", "Set status: finished"},
