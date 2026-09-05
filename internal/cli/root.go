@@ -73,6 +73,7 @@ func newRootCmd(version string) *cobra.Command {
 
 // Execute runs the root command and returns an exit code.
 func Execute(version string) int {
+	api.Version = version
 	cmd := newRootCmd(version)
 	if err := cmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
