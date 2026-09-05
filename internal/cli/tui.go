@@ -170,7 +170,10 @@ type libraryLoadedMsg struct {
 	reading      []model.UserBook
 	oku          []model.UserBook
 	needsRefresh bool
-	err          error
+	// reconcile marks the background reconcile's own result: only that one
+	// may clear dirty, since any other load can land while it is in flight.
+	reconcile bool
+	err       error
 }
 
 type searchLoadedMsg struct {
@@ -264,7 +267,10 @@ type dashboardModel struct {
 	okuBooks     []model.UserBook
 	searchBooks  []model.SearchResult
 
-	pendingBookID    int
+	pendingBookID int
+	// pageSubmitting marks that the page modal is waiting for its own update,
+	// so a progress result started before it opened cannot close it.
+	pageSubmitting   bool
 	reviewBook       *model.UserBook
 	reviewFocus      dashboardReviewFocus
 	reviewSubmitting bool
@@ -522,7 +528,7 @@ func (m dashboardModel) updateCommon(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.dirty && !m.isLoading() && !m.reconciling && time.Since(m.lastMutationAt) >= backgroundSyncWindow {
 
 			m.reconciling = true
-			cmd := m.beginLoading(loadLibraryCmd(m.ctx, m.app, true))
+			cmd := m.beginLoading(reconcileLibraryCmd(m.ctx, m.app))
 			return m, tea.Batch(cmd, backgroundCheckCmd())
 		}
 		return m, backgroundCheckCmd()
@@ -563,9 +569,9 @@ func (m dashboardModel) updateCommon(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m dashboardModel) applyLibraryLoaded(msg libraryLoadedMsg) (tea.Model, tea.Cmd) {
 	m.endLoading()
 	m.loaded = true
-
-	reconciled := m.reconciling
-	m.reconciling = false
+	if msg.reconcile {
+		m.reconciling = false
+	}
 	if msg.err != nil {
 		m.errMsg = msg.err.Error()
 		m.infoMsg = ""
@@ -580,7 +586,8 @@ func (m dashboardModel) applyLibraryLoaded(msg libraryLoadedMsg) (tea.Model, tea
 	cmd := m.refreshListItems()
 	m.updateSearchSuggestions()
 	m.errMsg = ""
-	if reconciled {
+	if msg.reconcile {
+		// The pending local mutations are now reflected by the server data.
 		m.dirty = false
 	}
 	if msg.needsRefresh {
@@ -649,7 +656,7 @@ func (m dashboardModel) applyOpDone(msg opDoneMsg) (tea.Model, tea.Cmd) {
 			m.lastMutationAt = time.Now()
 		}
 	}
-	if m.mode == modeUpdatePage && msg.op == opProgress {
+	if m.mode == modeUpdatePage && m.pageSubmitting && msg.op == opProgress {
 		m.closePageModal()
 	}
 	if msg.reload {
@@ -1123,6 +1130,7 @@ func (m dashboardModel) updatePageMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.infoMsg = "Please wait — an update is still in flight"
 			return m, nil
 		}
+		m.pageSubmitting = true
 		return m.startOp(updateProgressCmd(m.ctx, m.app, m.pendingBookID, raw))
 	}
 
@@ -1133,6 +1141,7 @@ func (m dashboardModel) updatePageMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *dashboardModel) closePageModal() {
 	m.mode = modeLibrary
+	m.pageSubmitting = false
 	m.pageInput.Blur()
 	m.pageInput.SetValue("")
 }
@@ -2294,6 +2303,21 @@ func loadLibraryCmd(ctx context.Context, a *app.App, refresh bool) tea.Cmd {
 			reading: reading,
 			oku:     oku,
 		}
+	}
+}
+
+// reconcileLibraryCmd is the background reconcile's refresh: it stamps its
+// result so that a library load started by something else cannot be mistaken
+// for the reconcile finishing.
+func reconcileLibraryCmd(ctx context.Context, a *app.App) tea.Cmd {
+	refresh := loadLibraryCmd(ctx, a, true)
+	return func() tea.Msg {
+		msg := refresh()
+		if loaded, ok := msg.(libraryLoadedMsg); ok {
+			loaded.reconcile = true
+			return loaded
+		}
+		return msg
 	}
 }
 

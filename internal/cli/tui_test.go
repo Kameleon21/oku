@@ -798,16 +798,129 @@ func TestBackgroundReconcileClearsDirtyOnlyOnSuccess(t *testing.T) {
 		t.Fatal("reconciling should mark the in-flight reconcile")
 	}
 
-	updated, _ = started.Update(libraryLoadedMsg{err: errors.New("offline")})
+	updated, _ = started.Update(libraryLoadedMsg{reconcile: true, err: errors.New("offline")})
 	failed := updated.(dashboardModel)
 	if !failed.dirty {
 		t.Fatal("a failed reconcile must leave the library dirty")
 	}
+	if failed.reconciling {
+		t.Fatal("a failed reconcile should release the reconcile slot so it can retry")
+	}
 
-	updated, _ = started.Update(libraryLoadedMsg{})
+	updated, _ = started.Update(libraryLoadedMsg{reconcile: true})
 	succeeded := updated.(dashboardModel)
 	if succeeded.dirty {
 		t.Fatal("a successful reconcile should clear dirty")
+	}
+}
+
+func TestUnrelatedLibraryLoadDoesNotClearDirty(t *testing.T) {
+	m := newTestDashboard()
+	m.loaded = true
+	m.dirty = true
+	m.lastMutationAt = time.Now().Add(-2 * backgroundSyncWindow)
+
+	updated, _ := m.Update(backgroundCheckMsg{})
+	got := updated.(dashboardModel)
+	if !got.reconciling {
+		t.Fatal("the reconcile should be in flight")
+	}
+
+	// A status change lands while the reconcile is still running and triggers
+	// its own cache reload, whose result arrives first.
+	updated, _ = got.Update(opDoneMsg{op: opStatus, info: "Status changed", reload: true, markDirty: true})
+	got = updated.(dashboardModel)
+	updated, _ = got.Update(libraryLoadedMsg{})
+	got = updated.(dashboardModel)
+
+	if !got.dirty {
+		t.Fatal("an unrelated library load must not clear dirty")
+	}
+	if !got.reconciling {
+		t.Fatal("the reconcile is still in flight")
+	}
+
+	updated, _ = got.Update(libraryLoadedMsg{reconcile: true})
+	got = updated.(dashboardModel)
+	if got.dirty || got.reconciling {
+		t.Fatalf("the reconcile result should clear dirty: dirty=%v reconciling=%v", got.dirty, got.reconciling)
+	}
+}
+
+func TestPendingProgressResultDoesNotClosePageModal(t *testing.T) {
+	m := newTestDashboard()
+	m.loaded = true
+	m.section = sectionReading
+	m.readingBooks = []model.UserBook{{Book: model.Book{ID: 1, Title: "Dune"}}}
+	m.refreshListItems()
+
+	updated, _ := m.Update(runeKey('+')) // progress update in flight
+	got := updated.(dashboardModel)
+	updated, _ = got.Update(runeKey('u')) // user opens the page modal
+	got = updated.(dashboardModel)
+	if got.mode != modeUpdatePage {
+		t.Fatalf("mode = %v, want the page modal open", got.mode)
+	}
+
+	updated, _ = got.Update(opDoneMsg{op: opProgress, info: "Progress +10 → page 40", markDirty: true})
+	got = updated.(dashboardModel)
+
+	if got.mode != modeUpdatePage {
+		t.Fatal("a progress result started before the modal opened must not close it")
+	}
+	if got.pageSubmitting {
+		t.Fatal("the modal has not submitted anything yet")
+	}
+}
+
+func TestPageModalEnterIsGuardedWhileInFlight(t *testing.T) {
+	m := newTestDashboard()
+	m.loaded = true
+	m.section = sectionReading
+	m.readingBooks = []model.UserBook{{Book: model.Book{ID: 1, Title: "Dune"}}}
+	m.refreshListItems()
+
+	updated, _ := m.Update(runeKey('+'))
+	got := updated.(dashboardModel)
+	updated, _ = got.Update(runeKey('u'))
+	got = updated.(dashboardModel)
+	got.pageInput.SetValue("120")
+
+	updated, cmd := got.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(dashboardModel)
+
+	if cmd != nil {
+		t.Fatal("enter must not submit a page update while one is in flight")
+	}
+	if got.pageSubmitting {
+		t.Fatal("the refused submission must not mark the modal as submitting")
+	}
+	if got.mode != modeUpdatePage {
+		t.Fatal("the modal should stay open after a refused submission")
+	}
+	if got.infoMsg == "" {
+		t.Fatal("the refused submission should say why")
+	}
+}
+
+func TestPageModalClosesOnItsOwnResult(t *testing.T) {
+	m := newTestDashboard()
+	m.loaded = true
+	m.mode = modeUpdatePage
+	m.pendingBookID = 1
+	m.pageInput.SetValue("120")
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(dashboardModel)
+	if cmd == nil || !got.pageSubmitting {
+		t.Fatal("enter should submit the page update")
+	}
+
+	updated, _ = got.Update(opDoneMsg{op: opProgress, info: "Progress updated to page 120", markDirty: true})
+	got = updated.(dashboardModel)
+
+	if got.mode != modeLibrary || got.pageSubmitting {
+		t.Fatal("the modal's own result should close it")
 	}
 }
 
