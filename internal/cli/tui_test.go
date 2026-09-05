@@ -1188,3 +1188,69 @@ func TestLocalDataMergesStoredRecentSearches(t *testing.T) {
 		}
 	}
 }
+
+func TestTimerStartsAndStopsFromReadingList(t *testing.T) {
+	m := renderedDashboard(100, 40)
+	m.setSection(sectionReading)
+
+	updated, cmd := m.updateLibraryMode(runeKey('t'))
+	started := updated.(dashboardModel)
+	if cmd == nil {
+		t.Fatal("t in the Reading list should start a timer for the selection")
+	}
+	if !started.isLoading() {
+		t.Fatal("starting a timer should be counted as in flight")
+	}
+	if started.timerSelecting {
+		t.Fatal("the Reading list already has a selection: no picker")
+	}
+
+	// With a timer running, t stops it.
+	running := renderedDashboard(100, 40)
+	running.setSection(sectionReading)
+	running.timerState = &model.TimerState{BookID: 1, StartedAt: time.Now()}
+
+	updated, cmd = running.updateLibraryMode(runeKey('t'))
+	if cmd == nil {
+		t.Fatal("t should stop the running timer")
+	}
+	if updated.(dashboardModel).timerSelecting {
+		t.Fatal("stopping a timer must not open the picker")
+	}
+}
+
+func TestTimerKeyOutsideReadingExplainsItself(t *testing.T) {
+	m := renderedDashboard(100, 40)
+	m.setSection(sectionOku)
+
+	updated, cmd := m.updateLibraryMode(runeKey('t'))
+	got := updated.(dashboardModel)
+	if cmd != nil {
+		t.Fatal("t in the Oku list has no book to track, so it should do nothing")
+	}
+	if !strings.Contains(got.infoMsg, "Reading list") {
+		t.Fatalf("infoMsg = %q, want it to point at the Reading list", got.infoMsg)
+	}
+}
+
+func TestEnterDoesNotChangeStatus(t *testing.T) {
+	for _, section := range []focusSection{sectionReading, sectionOku} {
+		m := renderedDashboard(100, 40)
+		m.setSection(section)
+
+		updated, cmd := m.updateLibraryMode(tea.KeyMsg{Type: tea.KeyEnter})
+		got := updated.(dashboardModel)
+		if cmd != nil {
+			t.Fatalf("section %v: Enter returned a command, want no status change", section)
+		}
+		if got.isLoading() {
+			t.Fatalf("section %v: Enter started an operation", section)
+		}
+		if got.errMsg != "" {
+			t.Fatalf("section %v: errMsg = %q, want none", section, got.errMsg)
+		}
+		if got.infoMsg == "" {
+			t.Fatalf("section %v: Enter should name the book it brought into the detail pane", section)
+		}
+	}
+}

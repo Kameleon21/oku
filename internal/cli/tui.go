@@ -956,8 +956,31 @@ func (m dashboardModel) handleLibraryKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.changeSelectedLibraryStatus(model.StatusDidNotFinish)
 	case "x":
 		return m.changeSelectedLibraryStatus(model.StatusIgnored)
+	case "t":
+		return m.toggleTimerForSelection()
 	}
 	return m, nil
+}
+
+// toggleTimerForSelection starts a reading timer for the highlighted book, or
+// stops the one that is running. Only the Reading list holds books a timer can
+// track, so elsewhere it says where to press it.
+func (m dashboardModel) toggleTimerForSelection() (tea.Model, tea.Cmd) {
+	if m.timerState != nil {
+		return m.startOp(stopTimerCmd(m.app))
+	}
+	if m.section != sectionReading {
+		m.errMsg = ""
+		m.infoMsg = "Timers track a book you are reading — press t in the Reading list"
+		return m, nil
+	}
+	b := m.selectedLibraryBook()
+	if b == nil {
+		m.errMsg = "no book selected"
+		m.infoMsg = ""
+		return m, nil
+	}
+	return m.startOp(startTimerForBookCmd(m.app, b.Book.ID))
 }
 
 func (m dashboardModel) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1899,7 +1922,7 @@ func (m dashboardModel) renderHelpModal() string {
 			{"g/w/f/d", "Add result with status"},
 		}),
 		section("Timer", [][2]string{
-			{"t", "Choose book + start"},
+			{"t", "Start/stop for selected"},
 			{"s", "Stop timer"},
 			{"j/k + Enter", "Pick book in timer"},
 			{"Esc", "Cancel timer picker"},
@@ -1959,7 +1982,7 @@ func (m dashboardModel) contextHelpBar() string {
 func (m dashboardModel) helpBindings() []key.Binding {
 	switch m.section {
 	case sectionReading, sectionOku:
-		return []key.Binding{
+		bindings := []key.Binding{
 			helpKey("j/k", "navigate"),
 			helpKey("h/l", "section"),
 			helpKey("↵", "details"),
@@ -1967,12 +1990,21 @@ func (m dashboardModel) helpBindings() []key.Binding {
 			helpKey("u", "update"),
 			helpKey("v", "review/rate"),
 			helpKey("g/w/f/d", "status"),
+		}
+		if m.section == sectionReading || m.timerState != nil {
+			label := "start timer"
+			if m.timerState != nil {
+				label = "stop timer"
+			}
+			bindings = append(bindings, helpKey("t", label))
+		}
+		return append(bindings,
 			helpKey("/", "search"),
 			helpKey("z", "density"),
 			helpKey("r", "refresh"),
 			helpKey("s", "sync"),
 			helpKey("?", "help"),
-		}
+		)
 	case sectionSearch:
 		if m.searchSub == searchSubResults {
 			return []key.Binding{
