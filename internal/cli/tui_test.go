@@ -1323,3 +1323,85 @@ func TestHelpModalFitsTheTerminalAndScrolls(t *testing.T) {
 		}
 	}
 }
+
+func TestIgnoreAsksBeforeItChangesTheStatus(t *testing.T) {
+	m := renderedDashboard(100, 40)
+	m.setSection(sectionReading)
+
+	updated, cmd := m.Update(runeKey('x'))
+	asked := updated.(dashboardModel)
+	if cmd != nil {
+		t.Fatal("x should ask before it changes the status")
+	}
+	if !asked.confirm.Active {
+		t.Fatal("x should open the confirmation")
+	}
+	if !strings.Contains(asked.confirm.Message, "Dune") {
+		t.Fatalf("confirm message = %q, want it to name the book", asked.confirm.Message)
+	}
+	if !strings.Contains(asked.confirm.Message, model.StatusIgnored.Label()) {
+		t.Fatalf("confirm message = %q, want it to name the new status", asked.confirm.Message)
+	}
+
+	updated, cmd = asked.Update(runeKey('n'))
+	cancelled := updated.(dashboardModel)
+	if cmd != nil || cancelled.confirm.Active || cancelled.isLoading() {
+		t.Fatal("n should drop the change without running anything")
+	}
+
+	updated, cmd = asked.Update(runeKey('y'))
+	confirmed := updated.(dashboardModel)
+	if cmd == nil {
+		t.Fatal("y should run the status change")
+	}
+	if confirmed.confirm.Active {
+		t.Fatal("the confirmation should close once it is answered")
+	}
+	if !confirmed.isLoading() {
+		t.Fatal("the confirmed change should be counted as in flight")
+	}
+
+	// Esc is the same answer as n.
+	updated, cmd = asked.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd != nil || updated.(dashboardModel).confirm.Active {
+		t.Fatal("esc should drop the change")
+	}
+}
+
+func TestDidNotFinishAsksToo(t *testing.T) {
+	m := renderedDashboard(100, 40)
+	m.setSection(sectionReading)
+
+	updated, cmd := m.Update(runeKey('d'))
+	got := updated.(dashboardModel)
+	if cmd != nil || !got.confirm.Active {
+		t.Fatal("d should ask before closing the read")
+	}
+	if !strings.Contains(got.confirm.Message, model.StatusDidNotFinish.Label()) {
+		t.Fatalf("confirm message = %q, want it to name the new status", got.confirm.Message)
+	}
+}
+
+func TestConfirmationDoesNotSwallowAsyncResults(t *testing.T) {
+	m := renderedDashboard(100, 40)
+	m.setSection(sectionReading)
+
+	updated, _ := m.Update(runeKey('x'))
+	asked := updated.(dashboardModel)
+	asked.inflight = 1
+
+	updated, _ = asked.Update(libraryLoadedMsg{
+		reading: []model.UserBook{{Book: model.Book{ID: 9, Title: "Ubik"}}},
+	})
+	got := updated.(dashboardModel)
+
+	if !got.confirm.Active {
+		t.Fatal("an async result must not close the confirmation")
+	}
+	if len(got.readingBooks) != 1 || got.readingBooks[0].Book.Title != "Ubik" {
+		t.Fatalf("readingBooks = %#v, want the load applied behind the confirmation", got.readingBooks)
+	}
+	if got.isLoading() {
+		t.Fatal("the finished load should have released its slot")
+	}
+}

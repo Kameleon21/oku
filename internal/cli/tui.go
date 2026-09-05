@@ -340,6 +340,11 @@ type dashboardModel struct {
 	recentSearches     []string
 	density            outputDensity
 
+	// confirm guards the library keys that are hard to walk back from, and
+	// confirmCmd is the operation it is holding.
+	confirm    confirmState
+	confirmCmd tea.Cmd
+
 	showHelp bool
 	// helpViewport scrolls the help modal, whose body is taller than a short
 	// terminal.
@@ -502,6 +507,13 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Async results, ticks and resizes are handled once for every mode so
 		// an open modal never swallows them.
 		return m.updateCommon(msg)
+	}
+
+	// The confirmation takes the keys whatever is behind it. Async results
+	// still reach updateCommon above, so a reload landing mid-question is
+	// applied as usual.
+	if m.confirm.Active {
+		return m.updateConfirmMode(key)
 	}
 
 	switch m.mode {
@@ -980,9 +992,9 @@ func (m dashboardModel) handleLibraryKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "f":
 		return m.changeSelectedLibraryStatus(model.StatusRead)
 	case "d":
-		return m.changeSelectedLibraryStatus(model.StatusDidNotFinish)
+		return m.confirmStatusChange(model.StatusDidNotFinish)
 	case "x":
-		return m.changeSelectedLibraryStatus(model.StatusIgnored)
+		return m.confirmStatusChange(model.StatusIgnored)
 	case "t":
 		return m.toggleTimerForSelection()
 	}
@@ -1008,6 +1020,47 @@ func (m dashboardModel) toggleTimerForSelection() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m.startOp(startTimerForBookCmd(m.app, b.Book.ID))
+}
+
+// confirmStatusChange asks first. Ignoring a book takes it out of the library
+// and a DNF closes the read, and neither can be undone from the dashboard, so
+// they should not happen because a finger slipped one key.
+func (m dashboardModel) confirmStatusChange(status model.Status) (tea.Model, tea.Cmd) {
+	b := m.selectedLibraryBook()
+	if b == nil {
+		m.errMsg = "no book selected"
+		m.infoMsg = ""
+		return m, nil
+	}
+	m.confirm = newConfirmState(fmt.Sprintf("Mark '%s' as %s?", b.Book.Title, status.Label()))
+	m.confirmCmd = changeStatusCmd(m.ctx, m.app, b.Book.ID, status)
+	m.errMsg = ""
+	m.infoMsg = ""
+	return m, nil
+}
+
+// updateConfirmMode answers the confirmation: y (or Enter on Confirm) runs the
+// operation it is holding, n and Esc drop it.
+func (m dashboardModel) updateConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "ctrl+c" {
+		return m, tea.Quit
+	}
+
+	confirmed, handled := m.confirm.handleKey(msg.String())
+	if !handled || m.confirm.Active {
+		// An unknown key, or the cursor only moved between the buttons.
+		return m, nil
+	}
+
+	pending := m.confirmCmd
+	m.confirm = confirmState{}
+	m.confirmCmd = nil
+	if !confirmed {
+		m.infoMsg = "Cancelled"
+		m.errMsg = ""
+		return m, nil
+	}
+	return m.startOp(pending)
 }
 
 func (m dashboardModel) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1392,6 +1445,9 @@ func (m dashboardModel) frame() string {
 
 	if m.mode == modeReviewRating {
 		return m.overlayModal(m.reviewRatingOverlay())
+	}
+	if m.confirm.Active {
+		return m.overlayModal(renderConfirmModal(m.confirm, max(36, min(60, m.width-10))))
 	}
 	if m.showHelp {
 		return m.overlayModal(m.renderHelpModal())
@@ -2001,8 +2057,8 @@ func helpModalBody() string {
 			{"g", "Set status: reading"},
 			{"w", "Set status: want to read"},
 			{"f", "Set status: finished"},
-			{"d", "Set status: did not finish"},
-			{"x", "Remove from library"},
+			{"d", "Did not finish (asks)"},
+			{"x", "Ignore / remove (asks)"},
 			{"z", "Cycle density"},
 		}),
 		section("Data", [][2]string{
@@ -2021,6 +2077,11 @@ func helpModalBody() string {
 			{"s", "Stop timer"},
 			{"j/k + Enter", "Pick book in timer"},
 			{"Esc", "Cancel timer picker"},
+		}),
+		section("Confirmation", [][2]string{
+			{"y", "Yes, do it"},
+			{"n / Esc", "No, leave it alone"},
+			{"h/l + Enter", "Pick a button"},
 		}),
 		section("General", [][2]string{
 			{"?", "Toggle this help"},
@@ -2081,7 +2142,8 @@ func (m dashboardModel) helpBindings() []key.Binding {
 			helpKey("+/-", "page"),
 			helpKey("u", "update"),
 			helpKey("v", "review/rate"),
-			helpKey("g/w/f/d", "status"),
+			helpKey("g/w/f", "status"),
+			helpKey("d/x", "dnf/ignore"),
 		}
 		if m.section == sectionReading || m.timerState != nil {
 			label := "start timer"
