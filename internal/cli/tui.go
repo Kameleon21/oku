@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -9,12 +10,16 @@ import (
 
 	"github.com/Kameleon21/oku/internal/app"
 	"github.com/Kameleon21/oku/internal/model"
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/spf13/cobra"
 )
 
@@ -32,6 +37,37 @@ const (
 	backgroundSyncWindow = 10 * time.Minute
 	backgroundCheckEvery = 1 * time.Minute
 )
+
+// pagePromptRows is how many rows View spends on the page-update prompt it
+// draws under the layout: the book, where it stands, and the input.
+const pagePromptRows = 3
+
+// recentSearchesKey is the store state key the search history is kept under,
+// and maxRecentSearches caps how much of it is remembered.
+const (
+	recentSearchesKey = "recent_searches"
+	maxRecentSearches = 10
+)
+
+const (
+	helpModalWidth = 50
+	// helpModalChromeRows counts the modal rows that are not the scrollable
+	// body: the title, the blank line under it, the footer, the padding and
+	// the border.
+	helpModalChromeRows = 7
+	// helpModalMinBodyRows keeps the body scrollable on a very short terminal.
+	helpModalMinBodyRows = 3
+	// helpModalMarginRows keeps a row of dashboard above and below the modal,
+	// so it reads as something laid over the screen rather than as the screen.
+	helpModalMarginRows = 2
+)
+
+// minHelpBarWidth keeps the footer hints readable on a very narrow terminal.
+const minHelpBarWidth = 20
+
+// minStatusMessageWidth is the narrowest a status message may be cut to before
+// it is dropped instead: an ellipsis and a couple of letters say nothing.
+const minStatusMessageWidth = 8
 
 type focusSection int
 
@@ -215,6 +251,7 @@ type timerTickMsg time.Time
 type localDataLoadedMsg struct {
 	readingStats   *model.ReadingStats
 	recentSessions []model.ReadingSession
+	recentSearches []string
 	timerState     *model.TimerState
 	timerBook      *model.Book
 	err            error
@@ -264,12 +301,18 @@ type dashboardModel struct {
 	reviewRatingInput textinput.Model
 	reviewTextInput   textarea.Model
 	spin              spinner.Model
+	help              help.Model
 
 	readingBooks []model.UserBook
 	okuBooks     []model.UserBook
 	searchBooks  []model.SearchResult
 
 	pendingBookID int
+	// The page prompt shows which book it is about and where that book
+	// stands, so the input can keep the format hint as its placeholder.
+	pageBookTitle   string
+	pageCurrentPage int
+	pageTotalPages  int
 	// pageSubmitting marks that the page modal is waiting for its own update,
 	// so a progress result started before it opened cannot close it.
 	pageSubmitting   bool
@@ -300,7 +343,15 @@ type dashboardModel struct {
 	recentSearches     []string
 	density            outputDensity
 
+	// confirm guards the library keys that are hard to walk back from, and
+	// confirmCmd is the operation it is holding.
+	confirm    confirmState
+	confirmCmd tea.Cmd
+
 	showHelp bool
+	// helpViewport scrolls the help modal, whose body is taller than a short
+	// terminal.
+	helpViewport viewport.Model
 
 	// Local data for stats/timer sections.
 	timerState     *model.TimerState
@@ -353,24 +404,26 @@ func newDashboardModel(ctx context.Context, a *app.App) dashboardModel {
 		Foreground(colorDarkGray).
 		Padding(0, 0, 0, 2)
 
-	newList := func(title string) list.Model {
+	// The section card already prints the name and the count, and the panels
+	// are only a handful of rows tall, so a list spends none of them on its
+	// own title bar or on pagination dots. Filtering stays enabled (SetItems
+	// reapplies an active filter) but its title-bar row is not drawn.
+	newList := func() list.Model {
 		l := list.New(nil, delegate, 40, 12)
-		l.Title = title
+		l.SetShowTitle(false)
+		l.SetShowFilter(false)
 		l.SetShowStatusBar(false)
+		l.SetShowPagination(false)
 		l.SetFilteringEnabled(true)
 		l.SetShowHelp(false)
 		l.DisableQuitKeybindings()
-
-		styles := list.DefaultStyles()
-		styles.Title = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(colorCream).
-			Background(colorCharcoal).
-			Padding(0, 1)
-		styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 1, 0)
-		l.Styles = styles
 		return l
 	}
+
+	searchL := newList()
+	// The search results panel has no card label, so it prints this title as
+	// its own one-line header.
+	searchL.Title = model.SearchModeBook.Label() + " Results"
 
 	searchIn := textinput.New()
 	searchIn.Placeholder = "Search books..."
@@ -378,8 +431,9 @@ func newDashboardModel(ctx context.Context, a *app.App) dashboardModel {
 	searchIn.Prompt = "/ "
 	searchIn.PromptStyle = lipgloss.NewStyle().Foreground(colorGold).Bold(true)
 	searchIn.TextStyle = lipgloss.NewStyle().Foreground(colorLightGray)
+	// Suggestions are the user's own search history, loaded with the rest of
+	// the local data; there are none until they have searched for something.
 	searchIn.ShowSuggestions = true
-	searchIn.SetSuggestions(defaultSearchSuggestions(model.SearchModeBook))
 
 	pageIn := textinput.New()
 	pageIn.Placeholder = "370 or +10 or -5"
@@ -388,22 +442,41 @@ func newDashboardModel(ctx context.Context, a *app.App) dashboardModel {
 	pageIn.PromptStyle = lipgloss.NewStyle().Foreground(colorGold).Bold(true)
 	pageIn.TextStyle = lipgloss.NewStyle().Foreground(colorLightGray)
 
+	// The review fields sit inside a modal, so they carry its background: a
+	// style that only sets a foreground would leave the field on the
+	// terminal's own colour.
 	reviewRatingIn := textinput.New()
 	reviewRatingIn.Placeholder = "4.5"
 	reviewRatingIn.CharLimit = 4
 	reviewRatingIn.Prompt = "Rating: "
-	reviewRatingIn.PromptStyle = lipgloss.NewStyle().Foreground(colorGold).Bold(true)
-	reviewRatingIn.TextStyle = lipgloss.NewStyle().Foreground(colorLightGray)
+	reviewRatingIn.PromptStyle = modalKeyStyle
+	reviewRatingIn.TextStyle = modalValueStyle
+	reviewRatingIn.PlaceholderStyle = modalDimStyle
 
 	reviewTextIn := textarea.New()
 	reviewTextIn.Placeholder = "Write your review..."
 	reviewTextIn.SetWidth(60)
 	reviewTextIn.SetHeight(8)
 	reviewTextIn.ShowLineNumbers = false
+	for _, st := range []*textarea.Style{&reviewTextIn.FocusedStyle, &reviewTextIn.BlurredStyle} {
+		st.Base = modalBgStyle
+		st.Text = modalValueStyle
+		st.Placeholder = modalDimStyle
+		st.Prompt = modalKeyStyle
+		st.CursorLine = modalBgStyle
+		st.EndOfBuffer = modalBgStyle
+	}
 
 	s := spinner.New()
 	s.Spinner = spinner.MiniDot
 	s.Style = lipgloss.NewStyle().Foreground(colorGold)
+
+	hlp := help.New()
+	hlp.ShortSeparator = " · "
+	hlp.Styles.ShortKey = keyStyle
+	hlp.Styles.ShortDesc = descStyle
+	hlp.Styles.ShortSeparator = dimStyleTUI
+	hlp.Styles.Ellipsis = dimStyleTUI
 
 	return dashboardModel{
 		app:               a,
@@ -414,14 +487,15 @@ func newDashboardModel(ctx context.Context, a *app.App) dashboardModel {
 		searchSub:         searchSubInput,
 		searchQueryMode:   model.SearchModeBook,
 		density:           currentOutputDensity(),
-		readingList:       newList("Reading"),
-		okuList:           newList("Oku"),
-		searchList:        newList("Search Results"),
+		readingList:       newList(),
+		okuList:           newList(),
+		searchList:        searchL,
 		searchInput:       searchIn,
 		pageInput:         pageIn,
 		reviewRatingInput: reviewRatingIn,
 		reviewTextInput:   reviewTextIn,
 		spin:              s,
+		help:              hlp,
 		// Init starts the cached-library and local-data loads, so two
 		// commands are already in flight.
 		inflight: 2,
@@ -448,6 +522,13 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Async results, ticks and resizes are handled once for every mode so
 		// an open modal never swallows them.
 		return m.updateCommon(msg)
+	}
+
+	// The confirmation takes the keys whatever is behind it. Async results
+	// still reach updateCommon above, so a reload landing mid-question is
+	// applied as usual.
+	if m.confirm.Active {
+		return m.updateConfirmMode(key)
 	}
 
 	switch m.mode {
@@ -507,6 +588,8 @@ func (m dashboardModel) updateCommon(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.weeklyStats = msg.readingStats.Weekly
 		}
 		m.recentSessions = msg.recentSessions
+		m.mergeRecentSearches(msg.recentSearches)
+		m.updateSearchSuggestions()
 		m.timerState = msg.timerState
 		m.timerBook = msg.timerBook
 		cmd := m.startTimerTick()
@@ -613,7 +696,9 @@ func (m dashboardModel) applySearchLoaded(msg searchLoadedMsg) (tea.Model, tea.C
 
 	m.searchLoadingQuery = ""
 	if msg.err != nil {
-		m.searchList.Title = fmt.Sprintf("%s Results", msg.mode.Label())
+		// The previous results are still on screen, so the header keeps
+		// naming them - including how many there are.
+		m.refreshSearchTitle()
 		m.errMsg = msg.err.Error()
 		m.infoMsg = ""
 		return m, nil
@@ -625,7 +710,7 @@ func (m dashboardModel) applySearchLoaded(msg searchLoadedMsg) (tea.Model, tea.C
 	m.lastSearchMode = msg.mode
 	m.searchBooks = msg.results
 	cmd := m.refreshSearchResultItems()
-	m.searchList.Title = fmt.Sprintf("%s Results (%d)", label, len(msg.results))
+	m.refreshSearchTitle()
 	if len(msg.results) > 0 && m.section == sectionSearch {
 		// Only take focus if the user is still in the search section.
 		m.searchSub = searchSubResults
@@ -637,9 +722,9 @@ func (m dashboardModel) applySearchLoaded(msg searchLoadedMsg) (tea.Model, tea.C
 	} else {
 		m.infoMsg = fmt.Sprintf("%s mode: loaded %d results", strings.ToLower(label), len(msg.results))
 	}
-	m.addRecentSearchQuery(msg.query)
+	saveCmd := m.addRecentSearchQuery(msg.query)
 	m.updateSearchSuggestions()
-	return m, cmd
+	return m, tea.Batch(cmd, saveCmd)
 }
 
 // applyOpDone applies the result of a mutating operation. Results other than
@@ -756,6 +841,18 @@ func (m dashboardModel) updateLibraryMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.showHelp = false
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "j", "down":
+			m.helpViewport.LineDown(1)
+		case "k", "up":
+			m.helpViewport.LineUp(1)
+		case "ctrl+d", "pgdown":
+			m.helpViewport.HalfViewDown()
+		case "ctrl+u", "pgup":
+			m.helpViewport.HalfViewUp()
+		case "g", "home":
+			m.helpViewport.GotoTop()
+		case "G", "end":
+			m.helpViewport.GotoBottom()
 		}
 		return m, nil
 	}
@@ -782,7 +879,7 @@ func (m dashboardModel) handleGenericKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		return m, tea.Quit
 	case "?":
-		m.showHelp = true
+		m.openHelp()
 		return m, nil
 	case "j", "down", "l", "right", "tab":
 		m.nextSection()
@@ -838,7 +935,7 @@ func (m dashboardModel) handleLibraryKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		return m, tea.Quit
 	case "?":
-		m.showHelp = true
+		m.openHelp()
 		return m, nil
 	case "l", "right", "tab":
 		m.nextSection()
@@ -879,21 +976,25 @@ func (m dashboardModel) handleLibraryKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		cmd := m.cycleDensity()
 		return m, cmd
 	case "enter":
-		if m.section == sectionOku {
-			return m.changeSelectedLibraryStatus(model.StatusCurrentlyReading)
+		// Enter used to move the book to another shelf, so a stray keypress
+		// silently rewrote the library. It now only brings the selection into
+		// the detail pane; g/w/f/d still change the status.
+		b := m.selectedLibraryBook()
+		if b == nil {
+			m.errMsg = "no book selected"
+			m.infoMsg = ""
+			return m, nil
 		}
-		return m.changeSelectedLibraryStatus(model.StatusWantToRead)
+		m.errMsg = ""
+		m.infoMsg = b.Book.Title
+		return m, nil
 	case "+", "=":
 		return m.quickProgress(+10)
 	case "-":
 		return m.quickProgress(-10)
 	case "u":
 		if b := m.selectedLibraryBook(); b != nil {
-			m.mode = modeUpdatePage
-			m.pendingBookID = b.Book.ID
-			m.pageInput.SetValue("")
-			m.pageInput.Placeholder = fmt.Sprintf("Update %s", b.Book.Title)
-			m.pageInput.Focus()
+			m.openPageModal(*b)
 			return m, nil
 		}
 	case "v":
@@ -908,11 +1009,81 @@ func (m dashboardModel) handleLibraryKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "f":
 		return m.changeSelectedLibraryStatus(model.StatusRead)
 	case "d":
-		return m.changeSelectedLibraryStatus(model.StatusDidNotFinish)
+		return m.confirmStatusChange(model.StatusDidNotFinish)
 	case "x":
-		return m.changeSelectedLibraryStatus(model.StatusIgnored)
+		return m.confirmStatusChange(model.StatusIgnored)
+	case "t":
+		return m.toggleTimerForSelection()
 	}
 	return m, nil
+}
+
+// toggleTimerForSelection starts a reading timer for the highlighted book, or
+// stops the one that is running. Only the Reading list holds books a timer can
+// track, so elsewhere it says where to press it.
+func (m dashboardModel) toggleTimerForSelection() (tea.Model, tea.Cmd) {
+	if m.isLoading() {
+		// timerState only catches up when the load lands, so two quick presses
+		// would otherwise start two sessions.
+		m.infoMsg = "Please wait — an update is still in flight"
+		return m, nil
+	}
+	if m.timerState != nil {
+		return m.startOp(stopTimerCmd(m.app))
+	}
+	if m.section != sectionReading {
+		m.errMsg = ""
+		m.infoMsg = "Timers track a book you are reading — press t in the Reading list"
+		return m, nil
+	}
+	b := m.selectedLibraryBook()
+	if b == nil {
+		m.errMsg = "no book selected"
+		m.infoMsg = ""
+		return m, nil
+	}
+	return m.startOp(startTimerForBookCmd(m.app, b.Book.ID))
+}
+
+// confirmStatusChange asks first. Ignoring a book takes it out of the library
+// and a DNF closes the read, and neither can be undone from the dashboard, so
+// they should not happen because a finger slipped one key.
+func (m dashboardModel) confirmStatusChange(status model.Status) (tea.Model, tea.Cmd) {
+	b := m.selectedLibraryBook()
+	if b == nil {
+		m.errMsg = "no book selected"
+		m.infoMsg = ""
+		return m, nil
+	}
+	m.confirm = newConfirmState(fmt.Sprintf("Mark '%s' as %s?", b.Book.Title, status.Label()))
+	m.confirmCmd = changeStatusCmd(m.ctx, m.app, b.Book.ID, status)
+	m.errMsg = ""
+	m.infoMsg = ""
+	return m, nil
+}
+
+// updateConfirmMode answers the confirmation: y (or Enter on Confirm) runs the
+// operation it is holding, n and Esc drop it.
+func (m dashboardModel) updateConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "ctrl+c" {
+		return m, tea.Quit
+	}
+
+	confirmed, handled := m.confirm.handleKey(msg.String())
+	if !handled || m.confirm.Active {
+		// An unknown key, or the cursor only moved between the buttons.
+		return m, nil
+	}
+
+	pending := m.confirmCmd
+	m.confirm = confirmState{}
+	m.confirmCmd = nil
+	if !confirmed {
+		m.infoMsg = "Cancelled"
+		m.errMsg = ""
+		return m, nil
+	}
+	return m.startOp(pending)
 }
 
 func (m dashboardModel) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -922,7 +1093,7 @@ func (m dashboardModel) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case "ctrl+c":
 				return m, tea.Quit
 			case "?":
-				m.showHelp = true
+				m.openHelp()
 				return m, nil
 			case "i":
 				m.enterSearchInsertMode()
@@ -994,7 +1165,7 @@ func (m dashboardModel) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m, tea.Quit
 	case "?":
-		m.showHelp = true
+		m.openHelp()
 		return m, nil
 	case "esc", "h", "left":
 		m.searchSub = searchSubInput
@@ -1034,7 +1205,7 @@ func (m dashboardModel) handleTimerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "?":
-			m.showHelp = true
+			m.openHelp()
 			return m, nil
 		case "esc":
 			m.timerSelecting = false
@@ -1072,7 +1243,7 @@ func (m dashboardModel) handleTimerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		return m, tea.Quit
 	case "?":
-		m.showHelp = true
+		m.openHelp()
 		return m, nil
 	case "j", "down", "l", "right", "tab":
 		m.nextSection()
@@ -1088,6 +1259,10 @@ func (m dashboardModel) handleTimerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.updateSearchSuggestions()
 		return m, nil
 	case "t":
+		if m.timerState != nil {
+			// Same key, same meaning as in the library: t toggles.
+			return m.startOp(stopTimerCmd(m.app))
+		}
 		if m.timerState == nil {
 			if len(m.readingBooks) == 0 {
 				m.errMsg = "no currently reading books available"
@@ -1146,11 +1321,47 @@ func (m dashboardModel) updatePageMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// openPageModal opens the page prompt for a book. The input starts empty, so
+// an accidental Enter cannot rewrite the progress, and keeps its format hint
+// as the placeholder: the title and the current page get lines of their own.
+func (m *dashboardModel) openPageModal(b model.UserBook) {
+	m.mode = modeUpdatePage
+	m.pendingBookID = b.Book.ID
+	m.pageBookTitle = b.Book.Title
+	m.pageCurrentPage = b.CurrentPage
+	if len(b.UserBookReads) > 0 {
+		m.pageCurrentPage = b.UserBookReads[0].ProgressPages
+	}
+	m.pageTotalPages = b.Book.Pages
+	m.pageInput.SetValue("")
+	m.pageInput.Focus()
+	// The prompt is taller than the help bar it replaces.
+	m.resize()
+}
+
 func (m *dashboardModel) closePageModal() {
 	m.mode = modeLibrary
 	m.pageSubmitting = false
+	m.pageBookTitle = ""
+	m.pageCurrentPage = 0
+	m.pageTotalPages = 0
 	m.pageInput.Blur()
 	m.pageInput.SetValue("")
+	m.resize()
+}
+
+// pagePrompt renders the page-update prompt under the layout. It is always
+// pagePromptRows tall, which is what the layout height is computed against.
+func (m dashboardModel) pagePrompt() string {
+	current := fmt.Sprintf("current: page %d", m.pageCurrentPage)
+	if m.pageTotalPages > 0 {
+		current = fmt.Sprintf("current: %d/%d", m.pageCurrentPage, m.pageTotalPages)
+	}
+	return "\n" + strings.Join([]string{
+		" " + keyStyle.Render("Update page") + "  " + valueStyle.Render(m.pageBookTitle),
+		" " + dimStyleTUI.Render(current),
+		" " + m.pageInput.View() + dimStyleTUI.Render("   Enter save · Esc cancel"),
+	}, "\n")
 }
 
 // quickProgress applies a relative page update. UpdateProgress is
@@ -1237,39 +1448,24 @@ func (m dashboardModel) updateReviewRatingMode(msg tea.KeyMsg) (tea.Model, tea.C
 // ── View ───────────────────────────────────────────────────────────────────
 
 func (m dashboardModel) View() string {
+	return m.fitToScreen(m.frame())
+}
+
+// frame renders the dashboard at its natural size. View clamps it to the
+// terminal; keeping the two apart lets a test assert that the layout really
+// fills the screen instead of being padded into it.
+func (m dashboardModel) frame() string {
 	if !m.loaded {
 		return "\n  " + m.spin.View() + " Loading dashboard..."
 	}
 
-	// Status bar.
-	left := titleBarStyle.Render(" oku")
-	if m.isLoading() {
-
-		left += " " + m.spin.View()
-	}
-
-	rightContent := ""
-	if m.errMsg != "" {
-		rightContent = errorStyleTUI.Render(m.errMsg)
-	} else if m.infoMsg != "" {
-		rightContent = infoStyleTUI.Render(m.infoMsg)
-	}
-
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(rightContent) - 4
-	if gap < 1 {
-		gap = 1
-	}
-	statusBar := statusBarStyle.Width(max(60, m.width)).Render(
-		left + strings.Repeat(" ", gap) + rightContent,
-	)
+	statusBar := m.statusBar()
 
 	// Body.
 	var body string
 	switch m.mode {
 	case modeUpdatePage:
-		pagePrompt := "\n " + keyStyle.Render("Page update") + " " + m.pageInput.View() +
-			dimStyleTUI.Render("  (Enter submit, Esc cancel)")
-		body = statusBar + "\n" + m.renderLayout() + pagePrompt
+		body = statusBar + "\n" + m.renderLayout() + m.pagePrompt()
 	default:
 		body = statusBar + "\n" + m.renderLayout() + "\n" + m.contextHelpBar()
 	}
@@ -1277,10 +1473,76 @@ func (m dashboardModel) View() string {
 	if m.mode == modeReviewRating {
 		return m.overlayModal(m.reviewRatingOverlay())
 	}
+	if m.confirm.Active {
+		return m.overlayModal(renderConfirmModal(m.confirm, max(36, min(60, m.width-10))))
+	}
 	if m.showHelp {
 		return m.overlayModal(m.renderHelpModal())
 	}
 	return body
+}
+
+// statusBar renders the top bar: the app name and spinner on the left, the
+// latest message on the right, over an unbroken background.
+func (m dashboardModel) statusBar() string {
+	width := max(20, m.width)
+	inner := max(1, width-statusBarStyle.GetHorizontalPadding())
+
+	left := statusBarTitleStyle.Render("oku")
+	if m.isLoading() {
+		left += statusBarAccentStyle.Render(" " + m.spin.View())
+	}
+
+	msg, msgStyle := m.errMsg, statusBarErrorStyle
+	if msg == "" {
+		msg, msgStyle = m.infoMsg, statusBarInfoStyle
+	}
+	// An API error can carry newlines and runs of whitespace. Left alone they
+	// would wrap the bar onto rows the layout has not accounted for, and the
+	// help bar would be the thing clipped off the bottom of the screen.
+	msg = strings.Join(strings.Fields(msg), " ")
+
+	right := ""
+	// A message wider than the bar would wrap it onto a second line and push
+	// the layout down a row, so it is cut to the room that is left.
+	if avail := inner - lipgloss.Width(left) - 2; msg != "" && avail >= minStatusMessageWidth {
+		right = msgStyle.Render(ansi.Truncate(msg, avail, "…"))
+	}
+
+	gap := max(1, inner-lipgloss.Width(left)-lipgloss.Width(right))
+	return statusBarStyle.Width(width).Render(
+		left + statusBarFillStyle.Render(strings.Repeat(" ", gap)) + right,
+	)
+}
+
+// fitToScreen pads the frame to the terminal and clamps it to those bounds, so
+// an unusually long book title or error can never push the layout off-screen
+// or wrap it onto a row that does not exist.
+func (m dashboardModel) fitToScreen(frame string) string {
+	if m.width <= 0 || m.height <= 0 {
+		return frame
+	}
+	return lipgloss.NewStyle().
+		MaxWidth(m.width).
+		Height(m.height).
+		MaxHeight(m.height).
+		Render(frame)
+}
+
+// chromeRows counts the rows View draws outside the two-column layout: the
+// status bar, plus whatever footer the current mode prints under it.
+func (m dashboardModel) chromeRows() int {
+	if m.mode == modeUpdatePage {
+		return 1 + pagePromptRows
+	}
+	return 1 + 1 // status bar + help bar
+}
+
+// layoutHeight is the height of the two-column layout, borders included. It
+// takes every row the chrome does not, so the panels reach the bottom of the
+// terminal instead of leaving it blank.
+func (m dashboardModel) layoutHeight() int {
+	return max(8, m.height-m.chromeRows())
 }
 
 // rightPanelContentWidth mirrors renderLayout's width math for the right
@@ -1295,29 +1557,38 @@ func (m dashboardModel) rightPanelContentWidth() int {
 // rightPanelContentHeight mirrors renderLayout's height math for the right
 // panel's content area.
 func (m dashboardModel) rightPanelContentHeight() int {
-	totalH := max(8, m.height-6)
-	return max(1, totalH-2)
+	return max(1, m.layoutHeight()-2)
 }
 
 // renderLayout renders the 2-column layout: left sections + right context panel.
 func (m dashboardModel) renderLayout() string {
 	totalW := max(60, m.width-2)
-	totalH := max(8, m.height-6)
-	panelInnerH := max(1, totalH-2)
+	panelInnerH := m.rightPanelContentHeight()
 	leftW := max(28, totalW*2/5)
 
-	leftContent := m.renderSections(leftW-2, panelInnerH)
+	leftContent := clampPanelContent(m.renderSections(leftW-2, panelInnerH), leftW, panelInnerH)
 	leftPanel := panelFocusedStyle.Width(leftW).Height(panelInnerH).Render(leftContent)
 
 	// Right panel: context-sensitive.
 	rightW := max(28, m.width-lipgloss.Width(leftPanel)-2)
-	rightContent := m.rightPanelView(rightW - 4)
+	rightContent := clampPanelContent(m.rightPanelView(rightW-4), rightW, panelInnerH)
 	rightPanel := panelStyle.
 		Width(rightW).
 		Height(panelInnerH).
 		Render(rightContent)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
+}
+
+// clampPanelContent pins a panel's content to its box: over-long lines are cut
+// instead of wrapped, and content past the last row is dropped, so one long
+// title can never stretch the layout past the bottom of the terminal.
+func clampPanelContent(content string, w, h int) string {
+	return lipgloss.NewStyle().
+		MaxWidth(w).
+		Height(h).
+		MaxHeight(h).
+		Render(content)
 }
 
 // renderSections renders the left panel content: section labels + expanded section.
@@ -1330,6 +1601,10 @@ func (m dashboardModel) renderSections(w, h int) string {
 	heights := m.leftSectionHeights(h)
 	parts := make([]string, 0, len(defs))
 	for _, def := range defs {
+		// A zero-height card still costs a row once joined, so drop it.
+		if heights[def.id] <= 0 {
+			continue
+		}
 		parts = append(parts, m.renderSectionCard(def, w, heights[def.id], def.id == m.section))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
@@ -1359,8 +1634,10 @@ func (m dashboardModel) leftSectionHeights(totalH int) map[focusSection]int {
 		sectionStats:  2,
 		sectionTimer:  2,
 	}
+	// Intro gives up its box first: it is the one card whose whole content is
+	// its label, so it is the one that loses nothing by being drawn bare.
 	reduceOrder := []focusSection{
-		sectionStats, sectionTimer, sectionIntro, sectionSearch,
+		sectionIntro, sectionStats, sectionTimer, sectionSearch,
 	}
 
 	fixedSum := heights[sectionIntro] + heights[sectionSearch] + heights[sectionStats] + heights[sectionTimer]
@@ -1452,22 +1729,20 @@ func (m dashboardModel) leftSectionHeights(totalH int) map[focusSection]int {
 }
 
 func (m dashboardModel) renderSectionCard(def sectionDef, w, h int, focused bool) string {
-	label := m.formatSectionLabel(def.id, def.label, def.count, focused)
 	if h <= 0 {
 		return ""
 	}
+	label := m.formatSectionLabel(def.id, def.label, def.count, focused)
 	if h < 3 {
-		return lipgloss.NewStyle().Width(w).Render(label)
+		// Too short to draw a border around: just the label.
+		return clampPanelContent(label, w, h)
 	}
 	innerH := h - 2
 
 	content := label
 	if def.id == sectionReading || def.id == sectionOku || def.id == sectionSearch {
-		contentH := innerH - 1 // label + remaining content area
-		if contentH < 0 {
-			contentH = 0
-		}
-		if contentH > 0 {
+		// innerH > 1 leaves at least one row under the label.
+		if innerH > 1 {
 			if body := m.sectionContent(def.id, max(8, w-4)); body != "" {
 				content += "\n" + body
 			}
@@ -1478,7 +1753,56 @@ func (m dashboardModel) renderSectionCard(def sectionDef, w, h int, focused bool
 	if focused {
 		style = panelFocusedStyle
 	}
-	return style.Width(w).Height(innerH).Render(content)
+	// A list whose items are taller than the rows it was given renders past
+	// them; clip so the overflow cannot push the cards below this one off the
+	// panel.
+	clipped := clampPanelContent(content, w, innerH)
+	clipped = stampOverflowBadge(clipped, m.listOverflowBadge(def.id), w)
+	return style.Width(w).Height(innerH).Render(clipped)
+}
+
+// listOverflowBadge reports where the cursor sits in a list that shows fewer
+// books than it holds. Hiding the pagination dots took away the only sign that
+// there was anything below the last visible row.
+func (m dashboardModel) listOverflowBadge(id focusSection) string {
+	var l list.Model
+	switch id {
+	case sectionReading:
+		l = m.readingList
+	case sectionOku:
+		l = m.okuList
+	default:
+		return ""
+	}
+
+	total := len(l.VisibleItems())
+	if total == 0 || l.Paginator.PerPage >= total {
+		return ""
+	}
+	return fmt.Sprintf("%d/%d", l.Index()+1, total)
+}
+
+// stampOverflowBadge right-aligns the badge on the card's last row, in the
+// space the pagination dots used to take. The row is overwritten rather than
+// appended to: a list pads its rows out to the full card width, so there is
+// never anything left to append to.
+func stampOverflowBadge(content, badge string, w int) string {
+	if badge == "" {
+		return content
+	}
+	badgeW := lipgloss.Width(badge)
+	if w <= badgeW+2 {
+		return content
+	}
+
+	lines := strings.Split(content, "\n")
+	last := len(lines) - 1
+	head := ansi.Truncate(lines[last], w-badgeW-1, "")
+	if pad := w - badgeW - 1 - lipgloss.Width(head); pad > 0 {
+		head += strings.Repeat(" ", pad)
+	}
+	lines[last] = head + dimStyleTUI.Render(badge)
+	return strings.Join(lines, "\n")
 }
 
 func (m dashboardModel) formatSectionLabel(id focusSection, label string, count int, focused bool) string {
@@ -1531,7 +1855,7 @@ func (m dashboardModel) rightPanelView(w int) string {
 	case sectionIntro:
 		return m.introView(w)
 	case sectionReading, sectionOku:
-		return m.detailsView()
+		return m.detailsView(w)
 	case sectionSearch:
 		return m.searchPanelView()
 	case sectionStats:
@@ -1544,7 +1868,7 @@ func (m dashboardModel) rightPanelView(w int) string {
 	}
 }
 
-func (m dashboardModel) detailsView() string {
+func (m dashboardModel) detailsView(w int) string {
 	b := m.selectedLibraryBook()
 	if b == nil {
 		return dimStyleTUI.Render("  No book selected")
@@ -1572,7 +1896,10 @@ func (m dashboardModel) detailsView() string {
 	}
 	progressText := b.Progress()
 	if b.Book.Pages > 0 {
-		progressText += "  " + progressBar(page, b.Book.Pages, 20)
+		// The field is 13 columns of label, then the text, two spaces, the bar
+		// and " 100%". Size the bar to what is left so the row is never cut.
+		barW := clampInt(w-20-lipgloss.Width(progressText), 8, 20)
+		progressText += "  " + progressBar(page, b.Book.Pages, barW)
 	}
 	writeField("Progress", progressText)
 
@@ -1657,7 +1984,7 @@ func (m dashboardModel) searchPanelView() string {
 		return dimStyleTUI.Render(fmt.Sprintf("  No results for %q", m.lastQuery))
 	}
 
-	return m.searchList.View()
+	return listHeaderStyle.Render(m.searchList.Title) + "\n" + m.searchList.View()
 }
 
 func (m *dashboardModel) openReviewRatingModal(book model.UserBook) {
@@ -1702,7 +2029,7 @@ func (m *dashboardModel) focusReviewTextField() {
 
 func (m dashboardModel) reviewRatingOverlay() string {
 	if m.reviewBook == nil {
-		return renderModalPanel("Review / Rate Book", "No book selected", 48)
+		return renderModalPanel("Review / Rate Book", modalDimStyle.Render("No book selected"), 48)
 	}
 
 	rating, err := parseReviewRatingInput(m.reviewRatingInput.Value())
@@ -1714,31 +2041,31 @@ func (m dashboardModel) reviewRatingOverlay() string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(valueStyle.Render(m.reviewBook.Book.Title))
+	sb.WriteString(modalValueStyle.Render(m.reviewBook.Book.Title))
 	sb.WriteString("\n")
-	sb.WriteString(dimStyleTUI.Render(fallback(m.reviewBook.Book.AuthorString(), "Unknown author")))
+	sb.WriteString(modalDimStyle.Render(fallback(m.reviewBook.Book.AuthorString(), "Unknown author")))
 	sb.WriteString("\n\n")
 	sb.WriteString(m.reviewRatingInput.View())
-	sb.WriteString("  ")
-	sb.WriteString(keyStyle.Render(stars))
-	sb.WriteString(" ")
-	sb.WriteString(dimStyleTUI.Render("(" + ratingLabel + ")"))
+	sb.WriteString(modalBgStyle.Render("  "))
+	sb.WriteString(modalKeyStyle.Render(stars))
+	sb.WriteString(modalBgStyle.Render(" "))
+	sb.WriteString(modalDimStyle.Render("(" + ratingLabel + ")"))
 	sb.WriteString("\n\n")
-	sb.WriteString(labelStyle.Render("Review"))
+	sb.WriteString(modalLabelStyle.Render("Review"))
 	sb.WriteString("\n")
 	sb.WriteString(m.reviewTextInput.View())
 	sb.WriteString("\n\n")
 	switch {
 	case m.reviewSubmitting:
-		sb.WriteString(dimStyleTUI.Render("Saving..."))
+		sb.WriteString(modalDimStyle.Render("Saving..."))
 		sb.WriteString("\n")
 	case m.reviewErr != "":
 		// The status bar sits behind the modal, so surface the failure here.
-		sb.WriteString(errorStyleTUI.Render(m.reviewErr))
+		sb.WriteString(modalErrorStyle.Render(m.reviewErr))
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString(dimStyleTUI.Render("Tab/Shift+Tab switch fields   Ctrl+S save   Esc cancel"))
+	sb.WriteString(modalDimStyle.Render("Tab/Shift+Tab switch fields   Ctrl+S save   Esc cancel"))
 
 	width := max(70, m.width-10)
 	if width > 100 {
@@ -1749,19 +2076,76 @@ func (m dashboardModel) reviewRatingOverlay() string {
 
 // ── Help ───────────────────────────────────────────────────────────────────
 
+// openHelp shows the help modal, scrolled back to the top.
+func (m *dashboardModel) openHelp() {
+	m.showHelp = true
+	m.syncHelpViewport()
+	m.helpViewport.GotoTop()
+}
+
+// syncHelpViewport fits the help body to the terminal. The body is taller than
+// a 40-row window, so it scrolls rather than spilling off the screen.
+func (m *dashboardModel) syncHelpViewport() {
+	body := helpModalBody()
+	h := lipgloss.Height(body)
+	if m.height > 0 {
+		h = min(h, max(helpModalMinBodyRows, m.height-helpModalChromeRows-helpModalMarginRows))
+	}
+
+	offset := m.helpViewport.YOffset
+	m.helpViewport = viewport.New(helpModalWidth-helpModalStyle.GetHorizontalPadding(), h)
+	m.helpViewport.SetContent(body)
+	m.helpViewport.SetYOffset(offset)
+}
+
 func (m dashboardModel) renderHelpModal() string {
+	footer := "? or esc close"
+	if m.helpViewport.TotalLineCount() > m.helpViewport.Height {
+		footer = "j/k scroll · ? or esc close"
+	}
+	return renderModalPanel(
+		"Help",
+		m.helpModalRows()+"\n"+modalDimStyle.Render(footer),
+		helpModalWidth,
+	)
+}
+
+// helpModalRows returns the rows the help body currently shows. They are taken
+// from the body rather than from viewport.View, which pads its own output with
+// unstyled spaces: that padding would leave the panel striped, because only
+// the modal style's own fill carries its background.
+func (m dashboardModel) helpModalRows() string {
+	lines := strings.Split(helpModalBody(), "\n")
+	h := max(1, m.helpViewport.Height)
+	start := clampInt(m.helpViewport.YOffset, 0, max(0, len(lines)-h))
+
+	rows := make([]string, 0, h)
+	rows = append(rows, lines[start:min(len(lines), start+h)]...)
+	for len(rows) < h {
+		rows = append(rows, "")
+	}
+	return strings.Join(rows, "\n")
+}
+
+func helpModalBody() string {
 	section := func(title string, keys [][2]string) string {
-		s := headStyle.Render(title) + "\n"
+		s := modalHeadStyle.Render(title) + "\n"
 		for _, k := range keys {
-			s += fmt.Sprintf("  %s  %s\n",
-				keyStyle.Width(12).Render(k[0]),
-				descStyle.Render(k[1]),
-			)
+			// Every run carries the modal background, including the gaps: a
+			// style that only sets a foreground ends with a reset, which would
+			// stripe the row with the terminal's own background.
+			s += modalBgStyle.Render("  ") +
+				modalKeyStyle.Width(12).Render(k[0]) +
+				modalBgStyle.Render("  ") +
+				modalDescStyle.Render(k[1]) + "\n"
 		}
 		return s
 	}
 
-	body := lipgloss.JoinVertical(lipgloss.Left,
+	// Joined by hand: lipgloss.JoinVertical pads every row out to the widest
+	// one with unstyled spaces, and those spaces would show as bands of
+	// terminal background across the modal.
+	return strings.Join([]string{
 		section("Navigation", [][2]string{
 			{"j / k", "Move up / down in list"},
 			{"h / l", "Move section left / right"},
@@ -1771,15 +2155,16 @@ func (m dashboardModel) renderHelpModal() string {
 			{"Esc", "Back / cancel"},
 		}),
 		section("Library Actions", [][2]string{
-			{"Enter", "Toggle reading / oku"},
+			{"Enter", "Show book details"},
 			{"+ / -", "Quick page update (+/-10)"},
 			{"u", "Update page progress"},
 			{"v", "Review / rate book"},
+			{"t", "Start / stop timer"},
 			{"g", "Set status: reading"},
 			{"w", "Set status: want to read"},
 			{"f", "Set status: finished"},
-			{"d", "Set status: did not finish"},
-			{"x", "Remove from library"},
+			{"d", "Did not finish (asks)"},
+			{"x", "Ignore / remove (asks)"},
 			{"z", "Cycle density"},
 		}),
 		section("Data", [][2]string{
@@ -1794,19 +2179,21 @@ func (m dashboardModel) renderHelpModal() string {
 			{"g/w/f/d", "Add result with status"},
 		}),
 		section("Timer", [][2]string{
-			{"t", "Choose book + start"},
+			{"t", "Start/stop for selected"},
 			{"s", "Stop timer"},
 			{"j/k + Enter", "Pick book in timer"},
 			{"Esc", "Cancel timer picker"},
+		}),
+		section("Confirmation", [][2]string{
+			{"y", "Yes, do it"},
+			{"n / Esc", "No, leave it alone"},
+			{"h/l + Enter", "Pick a button"},
 		}),
 		section("General", [][2]string{
 			{"?", "Toggle this help"},
 			{"q", "Quit"},
 		}),
-	)
-
-	footer := "\n" + dimStyleTUI.Render("Press ? or Esc to close")
-	return renderModalPanel("Help", body+footer, 50)
+	}, "\n")
 }
 
 func (m dashboardModel) overlayModal(modal string) string {
@@ -1819,103 +2206,156 @@ func (m dashboardModel) overlayModal(modal string) string {
 	)
 }
 
+// helpKey describes a key for the help bar. The dashboard dispatches on the
+// key string itself, so these carry the label, not the binding: several of
+// them ("j/k", "1/2/3") stand for a group of keys rather than one.
+func helpKey(label, desc string) key.Binding {
+	return key.NewBinding(key.WithKeys(label), key.WithHelp(label, desc))
+}
+
+// helpBarWidth is the room the footer hints have. Zero means unbounded, which
+// is what a model that has not seen a window size yet should use.
+func (m dashboardModel) helpBarWidth() int {
+	if m.width <= 0 {
+		return 0
+	}
+	return max(minHelpBarWidth, m.width-2)
+}
+
+// contextHelpBar renders the hints for whatever has focus, on one line.
 func (m dashboardModel) contextHelpBar() string {
+	return " " + m.renderHelpBar(m.helpBindings())
+}
+
+// renderHelpBar lays out as many hints as fit and marks the rest with an
+// ellipsis. help.Model can do this itself, but when the ellipsis is the thing
+// that does not fit its width check falls through and appends the hint anyway,
+// leaving a dangling separator to be cut mid-word; the bar drops whole hints
+// here instead, so the width is always honoured and the cut is always marked.
+func (m dashboardModel) renderHelpBar(bindings []key.Binding) string {
+	h := m.help
+	h.Width = 0 // The loop below owns the width.
+
+	view := h.ShortHelpView(bindings)
+	limit := m.helpBarWidth()
+	if limit <= 0 || lipgloss.Width(view)+2 <= limit {
+		return view
+	}
+
+	ellipsis := dimStyleTUI.Render("…")
+	for n := len(bindings) - 1; n >= 1; n-- {
+		candidate := h.ShortHelpView(bindings[:n]) + " " + ellipsis
+		if lipgloss.Width(candidate)+2 <= limit {
+			return candidate
+		}
+	}
+	return ellipsis
+}
+
+// helpBindings returns the hints for the focused section.
+func (m dashboardModel) helpBindings() []key.Binding {
 	switch m.section {
-	case sectionIntro:
-		return renderHelpBar([][2]string{
-			{"h/l", "section"},
-			{"Tab", "next"},
-			{"/", "search"},
-			{"?", "help"},
-			{"q", "quit"},
-		})
 	case sectionReading, sectionOku:
-		return renderHelpBar([][2]string{
-			{"j/k", "navigate"},
-			{"h/l", "section"},
-			{"/", "search"},
-			{"↵", "toggle"},
-			{"+/-", "page"},
-			{"u", "update"},
-			{"v", "review/rate"},
-			{"g/w/f/d", "status"},
-			{"z", "density"},
-			{"r", "refresh"},
-			{"s", "sync"},
-			{"?", "help"},
-		})
+		// Ordered by how often a key is reached for, with help first so it is
+		// the one hint a narrow terminal never drops. Enter is left out: the
+		// detail pane it opens is already on screen.
+		bindings := []key.Binding{
+			helpKey("?", "help"),
+			helpKey("j/k", "navigate"),
+			helpKey("h/l", "section"),
+			helpKey("g/w/f/d/x", "status"),
+			helpKey("+/-", "page"),
+			helpKey("u", "update"),
+		}
+		if m.section == sectionReading || m.timerState != nil {
+			label := "start timer"
+			if m.timerState != nil {
+				label = "stop timer"
+			}
+			bindings = append(bindings, helpKey("t", label))
+		}
+		return append(bindings,
+			helpKey("/", "search"),
+			helpKey("v", "rate"),
+			helpKey("s", "sync"),
+			helpKey("z", "density"),
+			helpKey("r", "refresh"),
+		)
 	case sectionSearch:
 		if m.searchSub == searchSubResults {
-			return renderHelpBar([][2]string{
-				{"j/k", "navigate"},
-				{"↵", "add reading"},
-				{"g/w/f/d", "status"},
-				{"z", "density"},
-				{"h/l", "input/next"},
-				{"Esc", "back"},
-				{"?", "help"},
-			})
+			return []key.Binding{
+				helpKey("?", "help"),
+				helpKey("j/k", "navigate"),
+				helpKey("↵", "add reading"),
+				helpKey("g/w/f/d", "status"),
+				helpKey("h/l", "input/next"),
+				helpKey("z", "density"),
+				helpKey("Esc", "back"),
+			}
 		}
 		if m.searchMode == searchModeInsert {
-			return renderHelpBar([][2]string{
-				{"↵", "search"},
-				{"Esc", "normal"},
-				{"?", "help"},
-			})
+			// ? is typed here, not a shortcut.
+			return []key.Binding{
+				helpKey("↵", "search"),
+				helpKey("Esc", "normal"),
+			}
 		}
-		return renderHelpBar([][2]string{
-			{"↵", "search"},
-			{"i/a", "insert"},
-			{"m", "mode"},
-			{"1/2/3", "book/author/genre"},
-			{"h/l", "section"},
-			{"Esc", "back"},
-			{"?", "help"},
-		})
+		return []key.Binding{
+			helpKey("?", "help"),
+			helpKey("↵", "search"),
+			helpKey("i/a", "insert"),
+			helpKey("m", "mode"),
+			helpKey("1/2/3", "book/author/genre"),
+			helpKey("h/l", "section"),
+			helpKey("z", "density"),
+			helpKey("Esc", "back"),
+		}
 	case sectionStats:
-		return renderHelpBar([][2]string{
-			{"j/k", "scroll"},
-			{"g", "top"},
-			{"h/l", "section"},
-			{"s", "sync"},
-			{"/", "search"},
-			{"?", "help"},
-			{"q", "quit"},
-		})
+		return []key.Binding{
+			helpKey("?", "help"),
+			helpKey("j/k", "scroll"),
+			helpKey("g", "top"),
+			helpKey("h/l", "section"),
+			helpKey("s", "sync"),
+			helpKey("r", "refresh"),
+			helpKey("/", "search"),
+			helpKey("q", "quit"),
+		}
 	case sectionTimer:
-		if m.timerSelecting && m.timerState == nil {
-			return renderHelpBar([][2]string{
-				{"j/k", "choose"},
-				{"↵", "start"},
-				{"Esc", "cancel"},
-				{"?", "help"},
-				{"q", "quit"},
-			})
+		switch {
+		case m.timerSelecting && m.timerState == nil:
+			return []key.Binding{
+				helpKey("?", "help"),
+				helpKey("j/k", "choose"),
+				helpKey("↵", "start"),
+				helpKey("Esc", "cancel"),
+				helpKey("q", "quit"),
+			}
+		case m.timerState != nil:
+			return []key.Binding{
+				helpKey("?", "help"),
+				helpKey("t/s", "stop"),
+				helpKey("h/l", "section"),
+				helpKey("/", "search"),
+				helpKey("q", "quit"),
+			}
+		default:
+			return []key.Binding{
+				helpKey("?", "help"),
+				helpKey("t", "choose + start"),
+				helpKey("h/l", "section"),
+				helpKey("/", "search"),
+				helpKey("q", "quit"),
+			}
 		}
-		if m.timerState != nil {
-			return renderHelpBar([][2]string{
-				{"s", "stop"},
-				{"h/l", "section"},
-				{"/", "search"},
-				{"?", "help"},
-				{"q", "quit"},
-			})
-		}
-		return renderHelpBar([][2]string{
-			{"t", "choose + start"},
-			{"h/l", "section"},
-			{"/", "search"},
-			{"?", "help"},
-			{"q", "quit"},
-		})
 	default:
-		return renderHelpBar([][2]string{
-			{"h/l", "section"},
-			{"Tab", "next"},
-			{"/", "search"},
-			{"?", "help"},
-			{"q", "quit"},
-		})
+		return []key.Binding{
+			helpKey("?", "help"),
+			helpKey("h/l", "section"),
+			helpKey("Tab", "next"),
+			helpKey("/", "search"),
+			helpKey("q", "quit"),
+		}
 	}
 }
 
@@ -1978,7 +2418,7 @@ func (m *dashboardModel) submitSearch() tea.Cmd {
 		m.searchQueryMode.Description(),
 		query,
 	)
-	m.searchList.Title = fmt.Sprintf("%s Results (loading...)", m.searchQueryMode.Label())
+	m.refreshSearchTitle()
 	m.searchSeq++
 	return m.beginLoading(searchCmd(m.ctx, m.app, query, m.searchQueryMode, m.searchSeq))
 }
@@ -2016,28 +2456,72 @@ func (m *dashboardModel) setSearchQueryMode(mode model.SearchMode) {
 		return
 	}
 	m.searchQueryMode = mode
-	m.searchList.Title = fmt.Sprintf("%s Results", mode.Label())
+	// The results on screen were fetched in the old mode, so the header is
+	// left naming them; only the next search renames it.
+	m.refreshSearchTitle()
 	m.infoMsg = fmt.Sprintf("Search mode: %s (%s)", strings.ToLower(mode.Label()), mode.Description())
 	m.searchInput.Placeholder = searchPlaceholderForMode(mode)
 	m.updateSearchSuggestions()
 }
 
-func (m *dashboardModel) addRecentSearchQuery(query string) {
+// addRecentSearchQuery puts a query at the head of the history and returns the
+// command that writes it back to the store.
+func (m *dashboardModel) addRecentSearchQuery(query string) tea.Cmd {
 	query = strings.TrimSpace(query)
 	if query == "" {
-		return
+		return nil
 	}
-	next := []string{query}
-	for _, q := range m.recentSearches {
-		if strings.EqualFold(q, query) {
+	m.recentSearches = dedupeQueries(append([]string{query}, m.recentSearches...))
+	return saveRecentSearchesCmd(m.app, m.recentSearches)
+}
+
+// mergeRecentSearches keeps this session's queries ahead of the ones read back
+// from the store, so a load landing mid-session cannot drop them.
+func (m *dashboardModel) mergeRecentSearches(loaded []string) {
+	m.recentSearches = dedupeQueries(append(append([]string(nil), m.recentSearches...), loaded...))
+}
+
+// dedupeQueries keeps the first spelling of each query, compared without case,
+// and caps the history.
+func dedupeQueries(queries []string) []string {
+	seen := make(map[string]struct{}, len(queries))
+	out := make([]string, 0, min(len(queries), maxRecentSearches))
+	for _, q := range queries {
+		q = strings.TrimSpace(q)
+		if q == "" {
 			continue
 		}
-		next = append(next, q)
-		if len(next) >= 8 {
+		key := strings.ToLower(q)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, q)
+		if len(out) == maxRecentSearches {
 			break
 		}
 	}
-	m.recentSearches = next
+	return out
+}
+
+func encodeRecentSearches(queries []string) (string, error) {
+	raw, err := json.Marshal(dedupeQueries(queries))
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+func decodeRecentSearches(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var queries []string
+	if err := json.Unmarshal([]byte(raw), &queries); err != nil {
+		// A corrupt value is not worth reporting: the history is a nicety.
+		return nil
+	}
+	return dedupeQueries(queries)
 }
 
 func (m *dashboardModel) updateSearchSuggestions() {
@@ -2057,9 +2541,6 @@ func (m *dashboardModel) updateSearchSuggestions() {
 		out = append(out, s)
 	}
 
-	for _, s := range defaultSearchSuggestions(m.searchQueryMode) {
-		push(s)
-	}
 	for _, q := range m.recentSearches {
 		push(q)
 	}
@@ -2077,35 +2558,6 @@ func (m *dashboardModel) updateSearchSuggestions() {
 	m.searchInput.SetSuggestions(out)
 }
 
-func defaultSearchSuggestions(mode model.SearchMode) []string {
-	switch mode {
-	case model.SearchModeAuthor:
-		return []string{
-			"Ursula K. Le Guin",
-			"Octavia Butler",
-			"Neal Ford",
-			"Fyodor Dostoevsky",
-			"James Clear",
-		}
-	case model.SearchModeGenre:
-		return []string{
-			"science fiction",
-			"classics",
-			"philosophy",
-			"software architecture",
-			"psychology",
-		}
-	default:
-		return []string{
-			"east of eden",
-			"dune",
-			"atomic habits",
-			"clean code",
-			"the brothers karamazov",
-		}
-	}
-}
-
 func searchPlaceholderForMode(mode model.SearchMode) string {
 	switch mode {
 	case model.SearchModeAuthor:
@@ -2115,6 +2567,21 @@ func searchPlaceholderForMode(mode model.SearchMode) string {
 	default:
 		return "Search books..."
 	}
+}
+
+// refreshSearchTitle names the results the panel is actually showing: the mode
+// they were fetched with and how many came back, not the mode the user has
+// switched to since.
+func (m *dashboardModel) refreshSearchTitle() {
+	if m.searchLoading {
+		m.searchList.Title = fmt.Sprintf("%s Results (loading...)", m.searchQueryMode.Label())
+		return
+	}
+	mode := m.lastSearchMode
+	if mode == "" {
+		mode = m.searchQueryMode
+	}
+	m.searchList.Title = fmt.Sprintf("%s Results (%d)", mode.Label(), len(m.searchBooks))
 }
 
 func (m *dashboardModel) enterSearchNormalMode() {
@@ -2130,9 +2597,10 @@ func (m *dashboardModel) enterSearchInsertMode() {
 // ── Resize ─────────────────────────────────────────────────────────────────
 
 func (m *dashboardModel) resize() {
+	m.help.Width = m.helpBarWidth()
+
 	totalW := max(60, m.width-2)
-	totalH := max(8, m.height-6)
-	panelInnerH := max(1, totalH-2)
+	panelInnerH := m.rightPanelContentHeight()
 
 	leftW := max(28, totalW*2/5)
 	rightW := max(28, totalW-leftW-3)
@@ -2145,9 +2613,17 @@ func (m *dashboardModel) resize() {
 		leftContentW = 8
 	}
 
+	// "[NORMAL] [BOOK] / " eats the front of the search card's row; the input
+	// takes what is left instead of being cut off mid-placeholder.
+	m.searchInput.Width = max(4, leftContentW-20)
+
 	m.readingList.SetSize(leftContentW, readingContentH)
 	m.okuList.SetSize(leftContentW, okuContentH)
-	m.searchList.SetSize(rightW-4, max(1, panelInnerH-2))
+	m.searchList.SetSize(rightW-4, max(1, panelInnerH-1))
+
+	if m.showHelp {
+		m.syncHelpViewport()
+	}
 }
 
 // ── List helpers ───────────────────────────────────────────────────────────
@@ -2167,8 +2643,6 @@ func (m *dashboardModel) refreshListItems() tea.Cmd {
 	}
 	readingCmd := m.readingList.SetItems(toItems(m.readingBooks))
 	okuCmd := m.okuList.SetItems(toItems(m.okuBooks))
-	m.readingList.Title = fmt.Sprintf("Reading (%d)", len(m.readingBooks))
-	m.okuList.Title = fmt.Sprintf("Oku (%d)", len(m.okuBooks))
 	return tea.Batch(readingCmd, okuCmd)
 }
 
@@ -2372,9 +2846,18 @@ func loadLocalDataCmd(a *app.App) tea.Cmd {
 			stats, sessions = demoLocalData()
 		}
 
+		// Best effort: an unreadable history is not a reason to fail the load.
+		var recentSearches []string
+		if a.Store != nil {
+			if raw, err := a.Store.GetState(recentSearchesKey); err == nil {
+				recentSearches = decodeRecentSearches(raw)
+			}
+		}
+
 		return localDataLoadedMsg{
 			readingStats:   stats,
 			recentSessions: sessions,
+			recentSearches: recentSearches,
 			timerState:     timer,
 			timerBook:      timerBook,
 		}
@@ -2477,6 +2960,21 @@ func demoLocalData() (*model.ReadingStats, []model.ReadingSession) {
 	}
 
 	return readingStats, sessions
+}
+
+// saveRecentSearchesCmd persists the search history off the update loop. It is
+// best effort: a failing write must not interrupt a search.
+func saveRecentSearchesCmd(a *app.App, queries []string) tea.Cmd {
+	if a == nil || a.Store == nil {
+		return nil
+	}
+	snapshot := append([]string(nil), queries...)
+	return func() tea.Msg {
+		if raw, err := encodeRecentSearches(snapshot); err == nil {
+			_ = a.Store.SetState(recentSearchesKey, raw)
+		}
+		return nil
+	}
 }
 
 func searchCmd(ctx context.Context, a *app.App, query string, mode model.SearchMode, seq int) tea.Cmd {

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func runeKey(r rune) tea.KeyMsg {
@@ -1040,5 +1042,578 @@ func TestSearchErrorClearsLoadingTitle(t *testing.T) {
 	}
 	if got.searchLoading {
 		t.Fatal("a failed search should clear searchLoading")
+	}
+}
+
+// renderedDashboard builds a loaded dashboard of the given size with a couple
+// of books on each shelf, ready to render.
+func renderedDashboard(w, h int) dashboardModel {
+	m := newTestDashboard()
+	m.loaded = true
+	m.readingBooks = []model.UserBook{
+		{Book: model.Book{ID: 1, Title: "Dune", Pages: 412}, CurrentPage: 120},
+		{Book: model.Book{ID: 2, Title: "Foundation", Pages: 255}},
+	}
+	m.okuBooks = []model.UserBook{
+		{Book: model.Book{ID: 3, Title: "Meditations"}},
+	}
+	m.refreshListItems()
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	return updated.(dashboardModel)
+}
+
+func TestViewFillsTerminalExactly(t *testing.T) {
+	sections := []focusSection{
+		sectionIntro, sectionReading, sectionOku,
+		sectionSearch, sectionStats, sectionTimer,
+	}
+	for _, size := range [][2]int{{80, 24}, {120, 40}} {
+		w, h := size[0], size[1]
+		for _, section := range sections {
+			m := renderedDashboard(w, h)
+			m.setSection(section)
+
+			// The layout must fill the screen on its own, not be padded
+			// into it by View's final clamp.
+			if got := len(strings.Split(m.frame(), "\n")); got != h {
+				t.Fatalf("%dx%d section %v: frame has %d lines, want %d", w, h, section, got, h)
+			}
+
+			lines := strings.Split(m.View(), "\n")
+			if len(lines) != h {
+				t.Fatalf("%dx%d section %v: view has %d lines, want %d", w, h, section, len(lines), h)
+			}
+			for i, line := range lines {
+				if got := lipgloss.Width(line); got > w {
+					t.Fatalf("%dx%d section %v: line %d is %d wide, want <= %d", w, h, section, i, got, w)
+				}
+			}
+		}
+	}
+}
+
+func TestHelpBarTruncatesToWidth(t *testing.T) {
+	sections := []focusSection{
+		sectionIntro, sectionReading, sectionOku,
+		sectionSearch, sectionStats, sectionTimer,
+	}
+	for _, w := range []int{60, 79, 80, 100, 120, 200} {
+		for _, section := range sections {
+			m := renderedDashboard(w, 40)
+			m.setSection(section)
+
+			bar := m.contextHelpBar()
+			if strings.Contains(bar, "\n") {
+				t.Fatalf("width %d section %v: help bar wrapped: %q", w, section, bar)
+			}
+			if got := lipgloss.Width(bar); got > w {
+				t.Fatalf("width %d section %v: help bar is %d wide", w, section, got)
+			}
+
+			// A truncated bar must end in the ellipsis, never in a dangling
+			// separator or half a word.
+			plain := strings.TrimRight(stripANSI(bar), " ")
+			if strings.Contains(plain, "\u2026") && !strings.HasSuffix(plain, "\u2026") {
+				t.Fatalf("width %d section %v: %q does not end at the ellipsis", w, section, plain)
+			}
+			if !strings.Contains(plain, "\u2026") {
+				// Nothing was dropped, so every hint has to be there.
+				for _, b := range m.helpBindings() {
+					if !strings.Contains(plain, b.Help().Key) {
+						t.Fatalf("width %d section %v: %q is missing %q", w, section, plain, b.Help().Key)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestHelpHintIsNeverTheHintThatGetsDropped(t *testing.T) {
+	for _, w := range []int{60, 79, 80, 100, 120} {
+		m := renderedDashboard(w, 40)
+		m.setSection(sectionReading)
+		if got := stripANSI(m.contextHelpBar()); !strings.Contains(got, "? help") {
+			t.Fatalf("width %d: %q should always keep the help hint", w, got)
+		}
+	}
+}
+
+func TestSearchInsertModeDoesNotAdvertiseHelp(t *testing.T) {
+	m := renderedDashboard(120, 40)
+	m.setSection(sectionSearch)
+	m.enterSearchInsertMode()
+
+	if got := stripANSI(m.contextHelpBar()); strings.Contains(got, "? help") {
+		t.Fatalf("help bar = %q, but ? types a literal in insert mode", got)
+	}
+}
+
+func TestRecentSearchesRoundTrip(t *testing.T) {
+	queries := []string{"dune", "Dune", "  ", "east of eden", "clean code"}
+
+	raw, err := encodeRecentSearches(queries)
+	if err != nil {
+		t.Fatalf("encodeRecentSearches() error = %v", err)
+	}
+
+	got := decodeRecentSearches(raw)
+	want := []string{"dune", "east of eden", "clean code"}
+	if len(got) != len(want) {
+		t.Fatalf("decodeRecentSearches() = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("decodeRecentSearches()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+
+	if decodeRecentSearches("") != nil {
+		t.Fatal("an empty state value should decode to no history")
+	}
+	if decodeRecentSearches("{not json") != nil {
+		t.Fatal("a corrupt state value should decode to no history")
+	}
+
+	long := make([]string, 0, maxRecentSearches+5)
+	for i := 0; i < maxRecentSearches+5; i++ {
+		long = append(long, string(rune('a'+i)))
+	}
+	raw, err = encodeRecentSearches(long)
+	if err != nil {
+		t.Fatalf("encodeRecentSearches() error = %v", err)
+	}
+	if got := decodeRecentSearches(raw); len(got) != maxRecentSearches {
+		t.Fatalf("history kept %d queries, want the %d most recent", len(got), maxRecentSearches)
+	}
+}
+
+func TestSearchSuggestionsComeFromHistoryOnly(t *testing.T) {
+	m := newTestDashboard()
+	if got := m.searchInput.AvailableSuggestions(); len(got) != 0 {
+		t.Fatalf("a fresh dashboard suggests %#v, want nothing until the user searches", got)
+	}
+
+	// A nil app must not panic on the way to the (skipped) save.
+	if cmd := m.addRecentSearchQuery("east of eden"); cmd != nil {
+		t.Fatal("addRecentSearchQuery() should not try to save without a store")
+	}
+	m.updateSearchSuggestions()
+
+	got := m.searchInput.AvailableSuggestions()
+	if len(got) != 1 || got[0] != "east of eden" {
+		t.Fatalf("suggestions = %#v, want the query just searched for", got)
+	}
+}
+
+func TestLocalDataMergesStoredRecentSearches(t *testing.T) {
+	m := newTestDashboard()
+	m.inflight = 1
+	m.addRecentSearchQuery("dune")
+
+	updated, _ := m.Update(localDataLoadedMsg{recentSearches: []string{"dune", "clean code"}})
+	got := updated.(dashboardModel)
+
+	want := []string{"dune", "clean code"}
+	if len(got.recentSearches) != len(want) {
+		t.Fatalf("recentSearches = %#v, want %#v", got.recentSearches, want)
+	}
+	for i := range want {
+		if got.recentSearches[i] != want[i] {
+			t.Fatalf("recentSearches[%d] = %q, want %q", i, got.recentSearches[i], want[i])
+		}
+	}
+}
+
+func TestTimerStartsAndStopsFromReadingList(t *testing.T) {
+	m := renderedDashboard(100, 40)
+	m.setSection(sectionReading)
+
+	updated, cmd := m.updateLibraryMode(runeKey('t'))
+	started := updated.(dashboardModel)
+	if cmd == nil {
+		t.Fatal("t in the Reading list should start a timer for the selection")
+	}
+	if !started.isLoading() {
+		t.Fatal("starting a timer should be counted as in flight")
+	}
+	if started.timerSelecting {
+		t.Fatal("the Reading list already has a selection: no picker")
+	}
+
+	// With a timer running, t stops it.
+	running := renderedDashboard(100, 40)
+	running.setSection(sectionReading)
+	running.timerState = &model.TimerState{BookID: 1, StartedAt: time.Now()}
+
+	updated, cmd = running.updateLibraryMode(runeKey('t'))
+	if cmd == nil {
+		t.Fatal("t should stop the running timer")
+	}
+	if updated.(dashboardModel).timerSelecting {
+		t.Fatal("stopping a timer must not open the picker")
+	}
+}
+
+func TestTimerKeyOutsideReadingExplainsItself(t *testing.T) {
+	m := renderedDashboard(100, 40)
+	m.setSection(sectionOku)
+
+	updated, cmd := m.updateLibraryMode(runeKey('t'))
+	got := updated.(dashboardModel)
+	if cmd != nil {
+		t.Fatal("t in the Oku list has no book to track, so it should do nothing")
+	}
+	if !strings.Contains(got.infoMsg, "Reading list") {
+		t.Fatalf("infoMsg = %q, want it to point at the Reading list", got.infoMsg)
+	}
+}
+
+func TestEnterDoesNotChangeStatus(t *testing.T) {
+	for _, section := range []focusSection{sectionReading, sectionOku} {
+		m := renderedDashboard(100, 40)
+		m.setSection(section)
+
+		updated, cmd := m.updateLibraryMode(tea.KeyMsg{Type: tea.KeyEnter})
+		got := updated.(dashboardModel)
+		if cmd != nil {
+			t.Fatalf("section %v: Enter returned a command, want no status change", section)
+		}
+		if got.isLoading() {
+			t.Fatalf("section %v: Enter started an operation", section)
+		}
+		if got.errMsg != "" {
+			t.Fatalf("section %v: errMsg = %q, want none", section, got.errMsg)
+		}
+		if got.infoMsg == "" {
+			t.Fatalf("section %v: Enter should name the book it brought into the detail pane", section)
+		}
+	}
+}
+
+func TestPageModalShowsTitleAndKeepsFormatHint(t *testing.T) {
+	m := renderedDashboard(100, 40)
+	m.setSection(sectionReading)
+
+	updated, _ := m.updateLibraryMode(runeKey('u'))
+	got := updated.(dashboardModel)
+
+	if got.mode != modeUpdatePage {
+		t.Fatalf("mode after u = %v, want %v", got.mode, modeUpdatePage)
+	}
+	if got.pageInput.Value() != "" {
+		t.Fatalf("page input pre-filled with %q, want it empty", got.pageInput.Value())
+	}
+	if got.pageInput.Placeholder != "370 or +10 or -5" {
+		t.Fatalf("placeholder = %q, want the format hint", got.pageInput.Placeholder)
+	}
+
+	prompt := got.pagePrompt()
+	if !strings.Contains(prompt, "Dune") {
+		t.Fatalf("prompt %q does not name the book", prompt)
+	}
+	if !strings.Contains(prompt, "current: 120/412") {
+		t.Fatalf("prompt %q does not show where the book stands", prompt)
+	}
+
+	// The prompt is two rows taller than the help bar it replaces, and the
+	// layout has to give those rows back.
+	if lines := strings.Split(got.frame(), "\n"); len(lines) != 40 {
+		t.Fatalf("page prompt frame has %d lines, want 40", len(lines))
+	}
+}
+
+func TestHelpModalFitsTheTerminalAndScrolls(t *testing.T) {
+	for _, h := range []int{24, 40} {
+		m := renderedDashboard(80, h)
+
+		updated, _ := m.Update(runeKey('?'))
+		opened := updated.(dashboardModel)
+		if !opened.showHelp {
+			t.Fatalf("height %d: ? should open the help modal", h)
+		}
+		if lines := strings.Split(opened.frame(), "\n"); len(lines) != h {
+			t.Fatalf("height %d: help frame has %d lines, want %d", h, len(lines), h)
+		}
+		if opened.helpViewport.TotalLineCount() <= opened.helpViewport.Height {
+			t.Fatalf("height %d: the help body should be taller than the window", h)
+		}
+		if !strings.Contains(opened.renderHelpModal(), "j/k scroll") {
+			t.Fatalf("height %d: an overflowing help modal should say it scrolls", h)
+		}
+
+		updated, _ = opened.Update(runeKey('j'))
+		scrolled := updated.(dashboardModel)
+		if scrolled.helpViewport.YOffset != 1 {
+			t.Fatalf("height %d: j should scroll the body, YOffset = %d", h, scrolled.helpViewport.YOffset)
+		}
+
+		updated, _ = scrolled.Update(runeKey('k'))
+		if got := updated.(dashboardModel).helpViewport.YOffset; got != 0 {
+			t.Fatalf("height %d: k should scroll back, YOffset = %d", h, got)
+		}
+
+		updated, _ = scrolled.Update(runeKey('?'))
+		if updated.(dashboardModel).showHelp {
+			t.Fatalf("height %d: ? should close the help modal", h)
+		}
+	}
+}
+
+func TestIgnoreAsksBeforeItChangesTheStatus(t *testing.T) {
+	m := renderedDashboard(100, 40)
+	m.setSection(sectionReading)
+
+	updated, cmd := m.Update(runeKey('x'))
+	asked := updated.(dashboardModel)
+	if cmd != nil {
+		t.Fatal("x should ask before it changes the status")
+	}
+	if !asked.confirm.Active {
+		t.Fatal("x should open the confirmation")
+	}
+	if !strings.Contains(asked.confirm.Message, "Dune") {
+		t.Fatalf("confirm message = %q, want it to name the book", asked.confirm.Message)
+	}
+	if !strings.Contains(asked.confirm.Message, model.StatusIgnored.Label()) {
+		t.Fatalf("confirm message = %q, want it to name the new status", asked.confirm.Message)
+	}
+
+	updated, cmd = asked.Update(runeKey('n'))
+	cancelled := updated.(dashboardModel)
+	if cmd != nil || cancelled.confirm.Active || cancelled.isLoading() {
+		t.Fatal("n should drop the change without running anything")
+	}
+
+	updated, cmd = asked.Update(runeKey('y'))
+	confirmed := updated.(dashboardModel)
+	if cmd == nil {
+		t.Fatal("y should run the status change")
+	}
+	if confirmed.confirm.Active {
+		t.Fatal("the confirmation should close once it is answered")
+	}
+	if !confirmed.isLoading() {
+		t.Fatal("the confirmed change should be counted as in flight")
+	}
+
+	// Esc is the same answer as n.
+	updated, cmd = asked.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd != nil || updated.(dashboardModel).confirm.Active {
+		t.Fatal("esc should drop the change")
+	}
+}
+
+func TestDidNotFinishAsksToo(t *testing.T) {
+	m := renderedDashboard(100, 40)
+	m.setSection(sectionReading)
+
+	updated, cmd := m.Update(runeKey('d'))
+	got := updated.(dashboardModel)
+	if cmd != nil || !got.confirm.Active {
+		t.Fatal("d should ask before closing the read")
+	}
+	if !strings.Contains(got.confirm.Message, model.StatusDidNotFinish.Label()) {
+		t.Fatalf("confirm message = %q, want it to name the new status", got.confirm.Message)
+	}
+}
+
+func TestConfirmationDoesNotSwallowAsyncResults(t *testing.T) {
+	m := renderedDashboard(100, 40)
+	m.setSection(sectionReading)
+
+	updated, _ := m.Update(runeKey('x'))
+	asked := updated.(dashboardModel)
+	asked.inflight = 1
+
+	updated, _ = asked.Update(libraryLoadedMsg{
+		reading: []model.UserBook{{Book: model.Book{ID: 9, Title: "Ubik"}}},
+	})
+	got := updated.(dashboardModel)
+
+	if !got.confirm.Active {
+		t.Fatal("an async result must not close the confirmation")
+	}
+	if len(got.readingBooks) != 1 || got.readingBooks[0].Book.Title != "Ubik" {
+		t.Fatalf("readingBooks = %#v, want the load applied behind the confirmation", got.readingBooks)
+	}
+	if got.isLoading() {
+		t.Fatal("the finished load should have released its slot")
+	}
+}
+
+// stripANSI removes the escape sequences so a test can look at the glyphs.
+func stripANSI(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if s[i] == 0x1b {
+			for i < len(s) && s[i] != 'm' {
+				i++
+			}
+			i++
+			continue
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
+}
+
+func TestLongOrMultilineMessagesKeepTheFrameIntact(t *testing.T) {
+	messages := []string{
+		strings.Repeat("network unreachable ", 10),
+		"Post \"https://api.hardcover.app/v1/graphql\":\ndial tcp: lookup failed\nand a third line",
+	}
+	for _, size := range [][2]int{{80, 24}, {120, 40}} {
+		w, h := size[0], size[1]
+		for i, msg := range messages {
+			m := renderedDashboard(w, h)
+			m.setSection(sectionReading)
+			m.errMsg = msg
+
+			frame := m.frame()
+			lines := strings.Split(frame, "\n")
+			if len(lines) != h {
+				t.Fatalf("%dx%d message %d: frame has %d lines, want %d", w, h, i, len(lines), h)
+			}
+			for n, line := range lines {
+				if got := lipgloss.Width(line); got > w {
+					t.Fatalf("%dx%d message %d: line %d is %d wide", w, h, i, n, got)
+				}
+			}
+			if last := stripANSI(lines[h-1]); !strings.Contains(last, "? help") {
+				t.Fatalf("%dx%d message %d: last line is %q, want the help bar", w, h, i, last)
+			}
+			if strings.Contains(stripANSI(lines[0]), "dial tcp") &&
+				strings.Contains(stripANSI(lines[1]), "lookup failed") {
+				t.Fatalf("%dx%d message %d: the message wrapped the status bar", w, h, i)
+			}
+		}
+	}
+}
+
+func TestListCardShowsHowFarDownTheListIs(t *testing.T) {
+	m := renderedDashboard(120, 40)
+	books := make([]model.UserBook, 0, 30)
+	for i := 0; i < 30; i++ {
+		books = append(books, model.UserBook{Book: model.Book{ID: 100 + i, Title: fmt.Sprintf("Book %d", i)}})
+	}
+	m.okuBooks = books
+	m.refreshListItems()
+	m.setSection(sectionOku)
+
+	badge := m.listOverflowBadge(sectionOku)
+	if badge != "1/30" {
+		t.Fatalf("overflow badge = %q, want 1/30", badge)
+	}
+	if !strings.Contains(stripANSI(m.frame()), badge) {
+		t.Fatal("the Oku card should show the overflow badge")
+	}
+
+	// A list that fits says nothing.
+	m.okuBooks = books[:1]
+	m.refreshListItems()
+	if got := m.listOverflowBadge(sectionOku); got != "" {
+		t.Fatalf("overflow badge = %q, want none when the list fits", got)
+	}
+
+	// The focused card's rows are padded out to its full width, so the badge
+	// has to overwrite the tail rather than be appended to it.
+	small := renderedDashboard(80, 24)
+	small.readingBooks = books[:5]
+	small.refreshListItems()
+	small.setSection(sectionReading)
+	if got := small.listOverflowBadge(sectionReading); got != "1/5" {
+		t.Fatalf("focused overflow badge = %q, want 1/5", got)
+	}
+	if !strings.Contains(stripANSI(small.frame()), "1/5") {
+		t.Fatal("the focused Reading card should show the overflow badge")
+	}
+}
+
+func TestProgressRowFitsTheDetailPane(t *testing.T) {
+	for _, size := range [][2]int{{80, 24}, {120, 40}} {
+		m := renderedDashboard(size[0], size[1])
+		m.setSection(sectionReading)
+
+		w := m.rightPanelContentWidth()
+		for _, line := range strings.Split(stripANSI(m.detailsView(w)), "\n") {
+			if got := lipgloss.Width(line); got > w {
+				t.Fatalf("%dx%d: detail line %q is %d wide, want <= %d", size[0], size[1], line, got, w)
+			}
+		}
+		if !strings.Contains(stripANSI(m.frame()), "29%") {
+			t.Fatalf("%dx%d: the progress percentage should not be clipped", size[0], size[1])
+		}
+	}
+}
+
+func TestTimerSectionStopsWithT(t *testing.T) {
+	m := renderedDashboard(120, 40)
+	m.setSection(sectionTimer)
+	m.timerState = &model.TimerState{BookID: 1, StartedAt: time.Now()}
+
+	updated, cmd := m.updateLibraryMode(runeKey('t'))
+	if cmd == nil {
+		t.Fatal("t should stop the running timer in the Timer section too")
+	}
+	if updated.(dashboardModel).timerSelecting {
+		t.Fatal("stopping must not open the book picker")
+	}
+}
+
+func TestSecondTimerPressIsGuardedWhileInFlight(t *testing.T) {
+	m := renderedDashboard(120, 40)
+	m.setSection(sectionReading)
+
+	updated, cmd := m.updateLibraryMode(runeKey('t'))
+	started := updated.(dashboardModel)
+	if cmd == nil {
+		t.Fatal("t should start a timer")
+	}
+
+	updated, cmd = started.updateLibraryMode(runeKey('t'))
+	if cmd != nil {
+		t.Fatal("a second t before the first result returns must not start another session")
+	}
+	if !strings.Contains(updated.(dashboardModel).infoMsg, "in flight") {
+		t.Fatalf("infoMsg = %q, want the in-flight notice", updated.(dashboardModel).infoMsg)
+	}
+}
+
+func TestSearchHeaderNamesTheResultsOnScreen(t *testing.T) {
+	m := newTestDashboard()
+	m.section = sectionSearch
+	m.searchInput.SetValue("dune")
+	m.inflight = 1
+
+	updated, _ := m.Update(searchLoadedMsg{
+		results: []model.SearchResult{{ID: 1, Title: "Dune"}, {ID: 2, Title: "Dune Messiah"}},
+		query:   "dune",
+		mode:    model.SearchModeBook,
+		seq:     m.searchSeq,
+	})
+	got := updated.(dashboardModel)
+	if got.searchList.Title != "BOOK Results (2)" {
+		t.Fatalf("title = %q, want BOOK Results (2)", got.searchList.Title)
+	}
+
+	// Switching the mode does not rename results fetched in the old one.
+	got.setSearchQueryMode(model.SearchModeAuthor)
+	if got.searchList.Title != "BOOK Results (2)" {
+		t.Fatalf("title after switching mode = %q, want the results' own mode", got.searchList.Title)
+	}
+
+	// A failed search leaves the previous results, and their count, named.
+	got.inflight = 1
+	got.searchLoading = true
+	updated, _ = got.Update(searchLoadedMsg{
+		query: "dune",
+		mode:  model.SearchModeAuthor,
+		seq:   got.searchSeq,
+		err:   errors.New("network down"),
+	})
+	failed := updated.(dashboardModel)
+	if failed.searchList.Title != "BOOK Results (2)" {
+		t.Fatalf("title after a failed search = %q, want the results still on screen", failed.searchList.Title)
 	}
 }

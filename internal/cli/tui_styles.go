@@ -43,7 +43,6 @@ var (
 var (
 	headStyle     = lipgloss.NewStyle().Bold(true).Foreground(colorCream)
 	dimStyleTUI   = lipgloss.NewStyle().Foreground(colorDimGray)
-	infoStyleTUI  = lipgloss.NewStyle().Foreground(colorGreen)
 	errorStyleTUI = lipgloss.NewStyle().Foreground(colorWarmRed).Bold(true)
 
 	keyStyle   = lipgloss.NewStyle().Bold(true).Foreground(colorGold)
@@ -51,13 +50,25 @@ var (
 	labelStyle = lipgloss.NewStyle().Foreground(colorDimGray).Bold(true)
 	valueStyle = lipgloss.NewStyle().Foreground(colorLightGray)
 
-	titleBarStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(colorCream)
-
 	statusBarStyle = lipgloss.NewStyle().
 			Background(colorCharcoal).
 			Foreground(colorLightGray).
+			Padding(0, 1)
+
+	// Every status-bar segment carries the bar's background. A nested style
+	// ends with a reset, so a segment without one drops the background for the
+	// rest of the line.
+	statusBarFillStyle   = lipgloss.NewStyle().Background(colorCharcoal)
+	statusBarTitleStyle  = statusBarFillStyle.Bold(true).Foreground(colorCream)
+	statusBarAccentStyle = statusBarFillStyle.Foreground(colorGold)
+	statusBarInfoStyle   = statusBarFillStyle.Foreground(colorGreen)
+	statusBarErrorStyle  = statusBarFillStyle.Bold(true).Foreground(colorWarmRed)
+
+	// listHeaderStyle titles a list that has no section card of its own.
+	listHeaderStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(colorCream).
+			Background(colorCharcoal).
 			Padding(0, 1)
 )
 
@@ -70,9 +81,20 @@ var helpModalStyle = lipgloss.NewStyle().
 	Padding(1, 2).
 	Width(50)
 
-var modalTitleStyle = lipgloss.NewStyle().
-	Bold(true).
-	Foreground(colorCream)
+// Modal text carries the modal's own background. A style that only sets a
+// foreground ends its run with a reset, which drops the background for the
+// rest of the row and stripes the panel with the terminal's own colour.
+var (
+	modalBgStyle    = lipgloss.NewStyle().Background(colorCharcoal)
+	modalTitleStyle = modalBgStyle.Bold(true).Foreground(colorCream)
+	modalHeadStyle  = modalBgStyle.Bold(true).Foreground(colorCream)
+	modalKeyStyle   = modalBgStyle.Bold(true).Foreground(colorGold)
+	modalDescStyle  = modalBgStyle.Foreground(colorMidGray)
+	modalDimStyle   = modalBgStyle.Foreground(colorDimGray)
+	modalLabelStyle = modalBgStyle.Bold(true).Foreground(colorDimGray)
+	modalValueStyle = modalBgStyle.Foreground(colorLightGray)
+	modalErrorStyle = modalBgStyle.Bold(true).Foreground(colorWarmRed)
+)
 
 func renderModalPanel(title, content string, width int) string {
 	style := helpModalStyle
@@ -84,6 +106,10 @@ func renderModalPanel(title, content string, width int) string {
 	if strings.TrimSpace(title) != "" {
 		body = modalTitleStyle.Render(title) + "\n\n" + content
 	}
+	// The rows are left short on purpose: lipgloss fills them out to the panel
+	// width with the style's own background, which is the only fill that
+	// carries it. Pre-padding here would be trimmed by the wrap and refilled
+	// with unstyled spaces, striping the panel.
 	return style.Render(body)
 }
 
@@ -188,19 +214,3 @@ var (
 	heatmapLevel4Style = lipgloss.NewStyle().
 				Foreground(colorGitHubG4)
 )
-
-// ── Help Bar (LazyGit-style) ────────────────────────────────────────────────
-
-// renderKeyHint renders a single key→description hint.
-func renderKeyHint(key, desc string) string {
-	return keyStyle.Render(key) + " " + descStyle.Render(desc)
-}
-
-// renderHelpBar renders a row of key hints with consistent spacing.
-func renderHelpBar(hints [][2]string) string {
-	parts := make([]string, 0, len(hints))
-	for _, h := range hints {
-		parts = append(parts, renderKeyHint(h[0], h[1]))
-	}
-	return "  " + strings.Join(parts, "   ")
-}
