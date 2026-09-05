@@ -81,9 +81,20 @@ var helpModalStyle = lipgloss.NewStyle().
 	Padding(1, 2).
 	Width(50)
 
-var modalTitleStyle = lipgloss.NewStyle().
-	Bold(true).
-	Foreground(colorCream)
+// Modal text carries the modal's own background. A style that only sets a
+// foreground ends its run with a reset, which drops the background for the
+// rest of the row and stripes the panel with the terminal's own colour.
+var (
+	modalBgStyle    = lipgloss.NewStyle().Background(colorCharcoal)
+	modalTitleStyle = modalBgStyle.Bold(true).Foreground(colorCream)
+	modalHeadStyle  = modalBgStyle.Bold(true).Foreground(colorCream)
+	modalKeyStyle   = modalBgStyle.Bold(true).Foreground(colorGold)
+	modalDescStyle  = modalBgStyle.Foreground(colorMidGray)
+	modalDimStyle   = modalBgStyle.Foreground(colorDimGray)
+	modalLabelStyle = modalBgStyle.Bold(true).Foreground(colorDimGray)
+	modalValueStyle = modalBgStyle.Foreground(colorLightGray)
+	modalErrorStyle = modalBgStyle.Bold(true).Foreground(colorWarmRed)
+)
 
 func renderModalPanel(title, content string, width int) string {
 	style := helpModalStyle
@@ -95,7 +106,22 @@ func renderModalPanel(title, content string, width int) string {
 	if strings.TrimSpace(title) != "" {
 		body = modalTitleStyle.Render(title) + "\n\n" + content
 	}
-	return style.Render(body)
+	return style.Render(padModalLines(body, style.GetWidth()-style.GetHorizontalPadding()))
+}
+
+// padModalLines repaints the tail of every row with the modal background, so a
+// short line does not leave a band of terminal background behind it.
+func padModalLines(content string, width int) string {
+	if width <= 0 {
+		return content
+	}
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		if pad := width - lipgloss.Width(line); pad > 0 {
+			lines[i] = line + modalBgStyle.Render(strings.Repeat(" ", pad))
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // ── Progress Bar ────────────────────────────────────────────────────────────

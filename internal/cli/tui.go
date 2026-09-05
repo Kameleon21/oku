@@ -57,6 +57,9 @@ const (
 	helpModalChromeRows = 7
 	// helpModalMinBodyRows keeps the body scrollable on a very short terminal.
 	helpModalMinBodyRows = 3
+	// helpModalMarginRows keeps a row of dashboard above and below the modal,
+	// so it reads as something laid over the screen rather than as the screen.
+	helpModalMarginRows = 2
 )
 
 // minHelpBarWidth keeps the footer hints readable on a very narrow terminal.
@@ -681,7 +684,9 @@ func (m dashboardModel) applySearchLoaded(msg searchLoadedMsg) (tea.Model, tea.C
 
 	m.searchLoadingQuery = ""
 	if msg.err != nil {
-		m.searchList.Title = fmt.Sprintf("%s Results", msg.mode.Label())
+		// The previous results are still on screen, so the header keeps
+		// naming them - including how many there are.
+		m.refreshSearchTitle()
 		m.errMsg = msg.err.Error()
 		m.infoMsg = ""
 		return m, nil
@@ -693,7 +698,7 @@ func (m dashboardModel) applySearchLoaded(msg searchLoadedMsg) (tea.Model, tea.C
 	m.lastSearchMode = msg.mode
 	m.searchBooks = msg.results
 	cmd := m.refreshSearchResultItems()
-	m.searchList.Title = fmt.Sprintf("%s Results (%d)", label, len(msg.results))
+	m.refreshSearchTitle()
 	if len(msg.results) > 0 && m.section == sectionSearch {
 		// Only take focus if the user is still in the search section.
 		m.searchSub = searchSubResults
@@ -1005,6 +1010,12 @@ func (m dashboardModel) handleLibraryKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // stops the one that is running. Only the Reading list holds books a timer can
 // track, so elsewhere it says where to press it.
 func (m dashboardModel) toggleTimerForSelection() (tea.Model, tea.Cmd) {
+	if m.isLoading() {
+		// timerState only catches up when the load lands, so two quick presses
+		// would otherwise start two sessions.
+		m.infoMsg = "Please wait — an update is still in flight"
+		return m, nil
+	}
 	if m.timerState != nil {
 		return m.startOp(stopTimerCmd(m.app))
 	}
@@ -1236,6 +1247,10 @@ func (m dashboardModel) handleTimerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.updateSearchSuggestions()
 		return m, nil
 	case "t":
+		if m.timerState != nil {
+			// Same key, same meaning as in the library: t toggles.
+			return m.startOp(stopTimerCmd(m.app))
+		}
 		if m.timerState == nil {
 			if len(m.readingBooks) == 0 {
 				m.errMsg = "no currently reading books available"
@@ -1470,6 +1485,10 @@ func (m dashboardModel) statusBar() string {
 	if msg == "" {
 		msg, msgStyle = m.infoMsg, statusBarInfoStyle
 	}
+	// An API error can carry newlines and runs of whitespace. Left alone they
+	// would wrap the bar onto rows the layout has not accounted for, and the
+	// help bar would be the thing clipped off the bottom of the screen.
+	msg = strings.Join(strings.Fields(msg), " ")
 
 	right := ""
 	// A message wider than the bar would wrap it onto a second line and push
@@ -1603,8 +1622,10 @@ func (m dashboardModel) leftSectionHeights(totalH int) map[focusSection]int {
 		sectionStats:  2,
 		sectionTimer:  2,
 	}
+	// Intro gives up its box first: it is the one card whose whole content is
+	// its label, so it is the one that loses nothing by being drawn bare.
 	reduceOrder := []focusSection{
-		sectionStats, sectionTimer, sectionIntro, sectionSearch,
+		sectionIntro, sectionStats, sectionTimer, sectionSearch,
 	}
 
 	fixedSum := heights[sectionIntro] + heights[sectionSearch] + heights[sectionStats] + heights[sectionTimer]
@@ -1723,7 +1744,46 @@ func (m dashboardModel) renderSectionCard(def sectionDef, w, h int, focused bool
 	// A list whose items are taller than the rows it was given renders past
 	// them; clip so the overflow cannot push the cards below this one off the
 	// panel.
-	return style.Width(w).Height(innerH).Render(clampPanelContent(content, w, innerH))
+	clipped := clampPanelContent(content, w, innerH)
+	clipped = stampOverflowBadge(clipped, m.listOverflowBadge(def.id), w)
+	return style.Width(w).Height(innerH).Render(clipped)
+}
+
+// listOverflowBadge reports where the cursor sits in a list that shows fewer
+// books than it holds. Hiding the pagination dots took away the only sign that
+// there was anything below the last visible row.
+func (m dashboardModel) listOverflowBadge(id focusSection) string {
+	var l list.Model
+	switch id {
+	case sectionReading:
+		l = m.readingList
+	case sectionOku:
+		l = m.okuList
+	default:
+		return ""
+	}
+
+	total := len(l.VisibleItems())
+	if total == 0 || l.Paginator.PerPage >= total {
+		return ""
+	}
+	return fmt.Sprintf("%d/%d", l.Index()+1, total)
+}
+
+// stampOverflowBadge right-aligns the badge on the card's last row, in the
+// space the pagination dots used to take.
+func stampOverflowBadge(content, badge string, w int) string {
+	if badge == "" {
+		return content
+	}
+	lines := strings.Split(content, "\n")
+	last := len(lines) - 1
+	gap := w - lipgloss.Width(lines[last]) - lipgloss.Width(badge) - 1
+	if gap < 1 {
+		return content
+	}
+	lines[last] += strings.Repeat(" ", gap) + dimStyleTUI.Render(badge)
+	return strings.Join(lines, "\n")
 }
 
 func (m dashboardModel) formatSectionLabel(id focusSection, label string, count int, focused bool) string {
@@ -1776,7 +1836,7 @@ func (m dashboardModel) rightPanelView(w int) string {
 	case sectionIntro:
 		return m.introView(w)
 	case sectionReading, sectionOku:
-		return m.detailsView()
+		return m.detailsView(w)
 	case sectionSearch:
 		return m.searchPanelView()
 	case sectionStats:
@@ -1789,7 +1849,7 @@ func (m dashboardModel) rightPanelView(w int) string {
 	}
 }
 
-func (m dashboardModel) detailsView() string {
+func (m dashboardModel) detailsView(w int) string {
 	b := m.selectedLibraryBook()
 	if b == nil {
 		return dimStyleTUI.Render("  No book selected")
@@ -1817,7 +1877,10 @@ func (m dashboardModel) detailsView() string {
 	}
 	progressText := b.Progress()
 	if b.Book.Pages > 0 {
-		progressText += "  " + progressBar(page, b.Book.Pages, 20)
+		// The field is 13 columns of label, then the text, two spaces, the bar
+		// and " 100%". Size the bar to what is left so the row is never cut.
+		barW := clampInt(w-20-lipgloss.Width(progressText), 8, 20)
+		progressText += "  " + progressBar(page, b.Book.Pages, barW)
 	}
 	writeField("Progress", progressText)
 
@@ -1947,7 +2010,7 @@ func (m *dashboardModel) focusReviewTextField() {
 
 func (m dashboardModel) reviewRatingOverlay() string {
 	if m.reviewBook == nil {
-		return renderModalPanel("Review / Rate Book", "No book selected", 48)
+		return renderModalPanel("Review / Rate Book", modalDimStyle.Render("No book selected"), 48)
 	}
 
 	rating, err := parseReviewRatingInput(m.reviewRatingInput.Value())
@@ -1959,31 +2022,31 @@ func (m dashboardModel) reviewRatingOverlay() string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(valueStyle.Render(m.reviewBook.Book.Title))
+	sb.WriteString(modalValueStyle.Render(m.reviewBook.Book.Title))
 	sb.WriteString("\n")
-	sb.WriteString(dimStyleTUI.Render(fallback(m.reviewBook.Book.AuthorString(), "Unknown author")))
+	sb.WriteString(modalDimStyle.Render(fallback(m.reviewBook.Book.AuthorString(), "Unknown author")))
 	sb.WriteString("\n\n")
 	sb.WriteString(m.reviewRatingInput.View())
-	sb.WriteString("  ")
-	sb.WriteString(keyStyle.Render(stars))
-	sb.WriteString(" ")
-	sb.WriteString(dimStyleTUI.Render("(" + ratingLabel + ")"))
+	sb.WriteString(modalBgStyle.Render("  "))
+	sb.WriteString(modalKeyStyle.Render(stars))
+	sb.WriteString(modalBgStyle.Render(" "))
+	sb.WriteString(modalDimStyle.Render("(" + ratingLabel + ")"))
 	sb.WriteString("\n\n")
-	sb.WriteString(labelStyle.Render("Review"))
+	sb.WriteString(modalLabelStyle.Render("Review"))
 	sb.WriteString("\n")
 	sb.WriteString(m.reviewTextInput.View())
 	sb.WriteString("\n\n")
 	switch {
 	case m.reviewSubmitting:
-		sb.WriteString(dimStyleTUI.Render("Saving..."))
+		sb.WriteString(modalDimStyle.Render("Saving..."))
 		sb.WriteString("\n")
 	case m.reviewErr != "":
 		// The status bar sits behind the modal, so surface the failure here.
-		sb.WriteString(errorStyleTUI.Render(m.reviewErr))
+		sb.WriteString(modalErrorStyle.Render(m.reviewErr))
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString(dimStyleTUI.Render("Tab/Shift+Tab switch fields   Ctrl+S save   Esc cancel"))
+	sb.WriteString(modalDimStyle.Render("Tab/Shift+Tab switch fields   Ctrl+S save   Esc cancel"))
 
 	width := max(70, m.width-10)
 	if width > 100 {
@@ -2007,12 +2070,14 @@ func (m *dashboardModel) syncHelpViewport() {
 	body := helpModalBody()
 	h := lipgloss.Height(body)
 	if m.height > 0 {
-		h = min(h, max(helpModalMinBodyRows, m.height-helpModalChromeRows))
+		h = min(h, max(helpModalMinBodyRows, m.height-helpModalChromeRows-helpModalMarginRows))
 	}
 
+	w := helpModalWidth - helpModalStyle.GetHorizontalPadding()
 	offset := m.helpViewport.YOffset
-	m.helpViewport = viewport.New(helpModalWidth-helpModalStyle.GetHorizontalPadding(), h)
-	m.helpViewport.SetContent(body)
+	m.helpViewport = viewport.New(w, h)
+	m.helpViewport.Style = modalBgStyle
+	m.helpViewport.SetContent(padModalLines(body, w))
 	m.helpViewport.SetYOffset(offset)
 }
 
@@ -2023,19 +2088,22 @@ func (m dashboardModel) renderHelpModal() string {
 	}
 	return renderModalPanel(
 		"Help",
-		m.helpViewport.View()+"\n"+dimStyleTUI.Render(footer),
+		m.helpViewport.View()+"\n"+modalDimStyle.Render(footer),
 		helpModalWidth,
 	)
 }
 
 func helpModalBody() string {
 	section := func(title string, keys [][2]string) string {
-		s := headStyle.Render(title) + "\n"
+		s := modalHeadStyle.Render(title) + "\n"
 		for _, k := range keys {
-			s += fmt.Sprintf("  %s  %s\n",
-				keyStyle.Width(12).Render(k[0]),
-				descStyle.Render(k[1]),
-			)
+			// Every run carries the modal background, including the gaps: a
+			// style that only sets a foreground ends with a reset, which would
+			// stripe the row with the terminal's own background.
+			s += modalBgStyle.Render("  ") +
+				modalKeyStyle.Width(12).Render(k[0]) +
+				modalBgStyle.Render("  ") +
+				modalDescStyle.Render(k[1]) + "\n"
 		}
 		return s
 	}
@@ -2313,7 +2381,7 @@ func (m *dashboardModel) submitSearch() tea.Cmd {
 		m.searchQueryMode.Description(),
 		query,
 	)
-	m.searchList.Title = fmt.Sprintf("%s Results (loading...)", m.searchQueryMode.Label())
+	m.refreshSearchTitle()
 	m.searchSeq++
 	return m.beginLoading(searchCmd(m.ctx, m.app, query, m.searchQueryMode, m.searchSeq))
 }
@@ -2351,7 +2419,9 @@ func (m *dashboardModel) setSearchQueryMode(mode model.SearchMode) {
 		return
 	}
 	m.searchQueryMode = mode
-	m.searchList.Title = fmt.Sprintf("%s Results", mode.Label())
+	// The results on screen were fetched in the old mode, so the header is
+	// left naming them; only the next search renames it.
+	m.refreshSearchTitle()
 	m.infoMsg = fmt.Sprintf("Search mode: %s (%s)", strings.ToLower(mode.Label()), mode.Description())
 	m.searchInput.Placeholder = searchPlaceholderForMode(mode)
 	m.updateSearchSuggestions()
@@ -2462,6 +2532,21 @@ func searchPlaceholderForMode(mode model.SearchMode) string {
 	}
 }
 
+// refreshSearchTitle names the results the panel is actually showing: the mode
+// they were fetched with and how many came back, not the mode the user has
+// switched to since.
+func (m *dashboardModel) refreshSearchTitle() {
+	if m.searchLoading {
+		m.searchList.Title = fmt.Sprintf("%s Results (loading...)", m.searchQueryMode.Label())
+		return
+	}
+	mode := m.lastSearchMode
+	if mode == "" {
+		mode = m.searchQueryMode
+	}
+	m.searchList.Title = fmt.Sprintf("%s Results (%d)", mode.Label(), len(m.searchBooks))
+}
+
 func (m *dashboardModel) enterSearchNormalMode() {
 	m.searchMode = searchModeNormal
 	m.searchInput.Blur()
@@ -2490,6 +2575,10 @@ func (m *dashboardModel) resize() {
 	if leftContentW < 8 {
 		leftContentW = 8
 	}
+
+	// "[NORMAL] [BOOK] / " eats the front of the search card's row; the input
+	// takes what is left instead of being cut off mid-placeholder.
+	m.searchInput.Width = max(4, leftContentW-20)
 
 	m.readingList.SetSize(leftContentW, readingContentH)
 	m.okuList.SetSize(leftContentW, okuContentH)

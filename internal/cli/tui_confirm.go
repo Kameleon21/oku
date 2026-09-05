@@ -66,6 +66,7 @@ func renderConfirmModal(c confirmState, width int) string {
 		Padding(0, 2)
 	idleStyle := lipgloss.NewStyle().
 		Foreground(colorMidGray).
+		Background(colorCharcoal).
 		Padding(0, 2)
 
 	left := idleStyle.Render(c.ConfirmText)
@@ -76,11 +77,16 @@ func renderConfirmModal(c confirmState, width int) string {
 		right = cancelStyle.Render(c.CancelText)
 	}
 
-	buttons := lipgloss.NewStyle().
+	// Every part of the row carries the modal background: the gap between the
+	// buttons and the space either side of them included, or a black band
+	// shows through the charcoal panel.
+	buttons := modalBgStyle.
 		Width(width - 6).
 		Align(lipgloss.Center).
-		Render(lipgloss.JoinHorizontal(lipgloss.Center, left, "  ", right))
+		Render(lipgloss.JoinHorizontal(lipgloss.Center, left, modalBgStyle.Render("  "), right))
 
-	content := c.Message + "\n\n" + buttons + "\n\n" + dimStyleTUI.Render("y/n or Enter/Esc")
+	content := modalValueStyle.Render(c.Message) + "\n\n" +
+		buttons + "\n\n" +
+		modalDimStyle.Render("y/n or Enter/Esc")
 	return renderModalPanel("Confirm", content, width)
 }

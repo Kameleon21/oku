@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -1455,4 +1456,151 @@ func stripANSI(s string) string {
 		i++
 	}
 	return b.String()
+}
+
+func TestLongOrMultilineMessagesKeepTheFrameIntact(t *testing.T) {
+	messages := []string{
+		strings.Repeat("network unreachable ", 10),
+		"Post \"https://api.hardcover.app/v1/graphql\":\ndial tcp: lookup failed\nand a third line",
+	}
+	for _, size := range [][2]int{{80, 24}, {120, 40}} {
+		w, h := size[0], size[1]
+		for i, msg := range messages {
+			m := renderedDashboard(w, h)
+			m.setSection(sectionReading)
+			m.errMsg = msg
+
+			frame := m.frame()
+			lines := strings.Split(frame, "\n")
+			if len(lines) != h {
+				t.Fatalf("%dx%d message %d: frame has %d lines, want %d", w, h, i, len(lines), h)
+			}
+			for n, line := range lines {
+				if got := lipgloss.Width(line); got > w {
+					t.Fatalf("%dx%d message %d: line %d is %d wide", w, h, i, n, got)
+				}
+			}
+			if last := stripANSI(lines[h-1]); !strings.Contains(last, "? help") {
+				t.Fatalf("%dx%d message %d: last line is %q, want the help bar", w, h, i, last)
+			}
+			if strings.Contains(stripANSI(lines[0]), "dial tcp") &&
+				strings.Contains(stripANSI(lines[1]), "lookup failed") {
+				t.Fatalf("%dx%d message %d: the message wrapped the status bar", w, h, i)
+			}
+		}
+	}
+}
+
+func TestListCardShowsHowFarDownTheListIs(t *testing.T) {
+	m := renderedDashboard(120, 40)
+	books := make([]model.UserBook, 0, 30)
+	for i := 0; i < 30; i++ {
+		books = append(books, model.UserBook{Book: model.Book{ID: 100 + i, Title: fmt.Sprintf("Book %d", i)}})
+	}
+	m.okuBooks = books
+	m.refreshListItems()
+	m.setSection(sectionOku)
+
+	badge := m.listOverflowBadge(sectionOku)
+	if badge != "1/30" {
+		t.Fatalf("overflow badge = %q, want 1/30", badge)
+	}
+	if !strings.Contains(stripANSI(m.frame()), badge) {
+		t.Fatal("the Oku card should show the overflow badge")
+	}
+
+	// A list that fits says nothing.
+	m.okuBooks = books[:1]
+	m.refreshListItems()
+	if got := m.listOverflowBadge(sectionOku); got != "" {
+		t.Fatalf("overflow badge = %q, want none when the list fits", got)
+	}
+}
+
+func TestProgressRowFitsTheDetailPane(t *testing.T) {
+	for _, size := range [][2]int{{80, 24}, {120, 40}} {
+		m := renderedDashboard(size[0], size[1])
+		m.setSection(sectionReading)
+
+		w := m.rightPanelContentWidth()
+		for _, line := range strings.Split(stripANSI(m.detailsView(w)), "\n") {
+			if got := lipgloss.Width(line); got > w {
+				t.Fatalf("%dx%d: detail line %q is %d wide, want <= %d", size[0], size[1], line, got, w)
+			}
+		}
+		if !strings.Contains(stripANSI(m.frame()), "29%") {
+			t.Fatalf("%dx%d: the progress percentage should not be clipped", size[0], size[1])
+		}
+	}
+}
+
+func TestTimerSectionStopsWithT(t *testing.T) {
+	m := renderedDashboard(120, 40)
+	m.setSection(sectionTimer)
+	m.timerState = &model.TimerState{BookID: 1, StartedAt: time.Now()}
+
+	updated, cmd := m.updateLibraryMode(runeKey('t'))
+	if cmd == nil {
+		t.Fatal("t should stop the running timer in the Timer section too")
+	}
+	if updated.(dashboardModel).timerSelecting {
+		t.Fatal("stopping must not open the book picker")
+	}
+}
+
+func TestSecondTimerPressIsGuardedWhileInFlight(t *testing.T) {
+	m := renderedDashboard(120, 40)
+	m.setSection(sectionReading)
+
+	updated, cmd := m.updateLibraryMode(runeKey('t'))
+	started := updated.(dashboardModel)
+	if cmd == nil {
+		t.Fatal("t should start a timer")
+	}
+
+	updated, cmd = started.updateLibraryMode(runeKey('t'))
+	if cmd != nil {
+		t.Fatal("a second t before the first result returns must not start another session")
+	}
+	if !strings.Contains(updated.(dashboardModel).infoMsg, "in flight") {
+		t.Fatalf("infoMsg = %q, want the in-flight notice", updated.(dashboardModel).infoMsg)
+	}
+}
+
+func TestSearchHeaderNamesTheResultsOnScreen(t *testing.T) {
+	m := newTestDashboard()
+	m.section = sectionSearch
+	m.searchInput.SetValue("dune")
+	m.inflight = 1
+
+	updated, _ := m.Update(searchLoadedMsg{
+		results: []model.SearchResult{{ID: 1, Title: "Dune"}, {ID: 2, Title: "Dune Messiah"}},
+		query:   "dune",
+		mode:    model.SearchModeBook,
+		seq:     m.searchSeq,
+	})
+	got := updated.(dashboardModel)
+	if got.searchList.Title != "BOOK Results (2)" {
+		t.Fatalf("title = %q, want BOOK Results (2)", got.searchList.Title)
+	}
+
+	// Switching the mode does not rename results fetched in the old one.
+	got.setSearchQueryMode(model.SearchModeAuthor)
+	if got.searchList.Title != "BOOK Results (2)" {
+		t.Fatalf("title after switching mode = %q, want the results' own mode", got.searchList.Title)
+	}
+
+	// A failed search leaves the previous results, and their count, named.
+	got.inflight = 1
+	got.searchLoading = true
+	updated, _ = got.Update(searchLoadedMsg{
+		query: "dune",
+		mode:  model.SearchModeAuthor,
+		seq:   got.searchSeq,
+		err:   errors.New("network down"),
+	})
+	failed := updated.(dashboardModel)
+	if failed.searchList.Title != "BOOK Results (2)" {
+		t.Fatalf("title after a failed search = %q, want the results still on screen", failed.searchList.Title)
+	}
 }
