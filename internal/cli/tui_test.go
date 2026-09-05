@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func runeKey(r rune) tea.KeyMsg {
@@ -1040,5 +1041,52 @@ func TestSearchErrorClearsLoadingTitle(t *testing.T) {
 	}
 	if got.searchLoading {
 		t.Fatal("a failed search should clear searchLoading")
+	}
+}
+
+// renderedDashboard builds a loaded dashboard of the given size with a couple
+// of books on each shelf, ready to render.
+func renderedDashboard(w, h int) dashboardModel {
+	m := newTestDashboard()
+	m.loaded = true
+	m.readingBooks = []model.UserBook{
+		{Book: model.Book{ID: 1, Title: "Dune", Pages: 412}, CurrentPage: 120},
+		{Book: model.Book{ID: 2, Title: "Foundation", Pages: 255}},
+	}
+	m.okuBooks = []model.UserBook{
+		{Book: model.Book{ID: 3, Title: "Meditations"}},
+	}
+	m.refreshListItems()
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	return updated.(dashboardModel)
+}
+
+func TestViewFillsTerminalExactly(t *testing.T) {
+	sections := []focusSection{
+		sectionIntro, sectionReading, sectionOku,
+		sectionSearch, sectionStats, sectionTimer,
+	}
+	for _, size := range [][2]int{{80, 24}, {120, 40}} {
+		w, h := size[0], size[1]
+		for _, section := range sections {
+			m := renderedDashboard(w, h)
+			m.setSection(section)
+
+			// The layout must fill the screen on its own, not be padded
+			// into it by View's final clamp.
+			if got := len(strings.Split(m.frame(), "\n")); got != h {
+				t.Fatalf("%dx%d section %v: frame has %d lines, want %d", w, h, section, got, h)
+			}
+
+			lines := strings.Split(m.View(), "\n")
+			if len(lines) != h {
+				t.Fatalf("%dx%d section %v: view has %d lines, want %d", w, h, section, len(lines), h)
+			}
+			for i, line := range lines {
+				if got := lipgloss.Width(line); got > w {
+					t.Fatalf("%dx%d section %v: line %d is %d wide, want <= %d", w, h, section, i, got, w)
+				}
+			}
+		}
 	}
 }

@@ -33,6 +33,10 @@ const (
 	backgroundCheckEvery = 1 * time.Minute
 )
 
+// pagePromptRows is how many rows View spends on the page-update prompt it
+// draws under the layout.
+const pagePromptRows = 1
+
 type focusSection int
 
 const (
@@ -353,24 +357,26 @@ func newDashboardModel(ctx context.Context, a *app.App) dashboardModel {
 		Foreground(colorDarkGray).
 		Padding(0, 0, 0, 2)
 
-	newList := func(title string) list.Model {
+	// The section card already prints the name and the count, and the panels
+	// are only a handful of rows tall, so a list spends none of them on its
+	// own title bar or on pagination dots. Filtering stays enabled (SetItems
+	// reapplies an active filter) but its title-bar row is not drawn.
+	newList := func() list.Model {
 		l := list.New(nil, delegate, 40, 12)
-		l.Title = title
+		l.SetShowTitle(false)
+		l.SetShowFilter(false)
 		l.SetShowStatusBar(false)
+		l.SetShowPagination(false)
 		l.SetFilteringEnabled(true)
 		l.SetShowHelp(false)
 		l.DisableQuitKeybindings()
-
-		styles := list.DefaultStyles()
-		styles.Title = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(colorCream).
-			Background(colorCharcoal).
-			Padding(0, 1)
-		styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 1, 0)
-		l.Styles = styles
 		return l
 	}
+
+	searchL := newList()
+	// The search results panel has no card label, so it prints this title as
+	// its own one-line header.
+	searchL.Title = model.SearchModeBook.Label() + " Results"
 
 	searchIn := textinput.New()
 	searchIn.Placeholder = "Search books..."
@@ -414,9 +420,9 @@ func newDashboardModel(ctx context.Context, a *app.App) dashboardModel {
 		searchSub:         searchSubInput,
 		searchQueryMode:   model.SearchModeBook,
 		density:           currentOutputDensity(),
-		readingList:       newList("Reading"),
-		okuList:           newList("Oku"),
-		searchList:        newList("Search Results"),
+		readingList:       newList(),
+		okuList:           newList(),
+		searchList:        searchL,
 		searchInput:       searchIn,
 		pageInput:         pageIn,
 		reviewRatingInput: reviewRatingIn,
@@ -1245,6 +1251,13 @@ func (m dashboardModel) updateReviewRatingMode(msg tea.KeyMsg) (tea.Model, tea.C
 // ── View ───────────────────────────────────────────────────────────────────
 
 func (m dashboardModel) View() string {
+	return m.fitToScreen(m.frame())
+}
+
+// frame renders the dashboard at its natural size. View clamps it to the
+// terminal; keeping the two apart lets a test assert that the layout really
+// fills the screen instead of being padded into it.
+func (m dashboardModel) frame() string {
 	if !m.loaded {
 		return "\n  " + m.spin.View() + " Loading dashboard..."
 	}
@@ -1291,6 +1304,36 @@ func (m dashboardModel) View() string {
 	return body
 }
 
+// fitToScreen pads the frame to the terminal and clamps it to those bounds, so
+// an unusually long book title or error can never push the layout off-screen
+// or wrap it onto a row that does not exist.
+func (m dashboardModel) fitToScreen(frame string) string {
+	if m.width <= 0 || m.height <= 0 {
+		return frame
+	}
+	return lipgloss.NewStyle().
+		MaxWidth(m.width).
+		Height(m.height).
+		MaxHeight(m.height).
+		Render(frame)
+}
+
+// chromeRows counts the rows View draws outside the two-column layout: the
+// status bar, plus whatever footer the current mode prints under it.
+func (m dashboardModel) chromeRows() int {
+	if m.mode == modeUpdatePage {
+		return 1 + pagePromptRows
+	}
+	return 1 + 1 // status bar + help bar
+}
+
+// layoutHeight is the height of the two-column layout, borders included. It
+// takes every row the chrome does not, so the panels reach the bottom of the
+// terminal instead of leaving it blank.
+func (m dashboardModel) layoutHeight() int {
+	return max(8, m.height-m.chromeRows())
+}
+
 // rightPanelContentWidth mirrors renderLayout's width math for the right
 // panel's content area.
 func (m dashboardModel) rightPanelContentWidth() int {
@@ -1303,29 +1346,38 @@ func (m dashboardModel) rightPanelContentWidth() int {
 // rightPanelContentHeight mirrors renderLayout's height math for the right
 // panel's content area.
 func (m dashboardModel) rightPanelContentHeight() int {
-	totalH := max(8, m.height-6)
-	return max(1, totalH-2)
+	return max(1, m.layoutHeight()-2)
 }
 
 // renderLayout renders the 2-column layout: left sections + right context panel.
 func (m dashboardModel) renderLayout() string {
 	totalW := max(60, m.width-2)
-	totalH := max(8, m.height-6)
-	panelInnerH := max(1, totalH-2)
+	panelInnerH := m.rightPanelContentHeight()
 	leftW := max(28, totalW*2/5)
 
-	leftContent := m.renderSections(leftW-2, panelInnerH)
+	leftContent := clampPanelContent(m.renderSections(leftW-2, panelInnerH), leftW, panelInnerH)
 	leftPanel := panelFocusedStyle.Width(leftW).Height(panelInnerH).Render(leftContent)
 
 	// Right panel: context-sensitive.
 	rightW := max(28, m.width-lipgloss.Width(leftPanel)-2)
-	rightContent := m.rightPanelView(rightW - 4)
+	rightContent := clampPanelContent(m.rightPanelView(rightW-4), rightW, panelInnerH)
 	rightPanel := panelStyle.
 		Width(rightW).
 		Height(panelInnerH).
 		Render(rightContent)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
+}
+
+// clampPanelContent pins a panel's content to its box: over-long lines are cut
+// instead of wrapped, and content past the last row is dropped, so one long
+// title can never stretch the layout past the bottom of the terminal.
+func clampPanelContent(content string, w, h int) string {
+	return lipgloss.NewStyle().
+		MaxWidth(w).
+		Height(h).
+		MaxHeight(h).
+		Render(content)
 }
 
 // renderSections renders the left panel content: section labels + expanded section.
@@ -1338,6 +1390,10 @@ func (m dashboardModel) renderSections(w, h int) string {
 	heights := m.leftSectionHeights(h)
 	parts := make([]string, 0, len(defs))
 	for _, def := range defs {
+		// A zero-height card still costs a row once joined, so drop it.
+		if heights[def.id] <= 0 {
+			continue
+		}
 		parts = append(parts, m.renderSectionCard(def, w, heights[def.id], def.id == m.section))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
@@ -1460,22 +1516,20 @@ func (m dashboardModel) leftSectionHeights(totalH int) map[focusSection]int {
 }
 
 func (m dashboardModel) renderSectionCard(def sectionDef, w, h int, focused bool) string {
-	label := m.formatSectionLabel(def.id, def.label, def.count, focused)
 	if h <= 0 {
 		return ""
 	}
+	label := m.formatSectionLabel(def.id, def.label, def.count, focused)
 	if h < 3 {
-		return lipgloss.NewStyle().Width(w).Render(label)
+		// Too short to draw a border around: just the label.
+		return clampPanelContent(label, w, h)
 	}
 	innerH := h - 2
 
 	content := label
 	if def.id == sectionReading || def.id == sectionOku || def.id == sectionSearch {
-		contentH := innerH - 1 // label + remaining content area
-		if contentH < 0 {
-			contentH = 0
-		}
-		if contentH > 0 {
+		// innerH > 1 leaves at least one row under the label.
+		if innerH > 1 {
 			if body := m.sectionContent(def.id, max(8, w-4)); body != "" {
 				content += "\n" + body
 			}
@@ -1486,7 +1540,10 @@ func (m dashboardModel) renderSectionCard(def sectionDef, w, h int, focused bool
 	if focused {
 		style = panelFocusedStyle
 	}
-	return style.Width(w).Height(innerH).Render(content)
+	// A list whose items are taller than the rows it was given renders past
+	// them; clip so the overflow cannot push the cards below this one off the
+	// panel.
+	return style.Width(w).Height(innerH).Render(clampPanelContent(content, w, innerH))
 }
 
 func (m dashboardModel) formatSectionLabel(id focusSection, label string, count int, focused bool) string {
@@ -1665,7 +1722,7 @@ func (m dashboardModel) searchPanelView() string {
 		return dimStyleTUI.Render(fmt.Sprintf("  No results for %q", m.lastQuery))
 	}
 
-	return m.searchList.View()
+	return listHeaderStyle.Render(m.searchList.Title) + "\n" + m.searchList.View()
 }
 
 func (m *dashboardModel) openReviewRatingModal(book model.UserBook) {
@@ -2139,8 +2196,7 @@ func (m *dashboardModel) enterSearchInsertMode() {
 
 func (m *dashboardModel) resize() {
 	totalW := max(60, m.width-2)
-	totalH := max(8, m.height-6)
-	panelInnerH := max(1, totalH-2)
+	panelInnerH := m.rightPanelContentHeight()
 
 	leftW := max(28, totalW*2/5)
 	rightW := max(28, totalW-leftW-3)
@@ -2155,7 +2211,7 @@ func (m *dashboardModel) resize() {
 
 	m.readingList.SetSize(leftContentW, readingContentH)
 	m.okuList.SetSize(leftContentW, okuContentH)
-	m.searchList.SetSize(rightW-4, max(1, panelInnerH-2))
+	m.searchList.SetSize(rightW-4, max(1, panelInnerH-1))
 }
 
 // ── List helpers ───────────────────────────────────────────────────────────
@@ -2175,8 +2231,6 @@ func (m *dashboardModel) refreshListItems() tea.Cmd {
 	}
 	readingCmd := m.readingList.SetItems(toItems(m.readingBooks))
 	okuCmd := m.okuList.SetItems(toItems(m.okuBooks))
-	m.readingList.Title = fmt.Sprintf("Reading (%d)", len(m.readingBooks))
-	m.okuList.Title = fmt.Sprintf("Oku (%d)", len(m.okuBooks))
 	return tea.Batch(readingCmd, okuCmd)
 }
 

@@ -59,6 +59,13 @@ var (
 			Background(colorCharcoal).
 			Foreground(colorLightGray).
 			Padding(0, 1)
+
+	// listHeaderStyle titles a list that has no section card of its own.
+	listHeaderStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(colorCream).
+			Background(colorCharcoal).
+			Padding(0, 1)
 )
 
 // ── Help Modal Style ────────────────────────────────────────────────────────
