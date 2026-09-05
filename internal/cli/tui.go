@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Kameleon21/oku/internal/app"
+	"github.com/Kameleon21/oku/internal/format"
 	"github.com/Kameleon21/oku/internal/model"
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
@@ -138,7 +139,7 @@ func (i userBookItem) Description() string {
 	case densityCompact:
 		return progress
 	case densityVerbose:
-		if meta := bookMetaLine(i.book.Book); meta != "" {
+		if meta := format.BookMeta(i.book.Book); meta != "" {
 			return fmt.Sprintf("%s · %s · %s", author, progress, meta)
 		}
 		return fmt.Sprintf("%s · %s", author, progress)
@@ -172,7 +173,7 @@ func (i searchResultItem) Description() string {
 	if i.result.Rating > 0 {
 		rating = fmt.Sprintf("★ %.2f", i.result.Rating)
 		if i.result.Ratings > 0 {
-			rating += fmt.Sprintf(" (%s ratings)", formatCount(i.result.Ratings))
+			rating += fmt.Sprintf(" (%s ratings)", format.Count(i.result.Ratings))
 		}
 	}
 
@@ -1952,7 +1953,7 @@ func (m dashboardModel) formatSectionLabel(id focusSection, label string, count 
 	// Timer running indicator.
 	if id == sectionTimer && m.timerState != nil {
 		elapsed := time.Since(m.timerState.StartedAt)
-		countStr = " " + keyStyle.Render(formatDuration(elapsed))
+		countStr = " " + keyStyle.Render(format.Duration(elapsed))
 	}
 
 	if focused {
@@ -2048,23 +2049,23 @@ func (m dashboardModel) detailsView(w int) string {
 		if b.Book.Rating > 0 {
 			rating := fmt.Sprintf("%.2f", b.Book.Rating)
 			if b.Book.RatingsCount > 0 {
-				rating += fmt.Sprintf(" (%s ratings)", formatCount(b.Book.RatingsCount))
+				rating += fmt.Sprintf(" (%s ratings)", format.Count(b.Book.RatingsCount))
 			}
 			writeField("Rating", rating)
 		}
 		if b.Book.ReviewsCount > 0 {
-			writeField("Reviews", formatCount(b.Book.ReviewsCount))
+			writeField("Reviews", format.Count(b.Book.ReviewsCount))
 		}
 		if b.Book.UsersReadCount > 0 || b.Book.UsersCount > 0 {
 			readers := ""
 			if b.Book.UsersReadCount > 0 {
-				readers = formatCount(b.Book.UsersReadCount) + " read"
+				readers = format.Count(b.Book.UsersReadCount) + " read"
 			}
 			if b.Book.UsersCount > 0 {
 				if readers != "" {
 					readers += " · "
 				}
-				readers += formatCount(b.Book.UsersCount) + " shelved"
+				readers += format.Count(b.Book.UsersCount) + " shelved"
 			}
 			writeField("Readers", readers)
 		}
@@ -3604,7 +3605,7 @@ func stopTimerCmd(a *app.App) tea.Cmd {
 			return timerOpDoneMsg{err: err}
 		}
 		return timerOpDoneMsg{
-			info:    fmt.Sprintf("Session complete — %s", formatDuration(session.Duration())),
+			info:    fmt.Sprintf("Session complete — %s", format.Duration(session.Duration())),
 			session: session,
 		}
 	}

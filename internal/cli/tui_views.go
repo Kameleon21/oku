@@ -5,9 +5,82 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Kameleon21/oku/internal/charts"
+	"github.com/Kameleon21/oku/internal/format"
 	"github.com/Kameleon21/oku/internal/model"
 	"github.com/charmbracelet/lipgloss"
 )
+
+// ── Chart decoration ───────────────────────────────────────────────────────
+
+// renderStatLine renders value/label pairs on one line:
+//
+//	"12 books   1,748 pages   ★ 3.9 avg"
+func renderStatLine(pairs [][2]string) string {
+	parts := make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		parts = append(parts, timerDisplayStyle.Render(p[0])+" "+dimStyleTUI.Render(p[1]))
+	}
+	return "  " + strings.Join(parts, "   ")
+}
+
+// paint turns a lipgloss style into the single-string decorator charts want.
+func paint(st lipgloss.Style) func(string) string {
+	return func(s string) string { return st.Render(s) }
+}
+
+// barPalette colours a bar chart; only the filled run differs between charts.
+func barPalette(filled lipgloss.Style) charts.Palette {
+	return charts.Palette{
+		Fill:  paint(filled),
+		Empty: paint(statsBarEmptyStyle),
+		Dim:   paint(dimStyleTUI),
+	}
+}
+
+// heatPalette colours the activity heatmap with the theme's four-step ramp.
+func heatPalette() charts.Palette {
+	return charts.Palette{Cell: heatmapCellStyled, Dim: paint(dimStyleTUI)}
+}
+
+// heatmapCellStyled renders an intensity level with TUI colors.
+func heatmapCellStyled(level int) string {
+	switch level {
+	case 4:
+		return heatmapLevel4Style.Render("█")
+	case 3:
+		return heatmapLevel3Style.Render("▓")
+	case 2:
+		return heatmapLevel2Style.Render("▒")
+	case 1:
+		return heatmapLevel1Style.Render("░")
+	default:
+		return heatmapEmptyStyle.Render("·")
+	}
+}
+
+// renderHeatmapTUI returns a heatmap string for the TUI (no printing to
+// stdout), narrowed to the weeks the pane can actually draw.
+func renderHeatmapTUI(activities []model.DayActivity, weeks, availWidth int) string {
+	return charts.Heatmap(activities, charts.FitHeatmapWeeks(weeks, availWidth), heatPalette())
+}
+
+// clipLines returns at most height lines of s starting at offset, clamping the
+// offset so the last page stays full. The second return is the clamped offset.
+func clipLines(s string, offset, height int) (string, int) {
+	lines := strings.Split(s, "\n")
+	if height <= 0 || len(lines) <= height {
+		return s, 0
+	}
+	maxOffset := len(lines) - height
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return strings.Join(lines[offset:offset+height], "\n"), offset
+}
 
 const okuASCII = `
    ____  __ __  __  __
@@ -50,9 +123,9 @@ func (m dashboardModel) introView(w int) string {
 		}
 
 		if bookTitle != "" {
-			writeField("Timer", fmt.Sprintf("%s (%s)", formatDuration(elapsed), bookTitle))
+			writeField("Timer", fmt.Sprintf("%s (%s)", format.Duration(elapsed), bookTitle))
 		} else {
-			writeField("Timer", formatDuration(elapsed))
+			writeField("Timer", format.Duration(elapsed))
 		}
 	} else {
 		writeField("Timer", "not running")
@@ -86,7 +159,7 @@ func (m dashboardModel) statsView(w int) string {
 	// Year at a glance.
 	pairs := [][2]string{
 		{fmt.Sprintf("%d", rs.Year.BooksFinished), "books"},
-		{groupThousands(rs.Year.PagesRead), "pages"},
+		{format.Thousands(rs.Year.PagesRead), "pages"},
 	}
 	if rs.Year.AvgRating > 0 {
 		pairs = append(pairs, [2]string{fmt.Sprintf("★ %.1f", rs.Year.AvgRating), "avg"})
@@ -173,7 +246,7 @@ func (m dashboardModel) monthsChart(rs *model.ReadingStats) chartBlock {
 			Count: rs.Months[i],
 		})
 	}
-	return chartBlock{"Books per month", renderBarChartH(rows, 3, 10, statsBarFilledStyle)}
+	return chartBlock{"Books per month", charts.BarChartH(rows, 3, 10, barPalette(statsBarFilledStyle))}
 }
 
 func (m dashboardModel) ratingsChart(rs *model.ReadingStats) chartBlock {
@@ -190,7 +263,7 @@ func (m dashboardModel) ratingsChart(rs *model.ReadingStats) chartBlock {
 	if len(rows) == 0 {
 		return chartBlock{}
 	}
-	return chartBlock{"Ratings", renderBarChartH(rows, 4, 10, goldBarStyle)}
+	return chartBlock{"Ratings", charts.BarChartH(rows, 4, 10, barPalette(goldBarStyle))}
 }
 
 func (m dashboardModel) yearsChart(rs *model.ReadingStats) chartBlock {
@@ -201,7 +274,7 @@ func (m dashboardModel) yearsChart(rs *model.ReadingStats) chartBlock {
 	if len(rows) > 6 {
 		rows = rows[len(rows)-6:]
 	}
-	return chartBlock{"Books per year", renderBarChartH(rows, 4, 10, statsBarFilledStyle)}
+	return chartBlock{"Books per year", charts.BarChartH(rows, 4, 10, barPalette(statsBarFilledStyle))}
 }
 
 func (m dashboardModel) genresChart(rs *model.ReadingStats) chartBlock {
@@ -220,7 +293,7 @@ func (m dashboardModel) genresChart(rs *model.ReadingStats) chartBlock {
 		}
 		rows = append(rows, model.LabelCount{Label: label, Count: g.Count})
 	}
-	return chartBlock{"Top genres", renderBarChartH(rows, labelW, 10, oliveBarStyle)}
+	return chartBlock{"Top genres", charts.BarChartH(rows, labelW, 10, barPalette(oliveBarStyle))}
 }
 
 // weeklyTimerBlock renders this week's timer minutes as day bars.
@@ -251,15 +324,15 @@ func (m dashboardModel) weeklyTimerBlock(w int) string {
 			statsBarEmptyStyle.Render(strings.Repeat("░", barWidth-filled))
 		timeStr := "    —"
 		if mins > 0 {
-			timeStr = fmt.Sprintf("%5s", formatDuration(time.Duration(mins)*time.Minute))
+			timeStr = fmt.Sprintf("%5s", format.Duration(time.Duration(mins)*time.Minute))
 		}
 		sb.WriteString(fmt.Sprintf("  %s  %s %s\n", dayNames[i], bar, dimStyleTUI.Render(timeStr)))
 	}
 
 	avg := m.weeklyStats.Total / max(1, m.weeklyStats.Sessions)
 	sb.WriteString(fmt.Sprintf("\n  Total: %s    Avg: %s    Sessions: %d",
-		formatDuration(time.Duration(m.weeklyStats.Total)*time.Minute),
-		formatDuration(time.Duration(avg)*time.Minute),
+		format.Duration(time.Duration(m.weeklyStats.Total)*time.Minute),
+		format.Duration(time.Duration(avg)*time.Minute),
 		m.weeklyStats.Sessions,
 	))
 	return sb.String()
@@ -373,7 +446,7 @@ func (m dashboardModel) timerView(w int) string {
 	if todayCount > 0 {
 		sb.WriteString("\n\n")
 		sb.WriteString(fmt.Sprintf("  Today  %d sessions  %s total",
-			todayCount, formatDuration(time.Duration(todayMinutes)*time.Minute)))
+			todayCount, format.Duration(time.Duration(todayMinutes)*time.Minute)))
 	}
 
 	// Recent sessions.
@@ -400,7 +473,7 @@ func (m dashboardModel) timerView(w int) string {
 
 			dur := ""
 			if s.EndedAt != nil {
-				dur = formatDuration(s.Duration())
+				dur = format.Duration(s.Duration())
 			}
 			bookTitle := s.BookTitle
 			if bookTitle == "" {

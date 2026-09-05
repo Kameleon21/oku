@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Kameleon21/oku/internal/format"
 	"github.com/Kameleon21/oku/internal/model"
 	"github.com/Kameleon21/oku/internal/picker"
 	"github.com/spf13/cobra"
@@ -93,7 +94,7 @@ func newTimerStopCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("\nSession complete — %s\n", formatDuration(session.Duration()))
+			fmt.Printf("\nSession complete — %s\n", format.Duration(session.Duration()))
 			if session.BookTitle != "" {
 				fmt.Printf("  Book: %s\n", session.BookTitle)
 			}
@@ -124,7 +125,7 @@ func newTimerStatusCmd() *cobra.Command {
 			}
 
 			elapsed := time.Since(state.StartedAt)
-			fmt.Printf("\nTimer running — %s elapsed\n", formatDuration(elapsed))
+			fmt.Printf("\nTimer running — %s elapsed\n", format.Duration(elapsed))
 			if state.BookID > 0 {
 				if b, err := a.Store.GetBookByID(state.BookID); err == nil && b != nil {
 					fmt.Printf("  Book: %s\n", b.Title)
@@ -196,7 +197,7 @@ func newTimerStatsCmd() *cobra.Command {
 
 				timeStr := "    —"
 				if m > 0 {
-					timeStr = fmt.Sprintf("%5s", formatDuration(time.Duration(m)*time.Minute))
+					timeStr = fmt.Sprintf("%5s", format.Duration(time.Duration(m)*time.Minute))
 				}
 				fmt.Printf("  %s  %s %s\n", dayNames[i], bar, timeStr)
 			}
@@ -207,8 +208,8 @@ func newTimerStatsCmd() *cobra.Command {
 				avg = stats.Total / stats.Sessions
 			}
 			fmt.Printf("  Total: %s    Avg: %s    Sessions: %d\n",
-				formatDuration(time.Duration(stats.Total)*time.Minute),
-				formatDuration(time.Duration(avg)*time.Minute),
+				format.Duration(time.Duration(stats.Total)*time.Minute),
+				format.Duration(time.Duration(avg)*time.Minute),
 				stats.Sessions,
 			)
 
@@ -258,7 +259,7 @@ func newTimerListCmd() *cobra.Command {
 				dur := ""
 				if s.EndedAt != nil {
 					endStr = s.EndedAt.Local().Format("3:04 PM")
-					dur = formatDuration(s.Duration())
+					dur = format.Duration(s.Duration())
 				}
 
 				bookTitle := s.BookTitle
@@ -279,17 +280,3 @@ func newTimerListCmd() *cobra.Command {
 }
 
 // formatDuration returns a human-friendly duration string like "1h 20m" or "45m 12s".
-func formatDuration(d time.Duration) string {
-	d = d.Round(time.Second)
-	h := int(d.Hours())
-	m := int(d.Minutes()) % 60
-	s := int(d.Seconds()) % 60
-
-	if h > 0 {
-		return fmt.Sprintf("%dh %dm", h, m)
-	}
-	if m > 0 {
-		return fmt.Sprintf("%dm %ds", m, s)
-	}
-	return fmt.Sprintf("%ds", s)
-}

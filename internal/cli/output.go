@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/Kameleon21/oku/internal/format"
 	"github.com/Kameleon21/oku/internal/model"
 )
 
@@ -64,7 +65,7 @@ func printBooks(books []model.UserBook) error {
 		title := titleStyle.Render(ub.Book.Title)
 		author := authorStyle.Render(ub.Book.AuthorString())
 		progress := pageStyle.Render(ub.Progress())
-		meta := bookMetaLine(ub.Book)
+		meta := format.BookMeta(ub.Book)
 		detail := bookDetailLine(ub.Book)
 
 		if density == densityCompact {
@@ -132,7 +133,7 @@ func printActiveBooks(books []model.UserBook) error {
 	for i, ub := range books {
 		num := dimStyle.Render(fmt.Sprintf("%d.", i+1))
 		progress := pageStyle.Render(ub.Progress())
-		meta := bookMetaLine(ub.Book)
+		meta := format.BookMeta(ub.Book)
 		detail := bookDetailLine(ub.Book)
 
 		if density == densityCompact {
@@ -161,36 +162,6 @@ func printActiveBooks(books []model.UserBook) error {
 	return nil
 }
 
-func bookMetaLine(b model.Book) string {
-	parts := make([]string, 0, 4)
-
-	if b.Rating > 0 {
-		rating := fmt.Sprintf("★ %.2f", b.Rating)
-		if b.RatingsCount > 0 {
-			rating += fmt.Sprintf(" (%s ratings)", formatCount(b.RatingsCount))
-		}
-		parts = append(parts, rating)
-	}
-
-	if b.UsersReadCount > 0 {
-		parts = append(parts, fmt.Sprintf("%s readers", formatCount(b.UsersReadCount)))
-	}
-
-	if b.ReleaseDate != "" {
-		parts = append(parts, "released "+b.ReleaseDate)
-	}
-
-	if b.FeaturedSeries != "" {
-		series := "series: " + b.FeaturedSeries
-		if b.FeaturedSeriesPosition > 0 {
-			series += fmt.Sprintf(" #%d", b.FeaturedSeriesPosition)
-		}
-		parts = append(parts, series)
-	}
-
-	return strings.Join(parts, " · ")
-}
-
 func bookDetailLine(b model.Book) string {
 	parts := make([]string, 0, 3)
 	if b.Slug != "" {
@@ -203,17 +174,6 @@ func bookDetailLine(b model.Book) string {
 		parts = append(parts, fmt.Sprintf("id:%d", b.ID))
 	}
 	return strings.Join(parts, " · ")
-}
-
-func formatCount(n int) string {
-	switch {
-	case n >= 1_000_000:
-		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
-	case n >= 1_000:
-		return fmt.Sprintf("%.1fK", float64(n)/1_000)
-	default:
-		return fmt.Sprintf("%d", n)
-	}
 }
 
 // printJSON writes v to stdout. The encode error is returned so a redirected
