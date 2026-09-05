@@ -1092,24 +1092,58 @@ func TestViewFillsTerminalExactly(t *testing.T) {
 }
 
 func TestHelpBarTruncatesToWidth(t *testing.T) {
-	m := renderedDashboard(60, 24)
-	m.setSection(sectionReading)
+	sections := []focusSection{
+		sectionIntro, sectionReading, sectionOku,
+		sectionSearch, sectionStats, sectionTimer,
+	}
+	for _, w := range []int{60, 79, 80, 100, 120, 200} {
+		for _, section := range sections {
+			m := renderedDashboard(w, 40)
+			m.setSection(section)
 
-	bar := m.contextHelpBar()
-	if strings.Contains(bar, "\n") {
-		t.Fatalf("help bar wrapped onto a second line: %q", bar)
-	}
-	if got := lipgloss.Width(bar); got > 60 {
-		t.Fatalf("help bar is %d wide, want <= 60", got)
-	}
-	if !strings.Contains(bar, "\u2026") {
-		t.Fatalf("help bar %q should mark the dropped hints with an ellipsis", bar)
-	}
+			bar := m.contextHelpBar()
+			if strings.Contains(bar, "\n") {
+				t.Fatalf("width %d section %v: help bar wrapped: %q", w, section, bar)
+			}
+			if got := lipgloss.Width(bar); got > w {
+				t.Fatalf("width %d section %v: help bar is %d wide", w, section, got)
+			}
 
-	wide := renderedDashboard(200, 24)
-	wide.setSection(sectionReading)
-	if strings.Contains(wide.contextHelpBar(), "\u2026") {
-		t.Fatal("a 200-column terminal has room for every hint")
+			// A truncated bar must end in the ellipsis, never in a dangling
+			// separator or half a word.
+			plain := strings.TrimRight(stripANSI(bar), " ")
+			if strings.Contains(plain, "\u2026") && !strings.HasSuffix(plain, "\u2026") {
+				t.Fatalf("width %d section %v: %q does not end at the ellipsis", w, section, plain)
+			}
+			if !strings.Contains(plain, "\u2026") {
+				// Nothing was dropped, so every hint has to be there.
+				for _, b := range m.helpBindings() {
+					if !strings.Contains(plain, b.Help().Key) {
+						t.Fatalf("width %d section %v: %q is missing %q", w, section, plain, b.Help().Key)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestHelpHintIsNeverTheHintThatGetsDropped(t *testing.T) {
+	for _, w := range []int{60, 79, 80, 100, 120} {
+		m := renderedDashboard(w, 40)
+		m.setSection(sectionReading)
+		if got := stripANSI(m.contextHelpBar()); !strings.Contains(got, "? help") {
+			t.Fatalf("width %d: %q should always keep the help hint", w, got)
+		}
+	}
+}
+
+func TestSearchInsertModeDoesNotAdvertiseHelp(t *testing.T) {
+	m := renderedDashboard(120, 40)
+	m.setSection(sectionSearch)
+	m.enterSearchInsertMode()
+
+	if got := stripANSI(m.contextHelpBar()); strings.Contains(got, "? help") {
+		t.Fatalf("help bar = %q, but ? types a literal in insert mode", got)
 	}
 }
 
@@ -1404,4 +1438,21 @@ func TestConfirmationDoesNotSwallowAsyncResults(t *testing.T) {
 	if got.isLoading() {
 		t.Fatal("the finished load should have released its slot")
 	}
+}
+
+// stripANSI removes the escape sequences so a test can look at the glyphs.
+func stripANSI(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if s[i] == 0x1b {
+			for i < len(s) && s[i] != 'm' {
+				i++
+			}
+			i++
+			continue
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
 }

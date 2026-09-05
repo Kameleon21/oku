@@ -2117,34 +2117,50 @@ func (m dashboardModel) helpBarWidth() int {
 	return max(minHelpBarWidth, m.width-2)
 }
 
-// contextHelpBar renders the hints for whatever has focus. help drops the
-// hints that do not fit and marks the cut with an ellipsis, so the bar always
-// stays on one line.
+// contextHelpBar renders the hints for whatever has focus, on one line.
 func (m dashboardModel) contextHelpBar() string {
-	h := m.help
-	h.Width = m.helpBarWidth()
+	return " " + m.renderHelpBar(m.helpBindings())
+}
 
-	bar := " " + h.ShortHelpView(m.helpBindings())
-	if m.width <= 0 {
-		return bar
+// renderHelpBar lays out as many hints as fit and marks the rest with an
+// ellipsis. help.Model can do this itself, but when the ellipsis is the thing
+// that does not fit its width check falls through and appends the hint anyway,
+// leaving a dangling separator to be cut mid-word; the bar drops whole hints
+// here instead, so the width is always honoured and the cut is always marked.
+func (m dashboardModel) renderHelpBar(bindings []key.Binding) string {
+	h := m.help
+	h.Width = 0 // The loop below owns the width.
+
+	view := h.ShortHelpView(bindings)
+	limit := m.helpBarWidth()
+	if limit <= 0 || lipgloss.Width(view)+2 <= limit {
+		return view
 	}
-	// The last hint help keeps can still spill by a column or two.
-	return ansi.Truncate(bar, m.width, "")
+
+	ellipsis := dimStyleTUI.Render("…")
+	for n := len(bindings) - 1; n >= 1; n-- {
+		candidate := h.ShortHelpView(bindings[:n]) + " " + ellipsis
+		if lipgloss.Width(candidate)+2 <= limit {
+			return candidate
+		}
+	}
+	return ellipsis
 }
 
 // helpBindings returns the hints for the focused section.
 func (m dashboardModel) helpBindings() []key.Binding {
 	switch m.section {
 	case sectionReading, sectionOku:
+		// Ordered by how often a key is reached for, with help first so it is
+		// the one hint a narrow terminal never drops. Enter is left out: the
+		// detail pane it opens is already on screen.
 		bindings := []key.Binding{
+			helpKey("?", "help"),
 			helpKey("j/k", "navigate"),
 			helpKey("h/l", "section"),
-			helpKey("↵", "details"),
+			helpKey("g/w/f/d/x", "status"),
 			helpKey("+/-", "page"),
 			helpKey("u", "update"),
-			helpKey("v", "review/rate"),
-			helpKey("g/w/f", "status"),
-			helpKey("d/x", "dnf/ignore"),
 		}
 		if m.section == sectionReading || m.timerState != nil {
 			label := "start timer"
@@ -2155,82 +2171,84 @@ func (m dashboardModel) helpBindings() []key.Binding {
 		}
 		return append(bindings,
 			helpKey("/", "search"),
+			helpKey("v", "rate"),
+			helpKey("s", "sync"),
 			helpKey("z", "density"),
 			helpKey("r", "refresh"),
-			helpKey("s", "sync"),
-			helpKey("?", "help"),
 		)
 	case sectionSearch:
 		if m.searchSub == searchSubResults {
 			return []key.Binding{
+				helpKey("?", "help"),
 				helpKey("j/k", "navigate"),
 				helpKey("↵", "add reading"),
 				helpKey("g/w/f/d", "status"),
-				helpKey("z", "density"),
 				helpKey("h/l", "input/next"),
+				helpKey("z", "density"),
 				helpKey("Esc", "back"),
-				helpKey("?", "help"),
 			}
 		}
 		if m.searchMode == searchModeInsert {
+			// ? is typed here, not a shortcut.
 			return []key.Binding{
 				helpKey("↵", "search"),
 				helpKey("Esc", "normal"),
-				helpKey("?", "help"),
 			}
 		}
 		return []key.Binding{
+			helpKey("?", "help"),
 			helpKey("↵", "search"),
 			helpKey("i/a", "insert"),
 			helpKey("m", "mode"),
 			helpKey("1/2/3", "book/author/genre"),
 			helpKey("h/l", "section"),
+			helpKey("z", "density"),
 			helpKey("Esc", "back"),
-			helpKey("?", "help"),
 		}
 	case sectionStats:
 		return []key.Binding{
+			helpKey("?", "help"),
 			helpKey("j/k", "scroll"),
 			helpKey("g", "top"),
 			helpKey("h/l", "section"),
 			helpKey("s", "sync"),
+			helpKey("r", "refresh"),
 			helpKey("/", "search"),
-			helpKey("?", "help"),
 			helpKey("q", "quit"),
 		}
 	case sectionTimer:
 		switch {
 		case m.timerSelecting && m.timerState == nil:
 			return []key.Binding{
+				helpKey("?", "help"),
 				helpKey("j/k", "choose"),
 				helpKey("↵", "start"),
 				helpKey("Esc", "cancel"),
-				helpKey("?", "help"),
 				helpKey("q", "quit"),
 			}
 		case m.timerState != nil:
 			return []key.Binding{
-				helpKey("s", "stop"),
+				helpKey("?", "help"),
+				helpKey("t/s", "stop"),
 				helpKey("h/l", "section"),
 				helpKey("/", "search"),
-				helpKey("?", "help"),
 				helpKey("q", "quit"),
 			}
 		default:
 			return []key.Binding{
+				helpKey("?", "help"),
 				helpKey("t", "choose + start"),
 				helpKey("h/l", "section"),
 				helpKey("/", "search"),
-				helpKey("?", "help"),
 				helpKey("q", "quit"),
 			}
 		}
 	default:
 		return []key.Binding{
+			helpKey("?", "help"),
 			helpKey("h/l", "section"),
 			helpKey("Tab", "next"),
 			helpKey("/", "search"),
-			helpKey("?", "help"),
 			helpKey("q", "quit"),
 		}
 	}
