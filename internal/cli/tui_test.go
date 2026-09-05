@@ -189,12 +189,12 @@ func TestSubmitSearchGuardAndEmptyValidation(t *testing.T) {
 	m := newTestDashboard()
 	m.searchLoading = true
 	m.searchInput.SetValue("dune")
-	if cmd := m.submitSearch(); cmd != nil {
-		t.Fatal("submitSearch() should return nil while search is already loading")
+	if cmd := m.submitSearch(); cmd == nil {
+		t.Fatal("a query typed over an in-flight search should be searchable")
 	}
 
-	m.searchLoading = false
 	m.searchInput.SetValue("   ")
+
 	if cmd := m.submitSearch(); cmd != nil {
 		t.Fatal("submitSearch() should return nil for empty query")
 	}
@@ -696,7 +696,8 @@ func TestReviewSaveFailureKeepsModalOpen(t *testing.T) {
 	updated, _ := m.updateReviewRatingMode(tea.KeyMsg{Type: tea.KeyCtrlS})
 	got := updated.(dashboardModel)
 
-	updated, cmd := got.Update(opDoneMsg{op: opReview, err: errors.New("save failed")})
+	updated, cmd := got.Update(opDoneMsg{op: opReview, seq: got.reviewSeq, err: errors.New("save failed")})
+
 	got = updated.(dashboardModel)
 
 	if cmd != nil {
@@ -762,10 +763,12 @@ func TestReviewSaveSuccessClosesModal(t *testing.T) {
 
 	updated, cmd := got.Update(opDoneMsg{
 		op:        opReview,
+		seq:       got.reviewSeq,
 		info:      "Updated rating (★★★)",
 		reload:    true,
 		markDirty: true,
 	})
+
 	got = updated.(dashboardModel)
 
 	if got.mode != modeLibrary || got.reviewBook != nil {
@@ -976,5 +979,66 @@ func TestSlashFocusResizesLists(t *testing.T) {
 	heights := got.leftSectionHeights(got.rightPanelContentHeight())
 	if want := max(1, heights[sectionReading]-3); got.readingList.Height() != want {
 		t.Fatalf("reading list height after / = %d, want %d", got.readingList.Height(), want)
+	}
+}
+
+func TestReviewModalIsReadOnlyWhileSaving(t *testing.T) {
+	m := newTestDashboard()
+	m.loaded = true
+	m.openReviewRatingModal(model.UserBook{Book: model.Book{ID: 42, Title: "Dune"}})
+	m.reviewRatingInput.SetValue("3")
+	m.reviewTextInput.SetValue("Strong first half.")
+
+	updated, _ := m.updateReviewRatingMode(tea.KeyMsg{Type: tea.KeyCtrlS})
+	saving := updated.(dashboardModel)
+	pendingSeq := saving.reviewSeq
+
+	updated, _ = saving.Update(runeKey('x'))
+	typed := updated.(dashboardModel)
+	if typed.reviewTextInput.Value() != "Strong first half." {
+		t.Fatalf("review text = %q, want it read-only while saving", typed.reviewTextInput.Value())
+	}
+
+	// Cancelling drops the pending result instead of reopening the modal.
+	updated, _ = typed.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	cancelled := updated.(dashboardModel)
+	if cancelled.mode != modeLibrary || cancelled.reviewBook != nil {
+		t.Fatal("esc should close the modal even while saving")
+	}
+
+	updated, _ = cancelled.Update(opDoneMsg{op: opReview, seq: pendingSeq, err: errors.New("save failed")})
+	late := updated.(dashboardModel)
+	if late.mode != modeLibrary {
+		t.Fatal("a result for a cancelled modal must not reopen it")
+	}
+	if late.reviewErr != "" {
+		t.Fatalf("reviewErr = %q, want the cancelled save reported through the status bar", late.reviewErr)
+	}
+	if late.errMsg != "save failed" {
+		t.Fatalf("errMsg = %q, want the failure reported in the status bar", late.errMsg)
+	}
+}
+
+func TestSearchErrorClearsLoadingTitle(t *testing.T) {
+	m := newTestDashboard()
+	m.section = sectionSearch
+	m.searchInput.SetValue("dune")
+	if cmd := m.submitSearch(); cmd == nil {
+		t.Fatal("submitSearch() returned nil cmd")
+	}
+
+	updated, _ := m.Update(searchLoadedMsg{
+		query: "dune",
+		mode:  model.SearchModeBook,
+		seq:   m.searchSeq,
+		err:   errors.New("network down"),
+	})
+	got := updated.(dashboardModel)
+
+	if strings.Contains(got.searchList.Title, "loading") {
+		t.Fatalf("searchList title = %q, want the loading state cleared", got.searchList.Title)
+	}
+	if got.searchLoading {
+		t.Fatal("a failed search should clear searchLoading")
 	}
 }

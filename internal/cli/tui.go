@@ -199,7 +199,9 @@ const (
 )
 
 type opDoneMsg struct {
-	op        opKind
+	op opKind
+	// seq identifies the modal session that started the operation.
+	seq       int
 	info      string
 	err       error
 	reload    bool
@@ -274,6 +276,9 @@ type dashboardModel struct {
 	reviewBook       *model.UserBook
 	reviewFocus      dashboardReviewFocus
 	reviewSubmitting bool
+	// reviewSeq identifies the modal session a save belongs to, so the result
+	// of a cancelled (or reopened) modal is ignored.
+	reviewSeq int
 	// reviewErr is the review modal's own error, rendered inside the overlay
 	// because the status bar sits behind it.
 	reviewErr string
@@ -608,6 +613,7 @@ func (m dashboardModel) applySearchLoaded(msg searchLoadedMsg) (tea.Model, tea.C
 
 	m.searchLoadingQuery = ""
 	if msg.err != nil {
+		m.searchList.Title = fmt.Sprintf("%s Results", msg.mode.Label())
 		m.errMsg = msg.err.Error()
 		m.infoMsg = ""
 		return m, nil
@@ -639,7 +645,8 @@ func (m dashboardModel) applySearchLoaded(msg searchLoadedMsg) (tea.Model, tea.C
 // applyOpDone applies the result of a mutating operation. Results other than
 // the review modal's own save leave the modal, and its draft, untouched.
 func (m dashboardModel) applyOpDone(msg opDoneMsg) (tea.Model, tea.Cmd) {
-	if m.mode == modeReviewRating && msg.op == opReview && m.reviewSubmitting {
+	if m.mode == modeReviewRating && msg.op == opReview &&
+		m.reviewSubmitting && msg.seq == m.reviewSeq {
 		return m.applyReviewSaveDone(msg)
 	}
 
@@ -1165,6 +1172,20 @@ func (m dashboardModel) quickProgress(delta int) (tea.Model, tea.Cmd) {
 // ── Review/rating mode ─────────────────────────────────────────────────────
 
 func (m dashboardModel) updateReviewRatingMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.reviewSubmitting {
+		// The fields are read-only until the save reports back; cancelling
+		// bumps reviewSeq, so the pending result is ignored.
+		switch msg.String() {
+		case "ctrl+c":
+			return m, tea.Quit
+		case "esc":
+			m.closeReviewRatingModal()
+			m.infoMsg = "Review update cancelled"
+			return m, nil
+		}
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
@@ -1187,7 +1208,7 @@ func (m dashboardModel) updateReviewRatingMode(msg tea.KeyMsg) (tea.Model, tea.C
 		}
 		return m, nil
 	case "ctrl+s":
-		if m.reviewSubmitting || m.reviewBook == nil {
+		if m.reviewBook == nil {
 			return m, nil
 		}
 		rating, err := parseReviewRatingInput(m.reviewRatingInput.Value())
@@ -1201,7 +1222,7 @@ func (m dashboardModel) updateReviewRatingMode(msg tea.KeyMsg) (tea.Model, tea.C
 		// The modal stays open until the save succeeds, so a failure can show
 		// the error without discarding the draft.
 		m.reviewSubmitting = true
-		return m.startOp(submitReviewRatingCmd(m.ctx, m.app, m.reviewBook.Book.ID, rating, review))
+		return m.startOp(submitReviewRatingCmd(m.ctx, m.app, m.reviewBook.Book.ID, rating, review, m.reviewSeq))
 	}
 
 	var cmd tea.Cmd
@@ -1646,6 +1667,7 @@ func (m *dashboardModel) openReviewRatingModal(book model.UserBook) {
 	m.showHelp = false
 	m.reviewSubmitting = false
 	m.reviewErr = ""
+	m.reviewSeq++
 
 	if b.Rating > 0 {
 		m.reviewRatingInput.SetValue(fmt.Sprintf("%.1f", b.Rating))
@@ -1661,6 +1683,7 @@ func (m *dashboardModel) closeReviewRatingModal() {
 	m.reviewBook = nil
 	m.reviewSubmitting = false
 	m.reviewErr = ""
+	m.reviewSeq++
 	m.reviewRatingInput.Blur()
 	m.reviewTextInput.Blur()
 }
@@ -1922,11 +1945,10 @@ func (m dashboardModel) hasSearchResults() bool {
 	return len(m.searchList.Items()) > 0
 }
 
+// submitSearch starts a search. An in-flight search is not a reason to
+// refuse: searchSeq drops whichever result is superseded, so a typo can be
+// corrected immediately.
 func (m *dashboardModel) submitSearch() tea.Cmd {
-	if m.searchLoading {
-		return nil
-	}
-
 	query := strings.TrimSpace(m.searchInput.Value())
 	if query == "" {
 		m.errMsg = "search query cannot be empty"
@@ -1959,7 +1981,6 @@ func (m *dashboardModel) submitSearch() tea.Cmd {
 	m.searchList.Title = fmt.Sprintf("%s Results (loading...)", m.searchQueryMode.Label())
 	m.searchSeq++
 	return m.beginLoading(searchCmd(m.ctx, m.app, query, m.searchQueryMode, m.searchSeq))
-
 }
 
 func (m *dashboardModel) cycleDensity() tea.Cmd {
@@ -2490,10 +2511,10 @@ func updateProgressCmd(ctx context.Context, a *app.App, bookID int, rawPage stri
 	}
 }
 
-func submitReviewRatingCmd(ctx context.Context, a *app.App, bookID int, rating float64, review string) tea.Cmd {
+func submitReviewRatingCmd(ctx context.Context, a *app.App, bookID int, rating float64, review string, seq int) tea.Cmd {
 	return func() tea.Msg {
 		if err := a.ReviewBook(ctx, bookID, rating, review); err != nil {
-			return opDoneMsg{op: opReview, err: err}
+			return opDoneMsg{op: opReview, seq: seq, err: err}
 		}
 		info := fmt.Sprintf("Updated review and rating (%s)", model.StarString(rating))
 		if strings.TrimSpace(review) == "" {
@@ -2501,10 +2522,12 @@ func submitReviewRatingCmd(ctx context.Context, a *app.App, bookID int, rating f
 		}
 		return opDoneMsg{
 			op:        opReview,
+			seq:       seq,
 			info:      info,
 			reload:    true,
 			markDirty: true,
 		}
+
 	}
 }
 
