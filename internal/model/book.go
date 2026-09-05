@@ -144,6 +144,23 @@ func ValidateRating(r float64) error {
 	return nil
 }
 
+// ParseRating reads a rating a user typed. An empty string is "unrated" (0),
+// so clearing the field is a way of removing a rating rather than an error.
+func ParseRating(raw string) (float64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+	rating, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, fmt.Errorf("rating must be a number between 0 and 5")
+	}
+	if err := ValidateRating(rating); err != nil {
+		return 0, err
+	}
+	return rating, nil
+}
+
 // StarString renders a 5-slot rating string.
 func StarString(rating float64) string {
 	if rating <= 0 {

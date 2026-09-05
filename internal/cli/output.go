@@ -10,43 +10,28 @@ import (
 
 	"github.com/Kameleon21/oku/internal/format"
 	"github.com/Kameleon21/oku/internal/model"
+	"github.com/Kameleon21/oku/internal/tui"
 )
 
-// The CLI output shares the dashboard's palette (tui_styles.go), so a book
-// looks the same in `oku reading` as it does in the TUI.
+// The CLI output shares the dashboard's palette, so a book looks the same in
+// `oku reading` as it does in the TUI.
 var (
-	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(th.accent)
-	authorStyle = lipgloss.NewStyle().Foreground(th.textMuted)
-	pageStyle   = lipgloss.NewStyle().Foreground(th.success)
-	statusStyle = lipgloss.NewStyle().Foreground(th.heading).Bold(true)
-	dimStyle    = lipgloss.NewStyle().Foreground(th.textDim)
+	th = tui.DefaultTheme()
+
+	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(th.Accent)
+	authorStyle = lipgloss.NewStyle().Foreground(th.TextMuted)
+	pageStyle   = lipgloss.NewStyle().Foreground(th.Success)
+	statusStyle = lipgloss.NewStyle().Foreground(th.Heading).Bold(true)
+	dimStyle    = lipgloss.NewStyle().Foreground(th.TextDim)
 )
 
-type outputDensity int
-
-const (
-	densityCompact outputDensity = iota
-	densityDefault
-	densityVerbose
-)
-
-func parseOutputDensity(raw string) (outputDensity, error) {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "", "default":
-		return densityDefault, nil
-	case "compact":
-		return densityCompact, nil
-	case "verbose":
-		return densityVerbose, nil
-	default:
-		return densityDefault, fmt.Errorf("invalid --view value %q (valid: compact, default, verbose)", raw)
-	}
-}
-
-func currentOutputDensity() outputDensity {
-	d, err := parseOutputDensity(outputView)
+// currentOutputDensity is the --view flag, already validated by the root
+// command's PersistentPreRunE, so a value that does not parse here can only be
+// a programming error and falls back to the default.
+func currentOutputDensity() tui.Density {
+	d, err := tui.ParseDensity(outputView)
 	if err != nil {
-		return densityDefault
+		return tui.DensityDefault
 	}
 	return d
 }
@@ -68,7 +53,7 @@ func printBooks(books []model.UserBook) error {
 		meta := format.BookMeta(ub.Book)
 		detail := bookDetailLine(ub.Book)
 
-		if density == densityCompact {
+		if density == tui.DensityCompact {
 			if meta != "" {
 				fmt.Printf("%s %s  %s  %s\n", num, title, progress, dimStyle.Render(meta))
 			} else {
@@ -78,14 +63,14 @@ func printBooks(books []model.UserBook) error {
 		}
 
 		fmt.Printf("%s %s\n", num, title)
-		if author != "" && density != densityCompact {
+		if author != "" && density != tui.DensityCompact {
 			fmt.Printf("   %s\n", author)
 		}
 		fmt.Printf("   %s\n", progress)
 		if meta != "" {
 			fmt.Printf("   %s\n", dimStyle.Render(meta))
 		}
-		if density == densityVerbose && detail != "" {
+		if density == tui.DensityVerbose && detail != "" {
 			fmt.Printf("   %s\n", dimStyle.Render(detail))
 		}
 	}
@@ -136,7 +121,7 @@ func printActiveBooks(books []model.UserBook) error {
 		meta := format.BookMeta(ub.Book)
 		detail := bookDetailLine(ub.Book)
 
-		if density == densityCompact {
+		if density == tui.DensityCompact {
 			if meta != "" {
 				fmt.Printf("%s %s  %s  %s\n", num, titleStyle.Render(ub.Book.Title), progress, dimStyle.Render(meta))
 			} else {
@@ -155,7 +140,7 @@ func printActiveBooks(books []model.UserBook) error {
 		if meta != "" {
 			fmt.Printf("      %s\n", dimStyle.Render(meta))
 		}
-		if density == densityVerbose && detail != "" {
+		if density == tui.DensityVerbose && detail != "" {
 			fmt.Printf("      %s\n", dimStyle.Render(detail))
 		}
 	}

@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/Kameleon21/oku/internal/model"
@@ -92,7 +91,7 @@ func (m reviewFormModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "ctrl+s":
-			rating, err := parseReviewRatingInput(m.ratingInput.Value())
+			rating, err := model.ParseRating(m.ratingInput.Value())
 			if err != nil {
 				m.errMsg = err.Error()
 				return m, nil
@@ -115,7 +114,7 @@ func (m reviewFormModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m reviewFormModel) View() string {
-	rating, err := parseReviewRatingInput(m.ratingInput.Value())
+	rating, err := model.ParseRating(m.ratingInput.Value())
 	stars := "☆☆☆☆☆"
 	ratingLine := "unrated"
 	if err != nil {
@@ -125,8 +124,13 @@ func (m reviewFormModel) View() string {
 		ratingLine = fmt.Sprintf("%.1f", rating)
 	}
 
+	author := m.book.Book.AuthorString()
+	if author == "" {
+		author = "Unknown author"
+	}
+
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Review & Rating\n\n%s\n%s\n\n", m.book.Book.Title, fallback(m.book.Book.AuthorString(), "Unknown author")))
+	b.WriteString(fmt.Sprintf("Review & Rating\n\n%s\n%s\n\n", m.book.Book.Title, author))
 	b.WriteString(m.ratingInput.View())
 	b.WriteString(fmt.Sprintf("  %s (%s)\n\n", stars, ratingLine))
 	b.WriteString("Review:\n")
@@ -153,21 +157,6 @@ func (m *reviewFormModel) focusReviewField() {
 	m.focus = reviewFocusText
 	m.ratingInput.Blur()
 	m.reviewInput.Focus()
-}
-
-func parseReviewRatingInput(raw string) (float64, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return 0, nil
-	}
-	rating, err := strconv.ParseFloat(raw, 64)
-	if err != nil {
-		return 0, fmt.Errorf("rating must be a number between 0 and 5")
-	}
-	if err := model.ValidateRating(rating); err != nil {
-		return 0, err
-	}
-	return rating, nil
 }
 
 func newReviewCmd() *cobra.Command {
