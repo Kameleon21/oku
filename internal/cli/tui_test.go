@@ -1254,3 +1254,35 @@ func TestEnterDoesNotChangeStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestPageModalShowsTitleAndKeepsFormatHint(t *testing.T) {
+	m := renderedDashboard(100, 40)
+	m.setSection(sectionReading)
+
+	updated, _ := m.updateLibraryMode(runeKey('u'))
+	got := updated.(dashboardModel)
+
+	if got.mode != modeUpdatePage {
+		t.Fatalf("mode after u = %v, want %v", got.mode, modeUpdatePage)
+	}
+	if got.pageInput.Value() != "" {
+		t.Fatalf("page input pre-filled with %q, want it empty", got.pageInput.Value())
+	}
+	if got.pageInput.Placeholder != "370 or +10 or -5" {
+		t.Fatalf("placeholder = %q, want the format hint", got.pageInput.Placeholder)
+	}
+
+	prompt := got.pagePrompt()
+	if !strings.Contains(prompt, "Dune") {
+		t.Fatalf("prompt %q does not name the book", prompt)
+	}
+	if !strings.Contains(prompt, "current: 120/412") {
+		t.Fatalf("prompt %q does not show where the book stands", prompt)
+	}
+
+	// The prompt is two rows taller than the help bar it replaces, and the
+	// layout has to give those rows back.
+	if lines := strings.Split(got.frame(), "\n"); len(lines) != 40 {
+		t.Fatalf("page prompt frame has %d lines, want 40", len(lines))
+	}
+}

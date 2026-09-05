@@ -38,8 +38,8 @@ const (
 )
 
 // pagePromptRows is how many rows View spends on the page-update prompt it
-// draws under the layout.
-const pagePromptRows = 1
+// draws under the layout: the book, where it stands, and the input.
+const pagePromptRows = 3
 
 // recentSearchesKey is the store state key the search history is kept under,
 // and maxRecentSearches caps how much of it is remembered.
@@ -294,6 +294,11 @@ type dashboardModel struct {
 	searchBooks  []model.SearchResult
 
 	pendingBookID int
+	// The page prompt shows which book it is about and where that book
+	// stands, so the input can keep the format hint as its placeholder.
+	pageBookTitle   string
+	pageCurrentPage int
+	pageTotalPages  int
 	// pageSubmitting marks that the page modal is waiting for its own update,
 	// so a progress result started before it opened cannot close it.
 	pageSubmitting   bool
@@ -934,11 +939,7 @@ func (m dashboardModel) handleLibraryKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.quickProgress(-10)
 	case "u":
 		if b := m.selectedLibraryBook(); b != nil {
-			m.mode = modeUpdatePage
-			m.pendingBookID = b.Book.ID
-			m.pageInput.SetValue("")
-			m.pageInput.Placeholder = fmt.Sprintf("Update %s", b.Book.Title)
-			m.pageInput.Focus()
+			m.openPageModal(*b)
 			return m, nil
 		}
 	case "v":
@@ -1214,11 +1215,47 @@ func (m dashboardModel) updatePageMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// openPageModal opens the page prompt for a book. The input starts empty, so
+// an accidental Enter cannot rewrite the progress, and keeps its format hint
+// as the placeholder: the title and the current page get lines of their own.
+func (m *dashboardModel) openPageModal(b model.UserBook) {
+	m.mode = modeUpdatePage
+	m.pendingBookID = b.Book.ID
+	m.pageBookTitle = b.Book.Title
+	m.pageCurrentPage = b.CurrentPage
+	if len(b.UserBookReads) > 0 {
+		m.pageCurrentPage = b.UserBookReads[0].ProgressPages
+	}
+	m.pageTotalPages = b.Book.Pages
+	m.pageInput.SetValue("")
+	m.pageInput.Focus()
+	// The prompt is taller than the help bar it replaces.
+	m.resize()
+}
+
 func (m *dashboardModel) closePageModal() {
 	m.mode = modeLibrary
 	m.pageSubmitting = false
+	m.pageBookTitle = ""
+	m.pageCurrentPage = 0
+	m.pageTotalPages = 0
 	m.pageInput.Blur()
 	m.pageInput.SetValue("")
+	m.resize()
+}
+
+// pagePrompt renders the page-update prompt under the layout. It is always
+// pagePromptRows tall, which is what the layout height is computed against.
+func (m dashboardModel) pagePrompt() string {
+	current := fmt.Sprintf("current: page %d", m.pageCurrentPage)
+	if m.pageTotalPages > 0 {
+		current = fmt.Sprintf("current: %d/%d", m.pageCurrentPage, m.pageTotalPages)
+	}
+	return "\n" + strings.Join([]string{
+		" " + keyStyle.Render("Update page") + "  " + valueStyle.Render(m.pageBookTitle),
+		" " + dimStyleTUI.Render(current),
+		" " + m.pageInput.View() + dimStyleTUI.Render("   Enter save · Esc cancel"),
+	}, "\n")
 }
 
 // quickProgress applies a relative page update. UpdateProgress is
@@ -1322,9 +1359,7 @@ func (m dashboardModel) frame() string {
 	var body string
 	switch m.mode {
 	case modeUpdatePage:
-		pagePrompt := "\n " + keyStyle.Render("Page update") + " " + m.pageInput.View() +
-			dimStyleTUI.Render("  (Enter submit, Esc cancel)")
-		body = statusBar + "\n" + m.renderLayout() + pagePrompt
+		body = statusBar + "\n" + m.renderLayout() + m.pagePrompt()
 	default:
 		body = statusBar + "\n" + m.renderLayout() + "\n" + m.contextHelpBar()
 	}
