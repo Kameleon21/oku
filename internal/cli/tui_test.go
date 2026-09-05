@@ -1515,6 +1515,19 @@ func TestListCardShowsHowFarDownTheListIs(t *testing.T) {
 	if got := m.listOverflowBadge(sectionOku); got != "" {
 		t.Fatalf("overflow badge = %q, want none when the list fits", got)
 	}
+
+	// The focused card's rows are padded out to its full width, so the badge
+	// has to overwrite the tail rather than be appended to it.
+	small := renderedDashboard(80, 24)
+	small.readingBooks = books[:5]
+	small.refreshListItems()
+	small.setSection(sectionReading)
+	if got := small.listOverflowBadge(sectionReading); got != "1/5" {
+		t.Fatalf("focused overflow badge = %q, want 1/5", got)
+	}
+	if !strings.Contains(stripANSI(small.frame()), "1/5") {
+		t.Fatal("the focused Reading card should show the overflow badge")
+	}
 }
 
 func TestProgressRowFitsTheDetailPane(t *testing.T) {

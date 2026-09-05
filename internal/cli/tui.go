@@ -442,18 +442,30 @@ func newDashboardModel(ctx context.Context, a *app.App) dashboardModel {
 	pageIn.PromptStyle = lipgloss.NewStyle().Foreground(colorGold).Bold(true)
 	pageIn.TextStyle = lipgloss.NewStyle().Foreground(colorLightGray)
 
+	// The review fields sit inside a modal, so they carry its background: a
+	// style that only sets a foreground would leave the field on the
+	// terminal's own colour.
 	reviewRatingIn := textinput.New()
 	reviewRatingIn.Placeholder = "4.5"
 	reviewRatingIn.CharLimit = 4
 	reviewRatingIn.Prompt = "Rating: "
-	reviewRatingIn.PromptStyle = lipgloss.NewStyle().Foreground(colorGold).Bold(true)
-	reviewRatingIn.TextStyle = lipgloss.NewStyle().Foreground(colorLightGray)
+	reviewRatingIn.PromptStyle = modalKeyStyle
+	reviewRatingIn.TextStyle = modalValueStyle
+	reviewRatingIn.PlaceholderStyle = modalDimStyle
 
 	reviewTextIn := textarea.New()
 	reviewTextIn.Placeholder = "Write your review..."
 	reviewTextIn.SetWidth(60)
 	reviewTextIn.SetHeight(8)
 	reviewTextIn.ShowLineNumbers = false
+	for _, st := range []*textarea.Style{&reviewTextIn.FocusedStyle, &reviewTextIn.BlurredStyle} {
+		st.Base = modalBgStyle
+		st.Text = modalValueStyle
+		st.Placeholder = modalDimStyle
+		st.Prompt = modalKeyStyle
+		st.CursorLine = modalBgStyle
+		st.EndOfBuffer = modalBgStyle
+	}
 
 	s := spinner.New()
 	s.Spinner = spinner.MiniDot
@@ -1771,18 +1783,25 @@ func (m dashboardModel) listOverflowBadge(id focusSection) string {
 }
 
 // stampOverflowBadge right-aligns the badge on the card's last row, in the
-// space the pagination dots used to take.
+// space the pagination dots used to take. The row is overwritten rather than
+// appended to: a list pads its rows out to the full card width, so there is
+// never anything left to append to.
 func stampOverflowBadge(content, badge string, w int) string {
 	if badge == "" {
 		return content
 	}
-	lines := strings.Split(content, "\n")
-	last := len(lines) - 1
-	gap := w - lipgloss.Width(lines[last]) - lipgloss.Width(badge) - 1
-	if gap < 1 {
+	badgeW := lipgloss.Width(badge)
+	if w <= badgeW+2 {
 		return content
 	}
-	lines[last] += strings.Repeat(" ", gap) + dimStyleTUI.Render(badge)
+
+	lines := strings.Split(content, "\n")
+	last := len(lines) - 1
+	head := ansi.Truncate(lines[last], w-badgeW-1, "")
+	if pad := w - badgeW - 1 - lipgloss.Width(head); pad > 0 {
+		head += strings.Repeat(" ", pad)
+	}
+	lines[last] = head + dimStyleTUI.Render(badge)
 	return strings.Join(lines, "\n")
 }
 
@@ -2073,11 +2092,9 @@ func (m *dashboardModel) syncHelpViewport() {
 		h = min(h, max(helpModalMinBodyRows, m.height-helpModalChromeRows-helpModalMarginRows))
 	}
 
-	w := helpModalWidth - helpModalStyle.GetHorizontalPadding()
 	offset := m.helpViewport.YOffset
-	m.helpViewport = viewport.New(w, h)
-	m.helpViewport.Style = modalBgStyle
-	m.helpViewport.SetContent(padModalLines(body, w))
+	m.helpViewport = viewport.New(helpModalWidth-helpModalStyle.GetHorizontalPadding(), h)
+	m.helpViewport.SetContent(body)
 	m.helpViewport.SetYOffset(offset)
 }
 
@@ -2088,9 +2105,26 @@ func (m dashboardModel) renderHelpModal() string {
 	}
 	return renderModalPanel(
 		"Help",
-		m.helpViewport.View()+"\n"+modalDimStyle.Render(footer),
+		m.helpModalRows()+"\n"+modalDimStyle.Render(footer),
 		helpModalWidth,
 	)
+}
+
+// helpModalRows returns the rows the help body currently shows. They are taken
+// from the body rather than from viewport.View, which pads its own output with
+// unstyled spaces: that padding would leave the panel striped, because only
+// the modal style's own fill carries its background.
+func (m dashboardModel) helpModalRows() string {
+	lines := strings.Split(helpModalBody(), "\n")
+	h := max(1, m.helpViewport.Height)
+	start := clampInt(m.helpViewport.YOffset, 0, max(0, len(lines)-h))
+
+	rows := make([]string, 0, h)
+	rows = append(rows, lines[start:min(len(lines), start+h)]...)
+	for len(rows) < h {
+		rows = append(rows, "")
+	}
+	return strings.Join(rows, "\n")
 }
 
 func helpModalBody() string {
@@ -2108,7 +2142,10 @@ func helpModalBody() string {
 		return s
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left,
+	// Joined by hand: lipgloss.JoinVertical pads every row out to the widest
+	// one with unstyled spaces, and those spaces would show as bands of
+	// terminal background across the modal.
+	return strings.Join([]string{
 		section("Navigation", [][2]string{
 			{"j / k", "Move up / down in list"},
 			{"h / l", "Move section left / right"},
@@ -2156,7 +2193,7 @@ func helpModalBody() string {
 			{"?", "Toggle this help"},
 			{"q", "Quit"},
 		}),
-	)
+	}, "\n")
 }
 
 func (m dashboardModel) overlayModal(modal string) string {

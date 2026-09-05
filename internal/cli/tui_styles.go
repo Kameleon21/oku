@@ -106,22 +106,11 @@ func renderModalPanel(title, content string, width int) string {
 	if strings.TrimSpace(title) != "" {
 		body = modalTitleStyle.Render(title) + "\n\n" + content
 	}
-	return style.Render(padModalLines(body, style.GetWidth()-style.GetHorizontalPadding()))
-}
-
-// padModalLines repaints the tail of every row with the modal background, so a
-// short line does not leave a band of terminal background behind it.
-func padModalLines(content string, width int) string {
-	if width <= 0 {
-		return content
-	}
-	lines := strings.Split(content, "\n")
-	for i, line := range lines {
-		if pad := width - lipgloss.Width(line); pad > 0 {
-			lines[i] = line + modalBgStyle.Render(strings.Repeat(" ", pad))
-		}
-	}
-	return strings.Join(lines, "\n")
+	// The rows are left short on purpose: lipgloss fills them out to the panel
+	// width with the style's own background, which is the only fill that
+	// carries it. Pre-padding here would be trimmed by the wrap and refilled
+	// with unstyled spaces, striping the panel.
+	return style.Render(body)
 }
 
 // ── Progress Bar ────────────────────────────────────────────────────────────
