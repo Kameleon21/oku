@@ -2593,12 +2593,13 @@ func (m dashboardModel) activeKeys() keyMap {
 			sectionHint,
 			hint("status", k.SetReading, k.SetWant, k.SetFinished, k.SetDNF, k.SetIgnored),
 			hint("page", k.ProgressUp, k.ProgressDown),
-			k.Update,
+			hintAs("u", "update", k.Update),
 		}
 		if m.section == sectionReading || m.timerState != nil {
 			k.short = append(k.short, k.Timer)
 		}
-		k.short = append(k.short, k.Search, k.Rate, k.Sync, k.Density, k.Refresh)
+		// The bar has a word per key; the modal spells them out.
+		k.short = append(k.short, k.Search, hintAs("v", "rate", k.Rate), hintAs("s", "sync", k.Sync), k.Density, k.Refresh)
 
 	case sectionSearch:
 		switch {
@@ -2650,7 +2651,7 @@ func (m dashboardModel) activeKeys() keyMap {
 			&k.Sync, &k.Refresh, &k.Search)
 		k.short = []key.Binding{
 			k.Help, hint("scroll", k.Down, k.Up), k.ScrollTop, sectionHint,
-			k.Sync, k.Refresh, k.Search, k.Quit,
+			hintAs("s", "sync", k.Sync), k.Refresh, k.Search, k.Quit,
 		}
 
 	case sectionTimer:
