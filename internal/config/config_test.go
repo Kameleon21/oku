@@ -198,3 +198,29 @@ func TestDataDir(t *testing.T) {
 		}
 	})
 }
+
+func TestThemeDefaultsToAutoAndLoadsFromFile(t *testing.T) {
+	if got := Defaults().Theme; got != "auto" {
+		t.Fatalf("Defaults().Theme = %q, want auto", got)
+	}
+
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", home)
+	path := filepath.Join(home, "oku", "config.toml")
+	mkdirAll(t, filepath.Dir(path))
+	if err := os.WriteFile(path, []byte("theme = \"light\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Theme != "light" {
+		t.Fatalf("cfg.Theme = %q, want light", cfg.Theme)
+	}
+	// The other keys keep their defaults when the file leaves them out.
+	if cfg.DefaultList != "reading" {
+		t.Fatalf("cfg.DefaultList = %q, want the default", cfg.DefaultList)
+	}
+}

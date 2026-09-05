@@ -1,8 +1,8 @@
 package cli
 
 import (
-	"strings"
-
+	"github.com/charmbracelet/bubbles/key"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -25,21 +25,24 @@ func newConfirmState(message string) confirmState {
 	}
 }
 
-func (c *confirmState) handleKey(key string) (confirmed bool, handled bool) {
-	switch strings.ToLower(key) {
-	case "esc", "n":
+// handleKey answers the question with the confirm bindings of k: yes and no
+// close it, the arrows move between the buttons, and Select takes the one
+// under the cursor.
+func (c *confirmState) handleKey(msg tea.KeyMsg, k keyMap) (confirmed bool, handled bool) {
+	switch {
+	case key.Matches(msg, k.ConfirmNo):
 		c.Active = false
 		return false, true
-	case "left", "h", "up", "k":
+	case key.Matches(msg, k.ConfirmLeft):
 		c.Cursor = 0
 		return false, true
-	case "right", "l", "down", "j":
+	case key.Matches(msg, k.ConfirmRight):
 		c.Cursor = 1
 		return false, true
-	case "y":
+	case key.Matches(msg, k.ConfirmYes):
 		c.Active = false
 		return true, true
-	case "enter":
+	case key.Matches(msg, k.Select):
 		c.Active = false
 		return c.Cursor == 0, true
 	}
@@ -55,32 +58,40 @@ func renderConfirmModal(c confirmState, width int) string {
 	}
 
 	confirmStyle := lipgloss.NewStyle().
-		Foreground(colorCharcoal).
-		Background(colorWarmRed).
+		Foreground(th.surface).
+		Background(th.error).
 		Bold(true).
 		Padding(0, 2)
 	cancelStyle := lipgloss.NewStyle().
-		Foreground(colorCharcoal).
-		Background(colorOlive).
+		Foreground(th.surface).
+		Background(th.success).
 		Bold(true).
 		Padding(0, 2)
 	idleStyle := lipgloss.NewStyle().
-		Foreground(colorMidGray).
+		Foreground(th.textMuted).
+		Background(th.surface).
 		Padding(0, 2)
 
-	left := idleStyle.Render(c.ConfirmText)
-	right := idleStyle.Render(c.CancelText)
+	// The chosen button is marked as well as coloured, so the choice is
+	// visible on a terminal without colour.
+	left := idleStyle.Render("  " + c.ConfirmText)
+	right := idleStyle.Render("  " + c.CancelText)
 	if c.Cursor == 0 {
-		left = confirmStyle.Render(c.ConfirmText)
+		left = confirmStyle.Render("▸ " + c.ConfirmText)
 	} else {
-		right = cancelStyle.Render(c.CancelText)
+		right = cancelStyle.Render("▸ " + c.CancelText)
 	}
 
-	buttons := lipgloss.NewStyle().
+	// Every part of the row carries the modal background: the gap between the
+	// buttons and the space either side of them included, or a black band
+	// shows through the charcoal panel.
+	buttons := modalBgStyle.
 		Width(width - 6).
 		Align(lipgloss.Center).
-		Render(lipgloss.JoinHorizontal(lipgloss.Center, left, "  ", right))
+		Render(lipgloss.JoinHorizontal(lipgloss.Center, left, modalBgStyle.Render("  "), right))
 
-	content := c.Message + "\n\n" + buttons + "\n\n" + dimStyleTUI.Render("y/n or Enter/Esc")
+	content := modalValueStyle.Render(c.Message) + "\n\n" +
+		buttons + "\n\n" +
+		modalDimStyle.Render("y/n or Enter/Esc")
 	return renderModalPanel("Confirm", content, width)
 }

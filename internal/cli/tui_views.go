@@ -328,7 +328,7 @@ func (m dashboardModel) timerView(w int) string {
 	if m.timerState == nil {
 		sb.WriteString(dimStyleTUI.Render("  No timer running."))
 		sb.WriteString("\n\n")
-		sb.WriteString(dimStyleTUI.Render("  Press [t] to choose a book and start."))
+		sb.WriteString(dimStyleTUI.Render("  Press [t] to choose a book, or [t] in Reading."))
 	} else {
 		// Book info.
 		if m.timerBook != nil {
@@ -420,7 +420,7 @@ func (m dashboardModel) timerView(w int) string {
 	// Keybindings hint.
 	sb.WriteString("\n")
 	if m.timerState != nil {
-		sb.WriteString(dimStyleTUI.Render("  [s] stop"))
+		sb.WriteString(dimStyleTUI.Render("  [t] or [s] stop"))
 	} else {
 		sb.WriteString(dimStyleTUI.Render("  [t] start"))
 	}
