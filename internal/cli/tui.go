@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -242,7 +243,53 @@ type opDoneMsg struct {
 	err       error
 	reload    bool
 	markDirty bool
+
+	// What a status change or a progress update did to which book, so the
+	// result can offer to undo it. Zero for every other operation.
+	bookID                int
+	title                 string
+	prevStatus, newStatus model.Status
+	prevPage, newPage     int
 }
+
+// undoAction reverses the operation a toast reports. It is data rather than
+// a command so the dashboard can say what it will do, and a test can see it.
+type undoAction struct {
+	op     opKind
+	bookID int
+	title  string
+	// opStatus: the status to go back to, and the one being left.
+	toStatus, fromStatus model.Status
+	// opProgress: the page to go back to, and the one being left.
+	toPage, fromPage int
+}
+
+// ── Toasts ─────────────────────────────────────────────────────────────────
+
+// toastLevel is how a toast is drawn: the colour, and the glyph for the
+// terminals that have none.
+type toastLevel int
+
+const (
+	toastInfo toastLevel = iota
+	toastWarn
+	toastError
+)
+
+// toast is the status bar's message. It expires on its own tick, stamped
+// with seq so the tick of a toast that has since been replaced is ignored.
+type toast struct {
+	level toastLevel
+	text  string
+	seq   int
+}
+
+type toastExpiredMsg struct{ seq int }
+
+const (
+	toastTTL      = 5 * time.Second
+	toastErrorTTL = 8 * time.Second
+)
 
 type backgroundCheckMsg struct{}
 
@@ -331,8 +378,11 @@ type dashboardModel struct {
 
 	lastQuery      string
 	lastSearchMode model.SearchMode
-	infoMsg        string
-	errMsg         string
+
+	// toast is the status bar's message, and undo what U would reverse
+	// while it is up. Both are dropped when the toast expires.
+	toast toast
+	undo  *undoAction
 
 	searchLoading      bool
 	searchLoadingQuery string
@@ -554,8 +604,7 @@ func (m dashboardModel) updateCommon(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.localLoaded = true
 
 		if msg.err != nil {
-			m.errMsg = msg.err.Error()
-			return m, nil
+			return m, m.showToast(toastError, msg.err.Error())
 		}
 		m.readingStats = msg.readingStats
 		if msg.readingStats != nil {
@@ -573,15 +622,25 @@ func (m dashboardModel) updateCommon(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.endLoading()
 		m.timerSelecting = false
 
+		var toastCmd tea.Cmd
 		if msg.err != nil {
-			m.errMsg = msg.err.Error()
-			m.infoMsg = ""
+			toastCmd = m.showToast(toastError, msg.err.Error())
 		} else {
-			m.errMsg = ""
-			m.infoMsg = msg.info
+			toastCmd = m.showToast(toastInfo, msg.info)
 		}
-		// Reload local data after timer operations.
-		return m.startOp(loadLocalDataCmd(m.app))
+		// Reload local data after timer operations. The toast tick is not
+		// work, so it stays out of the in-flight count.
+		reload := m.beginLoading(loadLocalDataCmd(m.app))
+		return m, tea.Batch(reload, toastCmd)
+
+	case toastExpiredMsg:
+		// Only the current toast's own tick clears it; a tick left over from
+		// an earlier toast must not take a newer one down with it.
+		if msg.seq == m.toast.seq {
+			m.toast = toast{seq: m.toast.seq}
+			m.undo = nil
+		}
+		return m, nil
 
 	case searchLoadedMsg:
 		return m.applySearchLoaded(msg)
@@ -635,10 +694,8 @@ func (m dashboardModel) applyLibraryLoaded(msg libraryLoadedMsg) (tea.Model, tea
 		m.reconciling = false
 	}
 	if msg.err != nil {
-		m.errMsg = msg.err.Error()
-		m.infoMsg = ""
 		// dirty stays set: the local mutations are still unreconciled.
-		return m, nil
+		return m, m.showToast(toastError, msg.err.Error())
 	}
 	m.readingBooks = msg.reading
 	m.okuBooks = msg.oku
@@ -647,7 +704,6 @@ func (m dashboardModel) applyLibraryLoaded(msg libraryLoadedMsg) (tea.Model, tea
 	}
 	cmd := m.refreshListItems()
 	m.updateSearchSuggestions()
-	m.errMsg = ""
 	if msg.reconcile {
 		// The pending local mutations are now reflected by the server data.
 		m.dirty = false
@@ -673,9 +729,7 @@ func (m dashboardModel) applySearchLoaded(msg searchLoadedMsg) (tea.Model, tea.C
 		// The previous results are still on screen, so the header keeps
 		// naming them - including how many there are.
 		m.refreshSearchTitle()
-		m.errMsg = msg.err.Error()
-		m.infoMsg = ""
-		return m, nil
+		return m, m.showToast(toastError, msg.err.Error())
 	}
 	// Labels come from the mode the results were fetched with; the user may
 	// have switched modes since.
@@ -690,15 +744,15 @@ func (m dashboardModel) applySearchLoaded(msg searchLoadedMsg) (tea.Model, tea.C
 		m.searchSub = searchSubResults
 		m.enterSearchNormalMode()
 	}
-	m.errMsg = ""
+	var toastCmd tea.Cmd
 	if len(msg.results) == 0 {
-		m.infoMsg = fmt.Sprintf("%s mode: no results for %q", strings.ToLower(label), msg.query)
+		toastCmd = m.showToast(toastInfo, fmt.Sprintf("%s mode: no results for %q", strings.ToLower(label), msg.query))
 	} else {
-		m.infoMsg = fmt.Sprintf("%s mode: loaded %d results", strings.ToLower(label), len(msg.results))
+		toastCmd = m.showToast(toastInfo, fmt.Sprintf("%s mode: loaded %d results", strings.ToLower(label), len(msg.results)))
 	}
 	saveCmd := m.addRecentSearchQuery(msg.query)
 	m.updateSearchSuggestions()
-	return m, tea.Batch(cmd, saveCmd)
+	return m, tea.Batch(cmd, saveCmd, toastCmd)
 }
 
 // applyOpDone applies the result of a mutating operation. Results other than
@@ -711,24 +765,19 @@ func (m dashboardModel) applyOpDone(msg opDoneMsg) (tea.Model, tea.Cmd) {
 
 	m.endLoading()
 
-	if msg.err != nil {
-		m.errMsg = msg.err.Error()
-		m.infoMsg = ""
-	} else {
-		m.errMsg = ""
-		m.infoMsg = msg.info
-		if msg.markDirty {
-			m.dirty = true
-			m.lastMutationAt = time.Now()
-		}
+	toastCmd := m.toastFor(msg)
+	if msg.err == nil && msg.markDirty {
+		m.dirty = true
+		m.lastMutationAt = time.Now()
 	}
 	if m.mode == modeUpdatePage && m.pageSubmitting && msg.op == opProgress {
 		m.closePageModal()
 	}
 	if msg.reload {
-		return m.startOp(loadLibraryCmd(m.ctx, m.app, false), loadLocalDataCmd(m.app))
+		reload := m.beginLoading(loadLibraryCmd(m.ctx, m.app, false), loadLocalDataCmd(m.app))
+		return m, tea.Batch(reload, toastCmd)
 	}
-	return m, nil
+	return m, toastCmd
 }
 
 // applyReviewSaveDone keeps the review modal open until its own save
@@ -740,18 +789,84 @@ func (m dashboardModel) applyReviewSaveDone(msg opDoneMsg) (tea.Model, tea.Cmd) 
 	if msg.err != nil {
 		// Shown in the overlay; the rating and review text are preserved.
 		m.reviewErr = msg.err.Error()
-		m.infoMsg = ""
 		return m, nil
 	}
-	m.errMsg = ""
-	m.infoMsg = msg.info
+	toastCmd := m.showToast(toastInfo, msg.info)
 	if msg.markDirty {
 		m.dirty = true
 		m.lastMutationAt = time.Now()
 	}
 	m.closeReviewRatingModal()
 	if msg.reload {
-		return m.startOp(loadLibraryCmd(m.ctx, m.app, false), loadLocalDataCmd(m.app))
+		reload := m.beginLoading(loadLibraryCmd(m.ctx, m.app, false), loadLocalDataCmd(m.app))
+		return m, tea.Batch(reload, toastCmd)
+	}
+	return m, toastCmd
+}
+
+// showToast replaces the status bar's message and returns the tick that
+// clears it. The previous toast's undo goes with it: the message that named
+// it is gone.
+func (m *dashboardModel) showToast(level toastLevel, text string) tea.Cmd {
+	m.toast = toast{level: level, text: text, seq: m.toast.seq + 1}
+	m.undo = nil
+
+	ttl := toastTTL
+	if level == toastError {
+		ttl = toastErrorTTL
+	}
+	seq := m.toast.seq
+	return tea.Tick(ttl, func(time.Time) tea.Msg {
+		return toastExpiredMsg{seq: seq}
+	})
+}
+
+// showUndoToast is showToast for a change that can be reversed while the
+// toast is up.
+func (m *dashboardModel) showUndoToast(text string, undo undoAction) tea.Cmd {
+	cmd := m.showToast(toastInfo, text)
+	m.undo = &undo
+	return cmd
+}
+
+// toastFor reports an operation's result: its error, or its info with an
+// undo when the result says how to reverse it.
+func (m *dashboardModel) toastFor(msg opDoneMsg) tea.Cmd {
+	if msg.err != nil {
+		return m.showToast(toastError, msg.err.Error())
+	}
+	switch {
+	case msg.op == opStatus && msg.bookID > 0 && msg.prevStatus != 0 && msg.prevStatus != msg.newStatus:
+		return m.showUndoToast(
+			fmt.Sprintf("Moved '%s' to %s", msg.title, msg.newStatus.Label()),
+			undoAction{op: opStatus, bookID: msg.bookID, title: msg.title,
+				toStatus: msg.prevStatus, fromStatus: msg.newStatus},
+		)
+	case msg.op == opProgress && msg.bookID > 0 && msg.prevPage != msg.newPage:
+		return m.showUndoToast(
+			fmt.Sprintf("Page %d", msg.newPage),
+			undoAction{op: opProgress, bookID: msg.bookID, title: msg.title,
+				toPage: msg.prevPage, fromPage: msg.newPage},
+		)
+	}
+	if msg.info == "" {
+		return nil
+	}
+	return m.showToast(toastInfo, msg.info)
+}
+
+// runUndo reverses the change the current toast reports, if there is one.
+func (m dashboardModel) runUndo() (tea.Model, tea.Cmd) {
+	u := m.undo
+	if u == nil {
+		return m, nil
+	}
+	m.undo = nil
+	switch u.op {
+	case opStatus:
+		return m.startOp(changeStatusCmd(m.ctx, m.app, u.bookID, u.title, u.fromStatus, u.toStatus))
+	case opProgress:
+		return m.startOp(updateProgressCmd(m.ctx, m.app, u.bookID, u.title, u.fromPage, strconv.Itoa(u.toPage)))
 	}
 	return m, nil
 }
@@ -832,6 +947,11 @@ func (m dashboardModel) updateLibraryMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Undo is the one key every section shares while its toast is up.
+	if key.Matches(msg, m.activeKeys().Undo) {
+		return m.runUndo()
+	}
+
 	// Route to section-specific handlers.
 	switch m.section {
 	case sectionSearch:
@@ -878,7 +998,6 @@ func (m *dashboardModel) focusSearchInput() {
 	m.enterSearchInsertMode()
 	m.searchInput.CursorEnd()
 	m.updateSearchSuggestions()
-	m.errMsg = ""
 }
 
 func (m dashboardModel) handleStatsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -951,13 +1070,9 @@ func (m dashboardModel) handleLibraryKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// the detail pane; g/w/f/d still change the status.
 		b := m.selectedLibraryBook()
 		if b == nil {
-			m.errMsg = "no book selected"
-			m.infoMsg = ""
-			return m, nil
+			return m, m.showToast(toastError, "no book selected")
 		}
-		m.errMsg = ""
-		m.infoMsg = b.Book.Title
-		return m, nil
+		return m, m.showToast(toastInfo, b.Book.Title)
 	case key.Matches(msg, k.ProgressUp):
 		return m.quickProgress(+10)
 	case key.Matches(msg, k.ProgressDown):
@@ -995,25 +1110,23 @@ func (m dashboardModel) toggleTimerForSelection() (tea.Model, tea.Cmd) {
 	if m.isLoading() {
 		// timerState only catches up when the load lands, so two quick presses
 		// would otherwise start two sessions.
-		m.infoMsg = "Please wait — an update is still in flight"
-		return m, nil
+		return m, m.showToast(toastWarn, inFlightNotice)
 	}
 	if m.timerState != nil {
 		return m.startOp(stopTimerCmd(m.app))
 	}
 	if m.section != sectionReading {
-		m.errMsg = ""
-		m.infoMsg = "Timers track a book you are reading — press t in the Reading list"
-		return m, nil
+		return m, m.showToast(toastWarn, "Timers track a book you are reading — press t in the Reading list")
 	}
 	b := m.selectedLibraryBook()
 	if b == nil {
-		m.errMsg = "no book selected"
-		m.infoMsg = ""
-		return m, nil
+		return m, m.showToast(toastError, "no book selected")
 	}
 	return m.startOp(startTimerForBookCmd(m.app, b.Book.ID))
 }
+
+// inFlightNotice is the answer to a mutation pressed while one is running.
+const inFlightNotice = "Please wait — an update is still in flight"
 
 // confirmStatusChange asks first. Ignoring a book takes it out of the library
 // and a DNF closes the read, and neither can be undone from the dashboard, so
@@ -1021,14 +1134,10 @@ func (m dashboardModel) toggleTimerForSelection() (tea.Model, tea.Cmd) {
 func (m dashboardModel) confirmStatusChange(status model.Status) (tea.Model, tea.Cmd) {
 	b := m.selectedLibraryBook()
 	if b == nil {
-		m.errMsg = "no book selected"
-		m.infoMsg = ""
-		return m, nil
+		return m, m.showToast(toastError, "no book selected")
 	}
 	m.confirm = newConfirmState(fmt.Sprintf("Mark '%s' as %s?", b.Book.Title, status.Label()))
-	m.confirmCmd = changeStatusCmd(m.ctx, m.app, b.Book.ID, status)
-	m.errMsg = ""
-	m.infoMsg = ""
+	m.confirmCmd = changeStatusCmd(m.ctx, m.app, b.Book.ID, b.Book.Title, b.StatusID, status)
 	return m, nil
 }
 
@@ -1050,9 +1159,7 @@ func (m dashboardModel) updateConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.confirm = confirmState{}
 	m.confirmCmd = nil
 	if !confirmed {
-		m.infoMsg = "Cancelled"
-		m.errMsg = ""
-		return m, nil
+		return m, m.showToast(toastInfo, "Cancelled")
 	}
 	return m.startOp(pending)
 }
@@ -1075,17 +1182,13 @@ func (m dashboardModel) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.searchInput.CursorEnd()
 				return m, nil
 			case key.Matches(msg, k.SearchMode):
-				m.setSearchQueryMode(m.searchQueryMode.Next())
-				return m, nil
+				return m, m.setSearchQueryMode(m.searchQueryMode.Next())
 			case key.Matches(msg, k.SearchModeBook):
-				m.setSearchQueryMode(model.SearchModeBook)
-				return m, nil
+				return m, m.setSearchQueryMode(model.SearchModeBook)
 			case key.Matches(msg, k.SearchModeAuthor):
-				m.setSearchQueryMode(model.SearchModeAuthor)
-				return m, nil
+				return m, m.setSearchQueryMode(model.SearchModeAuthor)
 			case key.Matches(msg, k.SearchModeGenre):
-				m.setSearchQueryMode(model.SearchModeGenre)
-				return m, nil
+				return m, m.setSearchQueryMode(model.SearchModeGenre)
 			case key.Matches(msg, k.Density):
 				cmd := m.cycleDensity()
 				return m, cmd
@@ -1179,8 +1282,7 @@ func (m dashboardModel) handleTimerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case key.Matches(msg, k.Back):
 			m.timerSelecting = false
-			m.infoMsg = "Timer start cancelled"
-			return m, nil
+			return m, m.showToast(toastInfo, "Timer start cancelled")
 		case key.Matches(msg, k.Down):
 			if m.timerSelectIdx < len(m.readingBooks)-1 {
 				m.timerSelectIdx++
@@ -1194,9 +1296,7 @@ func (m dashboardModel) handleTimerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, k.Select):
 			if len(m.readingBooks) == 0 {
 				m.timerSelecting = false
-				m.errMsg = "no currently reading books available"
-				m.infoMsg = ""
-				return m, nil
+				return m, m.showToast(toastError, "no currently reading books available")
 			}
 			// Background sync can shrink readingBooks while the picker is open.
 			if m.timerSelectIdx >= len(m.readingBooks) {
@@ -1230,9 +1330,7 @@ func (m dashboardModel) handleTimerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.startOp(stopTimerCmd(m.app))
 		}
 		if len(m.readingBooks) == 0 {
-			m.errMsg = "no currently reading books available"
-			m.infoMsg = "Add a book to Reading, then start a timer."
-			return m, nil
+			return m, m.showToast(toastError, "no currently reading books available — add a book to Reading first")
 		}
 
 		m.timerSelecting = true
@@ -1245,9 +1343,7 @@ func (m dashboardModel) handleTimerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		m.errMsg = ""
-		m.infoMsg = "Select a book and press Enter to start timer"
-		return m, nil
+		return m, m.showToast(toastInfo, "Select a book and press Enter to start timer")
 	case key.Matches(msg, k.TimerStop):
 		// Only enabled while a timer runs.
 		return m.startOp(stopTimerCmd(m.app))
@@ -1268,15 +1364,13 @@ func (m dashboardModel) updatePageMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, k.Select):
 		raw := strings.TrimSpace(m.pageInput.Value())
 		if raw == "" {
-			m.errMsg = "page value cannot be empty"
-			return m, nil
+			return m, m.showToast(toastError, "page value cannot be empty")
 		}
 		if m.isLoading() {
-			m.infoMsg = "Please wait — an update is still in flight"
-			return m, nil
+			return m, m.showToast(toastWarn, inFlightNotice)
 		}
 		m.pageSubmitting = true
-		return m.startOp(updateProgressCmd(m.ctx, m.app, m.pendingBookID, raw))
+		return m.startOp(updateProgressCmd(m.ctx, m.app, m.pendingBookID, m.pageBookTitle, m.pageCurrentPage, raw))
 	}
 
 	var cmd tea.Cmd
@@ -1336,11 +1430,18 @@ func (m dashboardModel) quickProgress(delta int) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.isLoading() {
-		m.infoMsg = "Please wait — an update is still in flight"
-		return m, nil
+		return m, m.showToast(toastWarn, inFlightNotice)
 	}
-	return m.startOp(quickProgressCmd(m.ctx, m.app, b.Book.ID, delta))
+	return m.startOp(quickProgressCmd(m.ctx, m.app, b.Book.ID, b.Book.Title, currentPage(*b), delta))
+}
 
+// currentPage is where a book stands: the open read's progress when there
+// is one, the book's own page otherwise.
+func currentPage(b model.UserBook) int {
+	if len(b.UserBookReads) > 0 {
+		return b.UserBookReads[0].ProgressPages
+	}
+	return b.CurrentPage
 }
 
 // ── Review/rating mode ─────────────────────────────────────────────────────
@@ -1355,8 +1456,7 @@ func (m dashboardModel) updateReviewRatingMode(msg tea.KeyMsg) (tea.Model, tea.C
 			return m, tea.Quit
 		case key.Matches(msg, k.Back):
 			m.closeReviewRatingModal()
-			m.infoMsg = "Review update cancelled"
-			return m, nil
+			return m, m.showToast(toastInfo, "Review update cancelled")
 		}
 		return m, nil
 	}
@@ -1366,8 +1466,7 @@ func (m dashboardModel) updateReviewRatingMode(msg tea.KeyMsg) (tea.Model, tea.C
 		return m, tea.Quit
 	case key.Matches(msg, k.Back):
 		m.closeReviewRatingModal()
-		m.infoMsg = "Review update cancelled"
-		return m, nil
+		return m, m.showToast(toastInfo, "Review update cancelled")
 	case key.Matches(msg, k.ReviewNextField):
 		if m.reviewFocus == dashboardReviewFocusRating {
 			m.focusReviewTextField()
@@ -1393,11 +1492,12 @@ func (m dashboardModel) updateReviewRatingMode(msg tea.KeyMsg) (tea.Model, tea.C
 		}
 		review := m.reviewTextInput.Value()
 		m.reviewErr = ""
-		m.infoMsg = reviewSavePendingMessage(review)
+		toastCmd := m.showToast(toastInfo, reviewSavePendingMessage(review))
 		// The modal stays open until the save succeeds, so a failure can show
 		// the error without discarding the draft.
 		m.reviewSubmitting = true
-		return m.startOp(submitReviewRatingCmd(m.ctx, m.app, m.reviewBook.Book.ID, rating, review, m.reviewSeq))
+		save := m.beginLoading(submitReviewRatingCmd(m.ctx, m.app, m.reviewBook.Book.ID, rating, review, m.reviewSeq))
+		return m, tea.Batch(save, toastCmd)
 	}
 
 	var cmd tea.Cmd
@@ -1457,26 +1557,52 @@ func (m dashboardModel) statusBar() string {
 		left += statusBarAccentStyle.Render(" " + m.spin.View())
 	}
 
-	msg, msgStyle := m.errMsg, statusBarErrorStyle
-	if msg == "" {
-		msg, msgStyle = m.infoMsg, statusBarInfoStyle
-	}
-	// An API error can carry newlines and runs of whitespace. Left alone they
-	// would wrap the bar onto rows the layout has not accounted for, and the
-	// help bar would be the thing clipped off the bottom of the screen.
-	msg = strings.Join(strings.Fields(msg), " ")
-
-	right := ""
-	// A message wider than the bar would wrap it onto a second line and push
-	// the layout down a row, so it is cut to the room that is left.
-	if avail := inner - lipgloss.Width(left) - 2; msg != "" && avail >= minStatusMessageWidth {
-		right = msgStyle.Render(ansi.Truncate(msg, avail, "…"))
-	}
+	right := m.renderToast(inner - lipgloss.Width(left) - 2)
 
 	gap := max(1, inner-lipgloss.Width(left)-lipgloss.Width(right))
 	return statusBarStyle.Width(width).Render(
 		left + statusBarFillStyle.Render(strings.Repeat(" ", gap)) + right,
 	)
+}
+
+// renderToast draws the toast into avail columns: a glyph for the level (so
+// a terminal without colour can tell an error from a note), the text cut to
+// what fits, and the undo hint while there is a change to undo.
+func (m dashboardModel) renderToast(avail int) string {
+	if m.toast.text == "" {
+		return ""
+	}
+	style, glyph := statusBarInfoStyle, ""
+	switch m.toast.level {
+	case toastWarn:
+		style, glyph = statusBarWarnStyle, "! "
+	case toastError:
+		style, glyph = statusBarErrorStyle, "✗ "
+	}
+	undoHint := ""
+	if m.undo != nil {
+		undoHint = statusBarFillStyle.Render(" · ") +
+			statusBarAccentStyle.Render("U") +
+			statusBarFillStyle.Render(" undo")
+	}
+
+	// An API error can carry newlines and runs of whitespace. Left alone they
+	// would wrap the bar onto rows the layout has not accounted for, and the
+	// help bar would be the thing clipped off the bottom of the screen.
+	text := strings.Join(strings.Fields(m.toast.text), " ")
+
+	// A message wider than the bar would wrap it onto a second line and push
+	// the layout down a row, so it is cut to the room that is left. The undo
+	// hint goes first when there is not room for both.
+	room := avail - lipgloss.Width(glyph) - lipgloss.Width(undoHint)
+	if room < minStatusMessageWidth {
+		undoHint = ""
+		room = avail - lipgloss.Width(glyph)
+	}
+	if room < minStatusMessageWidth {
+		return ""
+	}
+	return style.Render(glyph+ansi.Truncate(text, room, "…")) + undoHint
 }
 
 // fitToScreen pads the frame to the terminal and clamps it to those bounds, so
@@ -2437,6 +2563,13 @@ func (m dashboardModel) activeKeys() keyMap {
 
 	sectionHint := hint("section", k.PrevSection, k.NextSection)
 
+	// Undo lasts as long as the toast that offers it, and never takes a
+	// letter away from the search input.
+	typing := m.section == sectionSearch && m.searchSub == searchSubInput && m.searchMode == searchModeInsert
+	if m.undo != nil && !typing {
+		enable(&k.Undo)
+	}
+
 	switch m.section {
 	case sectionReading, sectionOku:
 		k.Up.SetHelp("k", "navigate")
@@ -2629,8 +2762,7 @@ func (m dashboardModel) hasSearchResults() bool {
 func (m *dashboardModel) submitSearch() tea.Cmd {
 	query := strings.TrimSpace(m.searchInput.Value())
 	if query == "" {
-		m.errMsg = "search query cannot be empty"
-		return nil
+		return m.showToast(toastError, "search query cannot be empty")
 	}
 
 	// Reuse in-memory results for the same query instead of refetching.
@@ -2639,26 +2771,24 @@ func (m *dashboardModel) submitSearch() tea.Cmd {
 		m.searchSub = searchSubResults
 		m.searchMode = searchModeNormal
 		m.searchInput.Blur()
-		m.errMsg = ""
-		m.infoMsg = fmt.Sprintf("%s mode: showing cached results for %q",
+		return m.showToast(toastInfo, fmt.Sprintf("%s mode: showing cached results for %q",
 			strings.ToLower(m.searchQueryMode.Label()),
 			query,
-		)
-		return nil
+		))
 	}
 
 	m.searchLoading = true
 	m.searchLoadingQuery = query
 
-	m.errMsg = ""
-	m.infoMsg = fmt.Sprintf("%s mode (%s): searching for %q...",
+	toastCmd := m.showToast(toastInfo, fmt.Sprintf("%s mode (%s): searching for %q...",
 		strings.ToLower(m.searchQueryMode.Label()),
 		m.searchQueryMode.Description(),
 		query,
-	)
+	))
 	m.refreshSearchTitle()
 	m.searchSeq++
-	return m.beginLoading(searchCmd(m.ctx, m.app, query, m.searchQueryMode, m.searchSeq))
+	search := m.beginLoading(searchCmd(m.ctx, m.app, query, m.searchQueryMode, m.searchSeq))
+	return tea.Batch(search, toastCmd)
 }
 
 func (m *dashboardModel) cycleDensity() tea.Cmd {
@@ -2671,8 +2801,7 @@ func (m *dashboardModel) cycleDensity() tea.Cmd {
 		m.density = densityCompact
 	}
 	cmd := tea.Batch(m.refreshListItems(), m.refreshSearchResultItems())
-	m.infoMsg = "Density: " + densityLabel(m.density)
-	return cmd
+	return tea.Batch(cmd, m.showToast(toastInfo, "Density: "+densityLabel(m.density)))
 }
 
 func densityLabel(d outputDensity) string {
@@ -2686,19 +2815,21 @@ func densityLabel(d outputDensity) string {
 	}
 }
 
-func (m *dashboardModel) setSearchQueryMode(mode model.SearchMode) {
+// setSearchQueryMode switches the mode the next search runs in and returns
+// the toast that says so.
+func (m *dashboardModel) setSearchQueryMode(mode model.SearchMode) tea.Cmd {
 	if mode == "" {
 		mode = model.SearchModeBook
 	}
 	// Picking the mode that is already set still says so: the key did
-	// something, and the message is the only place the mode is spelled out.
+	// something, and the toast is the only place the mode is spelled out.
 	m.searchQueryMode = mode
 	// The results on screen were fetched in the old mode, so the header is
 	// left naming them; only the next search renames it.
 	m.refreshSearchTitle()
-	m.infoMsg = fmt.Sprintf("Search mode: %s (%s)", strings.ToLower(mode.Label()), mode.Description())
 	m.searchInput.Placeholder = searchPlaceholderForMode(mode)
 	m.updateSearchSuggestions()
+	return m.showToast(toastInfo, fmt.Sprintf("Search mode: %s (%s)", strings.ToLower(mode.Label()), mode.Description()))
 }
 
 // addRecentSearchQuery puts a query at the head of the history and returns the
@@ -2983,21 +3114,17 @@ func (m dashboardModel) selectedSearchResult() *model.SearchResult {
 func (m dashboardModel) changeSelectedLibraryStatus(status model.Status) (tea.Model, tea.Cmd) {
 	b := m.selectedLibraryBook()
 	if b == nil {
-		m.errMsg = "no book selected"
-		return m, nil
+		return m, m.showToast(toastError, "no book selected")
 	}
-	return m.startOp(changeStatusCmd(m.ctx, m.app, b.Book.ID, status))
-
+	return m.startOp(changeStatusCmd(m.ctx, m.app, b.Book.ID, b.Book.Title, b.StatusID, status))
 }
 
 func (m dashboardModel) changeSelectedSearchStatus(status model.Status) (tea.Model, tea.Cmd) {
 	r := m.selectedSearchResult()
 	if r == nil {
-		m.errMsg = "no search result selected"
-		return m, nil
+		return m, m.showToast(toastError, "no search result selected")
 	}
 	return m.startOp(addFromSearchCmd(m.ctx, m.app, r.ID, status))
-
 }
 
 // ── Tea Commands ───────────────────────────────────────────────────────────
@@ -3232,7 +3359,9 @@ func searchCmd(ctx context.Context, a *app.App, query string, mode model.SearchM
 	}
 }
 
-func updateProgressCmd(ctx context.Context, a *app.App, bookID int, rawPage string) tea.Cmd {
+// updateProgressCmd sets a book's page. prevPage is where the book stood, so
+// the result can offer to put it back.
+func updateProgressCmd(ctx context.Context, a *app.App, bookID int, title string, prevPage int, rawPage string) tea.Cmd {
 	return func() tea.Msg {
 		p, err := model.ParsePage(rawPage)
 		if err != nil {
@@ -3247,6 +3376,10 @@ func updateProgressCmd(ctx context.Context, a *app.App, bookID int, rawPage stri
 			info:      fmt.Sprintf("Progress updated to page %d", newPage),
 			reload:    true,
 			markDirty: true,
+			bookID:    bookID,
+			title:     title,
+			prevPage:  prevPage,
+			newPage:   newPage,
 		}
 	}
 }
@@ -3278,7 +3411,9 @@ func reviewSavePendingMessage(review string) string {
 	return "Saving review..."
 }
 
-func quickProgressCmd(ctx context.Context, a *app.App, bookID int, delta int) tea.Cmd {
+// quickProgressCmd moves a book's page by delta. prevPage is where the book
+// stood, so the result can offer to put it back.
+func quickProgressCmd(ctx context.Context, a *app.App, bookID int, title string, prevPage, delta int) tea.Cmd {
 	return func() tea.Msg {
 		if delta == 0 {
 			return opDoneMsg{op: opProgress}
@@ -3299,20 +3434,30 @@ func quickProgressCmd(ctx context.Context, a *app.App, bookID int, delta int) te
 			info:      fmt.Sprintf("Progress %s%d → page %d", sign, delta, newPage),
 			reload:    true,
 			markDirty: true,
+			bookID:    bookID,
+			title:     title,
+			prevPage:  prevPage,
+			newPage:   newPage,
 		}
 	}
 }
 
-func changeStatusCmd(ctx context.Context, a *app.App, bookID int, status model.Status) tea.Cmd {
+// changeStatusCmd moves a book from one shelf to another. Both are reported
+// so the result can offer to move it back.
+func changeStatusCmd(ctx context.Context, a *app.App, bookID int, title string, from, to model.Status) tea.Cmd {
 	return func() tea.Msg {
-		if err := a.ChangeStatus(ctx, bookID, status); err != nil {
+		if err := a.ChangeStatus(ctx, bookID, to); err != nil {
 			return opDoneMsg{op: opStatus, err: err}
 		}
 		return opDoneMsg{
-			op:        opStatus,
-			info:      fmt.Sprintf("Status changed to %s", status.Label()),
-			reload:    true,
-			markDirty: true,
+			op:         opStatus,
+			info:       fmt.Sprintf("Status changed to %s", to.Label()),
+			reload:     true,
+			markDirty:  true,
+			bookID:     bookID,
+			title:      title,
+			prevStatus: from,
+			newStatus:  to,
 		}
 	}
 }
