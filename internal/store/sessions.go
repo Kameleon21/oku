@@ -171,12 +171,3 @@ ORDER BY started_at
 
 	return stats, rows.Err()
 }
-
-// DeleteState removes a key from the state table.
-func (s *Store) DeleteState(key string) error {
-	_, err := s.db.Exec(`DELETE FROM state WHERE key = ?`, key)
-	if err != nil {
-		return fmt.Errorf("delete state %q: %w", key, err)
-	}
-	return nil
-}

@@ -163,8 +163,17 @@ func heatmapCellStyled(level int) string {
 // Less→More legend. cell renders one intensity level (0-4) as a single-width
 // glyph; dim styles the labels and may be nil for plain output.
 func buildHeatmap(activities []model.DayActivity, weeks int, cell func(level int) string, dim func(string) string) string {
+	return buildHeatmapAt(activities, weeks, time.Now(), cell, dim)
+}
+
+// buildHeatmapAt is buildHeatmap with an explicit "today", so the grid and its
+// month labels can be tested against fixed dates.
+func buildHeatmapAt(activities []model.DayActivity, weeks int, now time.Time, cell func(level int) string, dim func(string) string) string {
 	if dim == nil {
 		dim = func(s string) string { return s }
+	}
+	if weeks < 1 {
+		weeks = 1
 	}
 
 	actMap := make(map[string]model.DayActivity, len(activities))
@@ -176,7 +185,6 @@ func buildHeatmap(activities []model.DayActivity, weeks int, cell func(level int
 		}
 	}
 
-	now := time.Now()
 	weekday := (int(now.Weekday()) + 6) % 7 // Mon=0 .. Sun=6
 	endDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	startDate := endDate.AddDate(0, 0, -(weeks-1)*7-weekday)
@@ -184,27 +192,37 @@ func buildHeatmap(activities []model.DayActivity, weeks int, cell func(level int
 	var sb strings.Builder
 
 	// Month labels, written into a buffer so each lands on the column of the
-	// week where that month starts.
+	// week that contains the 1st of that month. A column's month is taken from
+	// its Sunday: it changes exactly when a month boundary falls somewhere in
+	// the column's Mon–Sun span, so a month starting mid-week is still labelled.
 	labels := make([]rune, heatmapPrefixW+weeks*heatmapWeekW+len("Jan"))
 	for i := range labels {
 		labels[i] = ' '
 	}
-	lastMonth := -1
-	lastEnd := -1
+	lastMonth := time.Month(0)
+	lastPos, lastEnd := -1, -1
 	for w := 0; w < weeks; w++ {
-		d := startDate.AddDate(0, 0, w*7)
-		m := int(d.Month())
+		sunday := startDate.AddDate(0, 0, w*7+6)
+		m := sunday.Month()
 		if m == lastMonth {
 			continue
 		}
 		lastMonth = m
 		pos := heatmapPrefixW + w*heatmapWeekW
 		if pos <= lastEnd {
-			continue
+			// Labels are wider than a week column, so two can only collide
+			// when the grid opens on a stub of a month that ends within the
+			// next column. Prefer the real month boundary over the stub.
+			if lastPos != heatmapPrefixW {
+				continue
+			}
+			for i := lastPos; i < lastEnd; i++ {
+				labels[i] = ' '
+			}
 		}
-		name := d.Format("Jan")
+		name := sunday.Format("Jan")
 		copy(labels[pos:], []rune(name))
-		lastEnd = pos + len(name)
+		lastPos, lastEnd = pos, pos+len(name)
 	}
 	sb.WriteString(dim(strings.TrimRight(string(labels), " ")))
 	sb.WriteString("\n")

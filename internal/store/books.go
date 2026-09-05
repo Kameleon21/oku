@@ -79,15 +79,20 @@ func splitAuthors(s string) []string {
 	return out
 }
 
-// PruneOrphanBooks removes cached books not referenced by user_books and older than maxAgeDays.
+// PruneOrphanBooks removes cached books older than maxAgeDays that are
+// referenced neither by user_books nor by reading_sessions, so timer history
+// keeps its book titles.
 func (s *Store) PruneOrphanBooks(maxAgeDays int) error {
 	if maxAgeDays <= 0 {
 		maxAgeDays = 30
 	}
 
+	// The IS NOT NULL guards matter: a single NULL in a NOT IN subquery makes
+	// the whole predicate NULL and silently prunes nothing.
 	const query = `
 DELETE FROM books
-WHERE id NOT IN (SELECT book_id FROM user_books)
+WHERE id NOT IN (SELECT book_id FROM user_books WHERE book_id IS NOT NULL)
+  AND id NOT IN (SELECT book_id FROM reading_sessions WHERE book_id IS NOT NULL)
   AND updated_at < datetime('now', ?)
 `
 	age := fmt.Sprintf("-%d days", maxAgeDays)

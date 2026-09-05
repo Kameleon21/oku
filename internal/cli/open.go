@@ -36,7 +36,7 @@ func newOpenCmd() *cobra.Command {
 				return nil
 			}
 
-			if err := a.SetActiveBook(bookID); err != nil {
+			if err := a.AddActiveBook(bookID); err != nil {
 				return err
 			}
 

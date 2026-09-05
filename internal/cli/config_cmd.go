@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/Kameleon21/oku/internal/config"
 	"github.com/spf13/cobra"
@@ -28,7 +29,10 @@ func newConfigEditCmd() *cobra.Command {
 				return err
 			}
 
-			path := config.FilePath()
+			path, err := config.FilePath()
+			if err != nil {
+				return err
+			}
 
 			// Create the file if it doesn't exist.
 			if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -37,12 +41,14 @@ func newConfigEditCmd() *cobra.Command {
 				}
 			}
 
-			editor := os.Getenv("EDITOR")
-			if editor == "" {
-				editor = "vi"
+			// A broken config must still be editable, so fall back to defaults
+			// instead of refusing to open the file that needs fixing.
+			cfg, err := config.Load()
+			if err != nil {
+				cfg = config.Defaults()
 			}
 
-			c := exec.Command(editor, path)
+			c := exec.Command(resolveEditor(cfg.Editor, os.Getenv), path)
 			c.Stdin = os.Stdin
 			c.Stdout = os.Stdout
 			c.Stderr = os.Stderr
@@ -51,18 +57,41 @@ func newConfigEditCmd() *cobra.Command {
 	}
 }
 
+// resolveEditor picks the editor to open the config with, preferring the
+// configured one, then $VISUAL, then $EDITOR, then vi.
+func resolveEditor(cfgEditor string, getenv func(string) string) string {
+	for _, candidate := range []string{cfgEditor, getenv("VISUAL"), getenv("EDITOR")} {
+		if editor := strings.TrimSpace(candidate); editor != "" {
+			return editor
+		}
+	}
+	return "vi"
+}
+
 func newConfigShowCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "show",
 		Short: "Show current configuration",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Print the file path before anything that can fail: when the
+			// config is malformed, its location is the one thing the user
+			// needs from this command.
+			path, err := config.FilePath()
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Config file: %s\n", path)
+
 			cfg, err := config.Load()
 			if err != nil {
 				return err
 			}
-			fmt.Printf("Config file: %s\n", config.FilePath())
-			fmt.Printf("Data dir:    %s\n", config.DataDir())
-			fmt.Printf("Editor:      %s\n", cfg.Editor)
+			dataDir, err := config.DataDir()
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Data dir:    %s\n", dataDir)
+			fmt.Printf("Editor:      %s\n", resolveEditor(cfg.Editor, os.Getenv))
 			fmt.Printf("Use fzf:     %v\n", cfg.UseFzf)
 			fmt.Printf("Default list: %s\n", cfg.DefaultList)
 			return nil

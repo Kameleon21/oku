@@ -83,7 +83,7 @@ func (a *App) GetUserBookForTitle(title string) (*model.UserBook, error) {
 		return nil, nil
 	}
 
-	all, err := a.listAllCachedUserBooks()
+	all, err := a.ListAllCachedUserBooks()
 	if err != nil {
 		return nil, err
 	}
@@ -116,19 +116,12 @@ func (a *App) GetUserBookForTitle(title string) (*model.UserBook, error) {
 	return nil, nil
 }
 
-func (a *App) listAllCachedUserBooks() ([]model.UserBook, error) {
-	statuses := []model.Status{
-		model.StatusCurrentlyReading,
-		model.StatusWantToRead,
-		model.StatusRead,
-		model.StatusDidNotFinish,
-		model.StatusIgnored,
-		model.StatusPaused,
-	}
-
+// ListAllCachedUserBooks returns every cached user book across all statuses,
+// de-duplicated by book ID.
+func (a *App) ListAllCachedUserBooks() ([]model.UserBook, error) {
 	seen := map[int]struct{}{}
 	out := make([]model.UserBook, 0, 64)
-	for _, status := range statuses {
+	for _, status := range model.AllStatuses {
 		books, err := a.Store.ListUserBooks(status)
 		if err != nil {
 			return nil, err

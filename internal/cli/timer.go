@@ -143,6 +143,10 @@ func newTimerStatsCmd() *cobra.Command {
 		Use:   "stats",
 		Short: "Show reading time statistics",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateCount("weeks", weeks, 0); err != nil {
+				return err
+			}
+
 			a, err := initLocalApp()
 			if err != nil {
 				return err
@@ -155,8 +159,7 @@ func newTimerStatsCmd() *cobra.Command {
 			}
 
 			if jsonOutput {
-				printJSON(stats)
-				return nil
+				return printJSON(stats)
 			}
 
 			label := "this week"
@@ -223,6 +226,10 @@ func newTimerListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List recent reading sessions",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateCount("limit", limit, 0); err != nil {
+				return err
+			}
+
 			a, err := initLocalApp()
 			if err != nil {
 				return err
@@ -235,8 +242,7 @@ func newTimerListCmd() *cobra.Command {
 			}
 
 			if jsonOutput {
-				printJSON(sessions)
-				return nil
+				return printJSON(sessions)
 			}
 
 			if len(sessions) == 0 {

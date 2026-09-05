@@ -174,27 +174,6 @@ func (a *App) RemoveActiveBook(bookID int) error {
 	return nil
 }
 
-// SetActiveBook adds a book to the active list by book ID.
-func (a *App) SetActiveBook(bookID int) error {
-	return a.AddActiveBook(bookID)
-}
-
-// GetActiveBook returns the active UserBook from cache.
-func (a *App) GetActiveBook() (*model.UserBook, error) {
-	bookID, err := a.GetActiveBookID()
-	if err != nil {
-		return nil, err
-	}
-	ub, err := a.Store.GetUserBookByBookID(bookID)
-	if err != nil {
-		return nil, err
-	}
-	if ub == nil {
-		return nil, fmt.Errorf("active book (ID %d) not found in cache. Run: oku sync", bookID)
-	}
-	return ub, nil
-}
-
 // ResolveBookID returns the given bookID if > 0, otherwise the active book ID.
 func (a *App) ResolveBookID(bookID int) (int, error) {
 	if bookID > 0 {

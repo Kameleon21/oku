@@ -16,6 +16,9 @@ func newSearchCmd() *cobra.Command {
 		Short: "Search Hardcover (book/author/genre intent)",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateCount("limit", limit, 0); err != nil {
+				return err
+			}
 			query := strings.Join(args, " ")
 			mode, err := model.ParseSearchMode(modeRaw)
 			if err != nil {
@@ -31,8 +34,7 @@ func newSearchCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			printSearchResults(results)
-			return nil
+			return printSearchResults(results)
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 10, "Max results to return")
