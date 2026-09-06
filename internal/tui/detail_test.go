@@ -137,6 +137,68 @@ func TestDetailOmitsRowsItHasNoDataFor(t *testing.T) {
 	}
 }
 
+// TestDetailVerboseFooterNamesTheBook: the verbose density adds the row the
+// other two leave out — where the book lives on Hardcover, and its id.
+func TestDetailVerboseFooterNamesTheBook(t *testing.T) {
+	m := newTestModel()
+	book := model.UserBook{
+		StatusID: model.StatusCurrentlyReading,
+		Book:     model.Book{ID: 101, Title: "Dune", Slug: "dune", Pages: 412},
+	}
+
+	for _, density := range []Density{DensityCompact, DensityDefault} {
+		out := stripANSI(renderUserBook(book, nil, fixedNow, 90, density, m.st))
+		if strings.Contains(out, "hardcover.app") {
+			t.Fatalf("%v should not carry the link row:\n%s", density, out)
+		}
+	}
+
+	out := stripANSI(renderUserBook(book, nil, fixedNow, 90, DensityVerbose, m.st))
+	if !strings.Contains(out, "hardcover.app/books/dune · id 101") {
+		t.Fatalf("the verbose footer should name the book:\n%s", out)
+	}
+
+	// With no slug there is still an id.
+	book.Book.Slug = ""
+	out = stripANSI(renderUserBook(book, nil, fixedNow, 90, DensityVerbose, m.st))
+	if !strings.Contains(out, "id 101") || strings.Contains(out, "hardcover.app") {
+		t.Fatalf("a book with no slug should still say its id and nothing more:\n%s", out)
+	}
+}
+
+// TestDetailReviewWrapsToThePane: a review is the one thing in the pane
+// worth reading in full, so it is wrapped rather than cut, and the viewport
+// scrolls what does not fit.
+func TestDetailReviewWrapsToThePane(t *testing.T) {
+	m := newTestModel()
+	book := model.UserBook{
+		StatusID: model.StatusRead,
+		Book:     model.Book{ID: 7, Title: "Ubik"},
+		Review:   strings.Repeat("Words enough to need more than one row of any pane. ", 12),
+	}
+
+	for _, w := range []int{40, 68, 90} {
+		out := renderUserBook(book, nil, fixedNow, w, DensityVerbose, m.st)
+		rows := strings.Split(stripANSI(out), "\n")
+		wrapped := 0
+		for i, row := range rows {
+			if got := lipgloss.Width(rows[i]); got > w {
+				t.Fatalf("width %d: review row %d is %d wide: %q", w, i, got, row)
+			}
+			if strings.HasPrefix(row, "  Words") || strings.HasPrefix(row, "  of any") {
+				wrapped++
+			}
+		}
+		if wrapped < 2 {
+			t.Fatalf("width %d: the review should be wrapped over several rows, not cut:\n%s", w, stripANSI(out))
+		}
+		// Nothing is dropped: the last words are still there.
+		if !strings.Contains(strings.Join(rows, " "), "pane.") {
+			t.Fatalf("width %d: the end of the review was cut:\n%s", w, stripANSI(out))
+		}
+	}
+}
+
 // TestDetailGridKeepsAGapBetweenItsColumns checks a left value long enough
 // to be cut does not run into the right column's label.
 func TestDetailGridKeepsAGapBetweenItsColumns(t *testing.T) {
@@ -312,7 +374,7 @@ func TestSearchResultOpensInTheDetailPane(t *testing.T) {
 		s := searchOf(m)
 		s.results = []model.SearchResult{{ID: 1, Title: "Dune", Authors: []string{"Frank Herbert"}, Pages: 412, Slug: "dune"}}
 		s.rebuildResults()
-		s.sub = searchSubResults
+		s.focusResults()
 
 		send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 		if m.focus != focusDetail {
@@ -394,8 +456,7 @@ func TestDetailEmptyStates(t *testing.T) {
 // not owned by a text field, and are typed where it is.
 func TestTabKeysNeverReachTheSearchInput(t *testing.T) {
 	states := map[string]func(*searchSection){
-		"normal mode": func(s *searchSection) { s.sub, s.mode = searchSubInput, searchModeNormal },
-		"results":     func(s *searchSection) { s.sub = searchSubResults },
+		"results": func(s *searchSection) { s.focusResults() },
 	}
 	want := map[rune]tab{'1': tabReading, '2': tabOku, '3': tabSearch, '4': tabStats, '5': tabTimer}
 
@@ -419,7 +480,7 @@ func TestTabKeysNeverReachTheSearchInput(t *testing.T) {
 		}
 	}
 
-	// In insert mode the input owns the keyboard, and a digit is a digit.
+	// With the input focused it owns the keyboard, and a digit is a digit.
 	m := renderedDashboard(120, 40)
 	m.setTab(tabSearch)
 	searchOf(m).focusInput()
@@ -428,7 +489,7 @@ func TestTabKeysNeverReachTheSearchInput(t *testing.T) {
 		t.Fatalf("a digit typed into the input should not switch tabs, tab = %v", m.tab)
 	}
 	if got := searchOf(m).input.Value(); got != "1" {
-		t.Fatalf("insert mode should type the digit, input = %q", got)
+		t.Fatalf("a focused input should type the digit, input = %q", got)
 	}
 }
 

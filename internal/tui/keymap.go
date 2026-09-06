@@ -42,10 +42,12 @@ type keyMap struct {
 	Sync, Refresh, Density                               key.Binding
 
 	// Search.
-	SearchInsert, SearchAppend key.Binding
-	SearchMode                 key.Binding
-	SearchSubmit, AddReading   key.Binding
-	SearchBack                 key.Binding // results back to the input
+	// SearchMode cycles Title/Author/Genre. It answers to different keys in
+	// the two search states: ctrl+t while the input has the keyboard, where
+	// m is a letter, and m over the results.
+	SearchMode               key.Binding
+	SearchSubmit, AddReading key.Binding
+	SearchInput              key.Binding // results back to the input
 
 	// Pickers and modals.
 	Select                           key.Binding // enter: the timer picker, a confirm button, the page prompt
@@ -115,14 +117,12 @@ func newKeyMap() keyMap {
 		Refresh:      bind("r", "refresh", "r"),
 		Density:      bind("z", "density", "z"),
 
-		SearchInsert: bind("i", "insert", "i"),
-		SearchAppend: bind("a", "append", "a"),
-		SearchMode:   bind("m", "cycle mode", "m"),
+		SearchMode:   bind("m", "cycle mode", "m", "ctrl+t"),
 		SearchSubmit: bind("↵", "search", "enter"),
 		// Enter opens a result in the detail pane, the way it opens a book
 		// everywhere else, so shelving one has a key of its own.
-		AddReading: bind("a", "add as reading", "a"),
-		SearchBack: bind("Esc", "back to input", "esc", "h", "left"),
+		AddReading:  bind("a", "add as reading", "a"),
+		SearchInput: bind("Esc/i", "back to the input", "esc", "i"),
 
 		Select: bind("↵", "select", "enter"),
 		// The dialog has always answered to shifted letters too.
@@ -218,7 +218,7 @@ func (k keyMap) helpGroups() []helpGroup {
 			hintAs("Tab/S-Tab", "tab (alias)", k.NextSection, k.PrevSection),
 			k.Search,
 			k.Back,
-			k.SearchBack,
+			k.SearchInput,
 			k.ScrollTop,
 			k.ScrollBottom,
 			hint("half page", k.HalfPageUp, k.HalfPageDown),
@@ -236,7 +236,6 @@ func (k keyMap) helpGroups() []helpGroup {
 			k.SetFinished,
 			k.SetDNF,
 			k.SetIgnored,
-			hint("insert", k.SearchInsert, k.SearchAppend),
 			k.SearchMode,
 			k.Density,
 		}},

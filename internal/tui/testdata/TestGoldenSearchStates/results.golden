@@ -1,15 +1,15 @@
  oku   1 Reading 3   2 Oku 3  ▸3 Search   4 Stats   5 Timer                                               synced 2m ago 
-┏━ Search ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓╭─ Details ────────────────────────────────────────────────────────────╮
-┃ [NORMAL] [BOOK] / dune                       ┃│                                                                      │
-┃ BOOK Results (4)                             ┃│    ____  __ __  __  __                                               │
-┃                                              ┃│   / __ \/ //_/ / / / /                                               │
-┃ │ Dune (412 pages)                           ┃│  / / / / ,<   / / / /                                                │
-┃ │ ★ 4.31 (1.2K ratings) · Frank Herbert      ┃│ / /_/ / /| | / /_/ /                                                 │
-┃   Dune Messiah (256 pages)                   ┃│ \____/_/ |_| \____/                                                  │
+┏━ Search ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓╭─ Dune ───────────────────────────────────────────────────────────────╮
+┃ / dune                                       ┃│ Frank Herbert                                                        │
+┃ [Title]  Author   Genre            4 results ┃│                                                                      │
+┃                                              ┃│ Community    ★ 4.31 (1.2K ratings)                                   │
+┃ │ Dune (412 pages)                           ┃│ Pages        412                                                     │
+┃ │ ★ 4.31 (1.2K ratings) · Frank Herbert      ┃│                                                                      │
+┃   Dune Messiah (256 pages)                   ┃│ On your shelf: Read  ★★★★½ 4.5                                       │
 ┃   ★ 3.90 (410 ratings) · Frank Herbert       ┃│                                                                      │
-┃   Children of Dune (408 pages)               ┃│   Type a query                                                       │
+┃   Children of Dune (408 pages)               ┃│ hardcover.app/books/dune                                             │
 ┃   ★ 3.85 (302 ratings) · Frank Herbert       ┃│                                                                      │
-┃   God Emperor of Dune (423 pages)            ┃│   Recent: dune · le guin · kafka                                     │
+┃   God Emperor of Dune (423 pages)            ┃│ a add as reading · w want to read · f finished · d dnf               │
 ┃   ★ 3.80 (211 ratings) · Frank Herbert       ┃│                                                                      │
 ┃                                              ┃│                                                                      │
 ┃                                              ┃│                                                                      │
@@ -37,4 +37,4 @@
 ┃                                              ┃│                                                                      │
 ┃                                              ┃│                                                                      │
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛╰──────────────────────────────────────────────────────────────────────╯
- ? help · ↵ search · i/a insert · m mode · z density · Esc back                                                         
+ ? help · j/k navigate · ↵ detail · a add as reading · g/w/f/d status · m cycle mode · Esc/i input · h/l tab …          

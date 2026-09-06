@@ -161,6 +161,12 @@ type pageModal struct {
 	total   int
 	input   textinput.Model
 	token   int
+	// submitting says a save has been asked for and not come back yet; err
+	// is what it came back with. A failed save keeps the modal open with the
+	// typed value intact, the way the review modal does: the status bar sits
+	// behind the overlay, so this is the only place the failure can be read.
+	submitting bool
+	err        string
 }
 
 func newPageModal(sh *shared, st styles, b model.UserBook) *pageModal {
@@ -190,6 +196,16 @@ func (p *pageModal) Update(msg tea.Msg) (bool, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		k := keysFor(p)
+		if p.submitting {
+			// Read-only until the save reports back — including a refusal,
+			// which the root hands back as this prompt's own failed result.
+			// Cancelling drops the prompt; the pending result is then
+			// reported like any other.
+			if key.Matches(msg, k.Back) {
+				return true, nil
+			}
+			return false, nil
+		}
 		switch {
 		case key.Matches(msg, k.Back):
 			return true, nil
@@ -198,15 +214,23 @@ func (p *pageModal) Update(msg tea.Msg) (bool, tea.Cmd) {
 			if raw == "" {
 				return false, request(reqToast{toastError, "page value cannot be empty"})
 			}
+			p.submitting, p.err = true, ""
 			return false, request(reqSetPage{
 				bookID: p.bookID, title: p.title, prevPage: p.current, raw: raw, token: p.token,
 			})
 		}
 	case opDoneMsg:
-		if msg.op == opProgress && msg.seq == p.token {
-			return true, nil
+		if msg.op != opProgress || msg.seq != p.token {
+			return false, nil
 		}
-		return false, nil
+		p.submitting = false
+		if msg.err != nil {
+			// Shown in the overlay; the typed value is preserved so the page
+			// can be corrected rather than retyped.
+			p.err = msg.err.Error()
+			return false, nil
+		}
+		return true, nil
 	}
 	var cmd tea.Cmd
 	p.input, cmd = p.input.Update(msg)
@@ -221,20 +245,29 @@ func (p *pageModal) View(lay layout, st styles) string {
 	if p.total > 0 {
 		current = fmt.Sprintf("current: %d/%d", p.current, p.total)
 	}
-	content := strings.Join([]string{
+	rows := []string{
 		st.modalValue.Render(p.title),
 		st.modalDim.Render(current),
 		p.input.View(),
 		"",
-		st.modalDim.Render("Enter save · Esc cancel"),
-	}, "\n")
+	}
+	switch {
+	case p.submitting:
+		rows = append(rows, st.modalDim.Render("Saving..."))
+	case p.err != "":
+		rows = append(rows, st.modalError.Render(p.err))
+	}
+	content := strings.Join(append(rows, st.modalDim.Render("Enter save · Esc cancel")), "\n")
 	return renderModalPanel("Update page", content, max(36, min(60, lay.W-10)), st)
 }
 
 func (p *pageModal) Keys(k *keyMap) {
 	k.Back.SetHelp("Esc", "cancel")
 	k.Select.SetHelp("↵", "save")
-	enable(&k.Back, &k.Select)
+	enable(&k.Back)
+	if !p.submitting {
+		enable(&k.Select)
+	}
 	k.short = []key.Binding{k.Select, k.Back}
 }
 

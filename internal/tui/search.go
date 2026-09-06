@@ -11,6 +11,8 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // recentSearchesKey is the store state key the search history is kept under,
@@ -20,19 +22,38 @@ const (
 	maxRecentSearches = 10
 )
 
-type searchSubFocus int
+// searchFocus is where the keyboard is on the Search tab. There are two
+// states and no modes: either the input has it and every key is a
+// character, or the results have it and every key is a command.
+//
+// resultsFocused is the zero value, and the state the tab is entered in:
+// walking the strip with h/l must never leave a text input holding the
+// keyboard, since the input would swallow the very keys that walk back
+// off it.
+type searchFocus int
 
 const (
-	searchSubInput searchSubFocus = iota
-	searchSubResults
+	resultsFocused searchFocus = iota
+	inputFocused
 )
 
-type searchInputMode int
+// searchModes is the segmented control's order, which is also the order
+// SearchMode.Next() cycles in.
+var searchModes = []model.SearchMode{model.SearchModeBook, model.SearchModeAuthor, model.SearchModeGenre}
 
-const (
-	searchModeNormal searchInputMode = iota
-	searchModeInsert
-)
+// segmentLabel is a mode's name in the segmented control. SearchModeBook is
+// BOOK to the CLI, which searches books; on screen it is the title field the
+// query is matched against, next to Author and Genre.
+func segmentLabel(mode model.SearchMode) string {
+	switch mode {
+	case model.SearchModeAuthor:
+		return "Author"
+	case model.SearchModeGenre:
+		return "Genre"
+	default:
+		return "Title"
+	}
+}
 
 type searchResultItem struct {
 	result  model.SearchResult
@@ -86,8 +107,8 @@ func (i searchResultItem) FilterValue() string {
 
 // ── Search section ─────────────────────────────────────────────────────────
 
-// searchSection is the search card and its results. The input has a normal
-// and an insert mode, vim style; the results are a list of their own.
+// searchSection is the query input, the mode control under it and the
+// results. The keyboard is in one of two places (see searchFocus).
 type searchSection struct {
 	sh *shared
 	st styles
@@ -96,8 +117,7 @@ type searchSection struct {
 	list  list.Model
 
 	results   []model.SearchResult
-	sub       searchSubFocus
-	mode      searchInputMode
+	focus     searchFocus
 	queryMode model.SearchMode
 	// focused reports whether the section has the focus: results landing
 	// while it does take the cursor, results landing elsewhere do not.
@@ -114,9 +134,10 @@ type searchSection struct {
 
 func newSearchSection(sh *shared, st styles) *searchSection {
 	l := newList(st)
-	// The search results panel has no card label, so it prints this title as
-	// its own one-line header.
-	l.Title = model.SearchModeBook.Label() + " Results"
+	// The list's own / filter is unreachable by design — / is the dashboard's
+	// search key — so filtering is off: with it on, SetItems answers with
+	// filter commands nothing here runs.
+	l.SetFilteringEnabled(false)
 
 	in := textinput.New()
 	in.Placeholder = "Search books..."
@@ -151,13 +172,11 @@ func (s *searchSection) Update(msg tea.Msg) tea.Cmd {
 		s.updateSuggestions()
 		return cmd
 	case list.FilterMatchesMsg:
-		// Carries no list id: only the list that is filtering asked for it.
-		if s.list.FilterState() == list.Unfiltered {
-			return nil
-		}
+		// Another list's filter: this one has none (see newSearchSection).
+		return nil
 	}
 	var cmd tea.Cmd
-	if s.sub == searchSubResults {
+	if s.focus == resultsFocused {
 		s.list, cmd = s.list.Update(msg)
 	} else {
 		s.input, cmd = s.input.Update(msg)
@@ -167,53 +186,39 @@ func (s *searchSection) Update(msg tea.Msg) tea.Cmd {
 
 func (s *searchSection) handleKey(msg tea.KeyMsg) tea.Cmd {
 	k := keysFor(s)
-	if s.sub == searchSubInput {
-		if s.mode == searchModeNormal {
-			switch {
-			case key.Matches(msg, k.SearchInsert):
-				s.enterInsertMode()
-			case key.Matches(msg, k.SearchAppend):
-				s.enterInsertMode()
-				s.input.CursorEnd()
-			case key.Matches(msg, k.SearchMode):
-				return s.setQueryMode(s.queryMode.Next())
-			case key.Matches(msg, k.SearchSubmit):
-				return s.submit()
-			case key.Matches(msg, k.Back, k.Up):
-				return request(reqSwitchTab{step: -1})
-			case key.Matches(msg, k.Down):
-				if s.hasResults() {
-					s.sub = searchSubResults
-					return nil
-				}
-				return request(reqSwitchTab{step: +1})
-			}
-			return nil
-		}
-
-		// Insert mode.
+	if s.focus == inputFocused {
 		switch {
 		case key.Matches(msg, k.SearchSubmit):
 			return s.submit()
+		case key.Matches(msg, k.SearchMode):
+			// ctrl+t here: m is a letter, and Tab is the input's own
+			// suggestion-accept.
+			return s.setQueryMode(s.queryMode.Next())
 		case key.Matches(msg, k.Back):
-			s.enterNormalMode()
-			return nil
+			// The query is left in the input: coming back to the tab finds
+			// it where it was.
+			return request(reqSwitchTab{back: true})
+		case key.Matches(msg, k.Down):
+			// The arrow only — Keys() takes j off this binding here, since
+			// a letter belongs to the query.
+			if s.hasResults() {
+				s.focusResults()
+				return nil
+			}
 		}
 		var cmd tea.Cmd
 		s.input, cmd = s.input.Update(msg)
 		return cmd
 	}
 
-	// searchSubResults
 	switch {
-	case key.Matches(msg, k.SearchBack):
-		s.sub = searchSubInput
-		s.enterNormalMode()
+	case key.Matches(msg, k.SearchInput):
+		s.focusInput()
 		return nil
+	case key.Matches(msg, k.SearchMode):
+		return s.setQueryMode(s.queryMode.Next())
 	case key.Matches(msg, k.AddReading):
-		if r := s.selected(); r != nil {
-			return request(reqAddFromSearch{result: *r, to: model.StatusCurrentlyReading})
-		}
+		return s.addSelected(model.StatusCurrentlyReading)
 	case key.Matches(msg, k.SetReading):
 		return s.addSelected(model.StatusCurrentlyReading)
 	case key.Matches(msg, k.SetWant):
@@ -230,128 +235,164 @@ func (s *searchSection) handleKey(msg tea.KeyMsg) tea.Cmd {
 }
 
 // searchChromeRows is what the pane spends above the results: the input,
-// the row that names them, and a blank line between.
+// the mode control, and a blank line between them and the list.
 const searchChromeRows = 3
 
-// inputRow is the top of the pane: the modes and the input on one line.
-func (s *searchSection) inputRow() string {
-	mode := s.st.dim.Render("[NORMAL]")
-	if s.mode == searchModeInsert {
-		mode = s.st.keyHint.Render("[INSERT]")
-	}
-	queryMode := s.st.keyHint.Render("[" + s.queryMode.Label() + "]")
-	return mode + " " + queryMode + " " + s.input.View()
-}
-
-// View is the whole pane: the input, the row naming the results on screen,
-// and the results themselves — the search in progress, the empty state or
-// the list.
+// View is the whole pane: the query, the segmented mode control with the
+// state of the search on its right, and the results themselves.
 func (s *searchSection) View(w, h int) string {
-	body := s.resultsView()
-	return fitBlock(s.inputRow()+"\n"+s.st.label.Render(s.list.Title)+"\n\n"+body, w, h)
+	return fitBlock(s.input.View()+"\n"+s.controlRow(w)+"\n\n"+s.resultsView(), w, h)
 }
 
-// resultsView is the pane below the input row.
+// controlRow is the segmented control — "[Title]  Author   Genre" — with
+// what the results are doing right-aligned against it.
+func (s *searchSection) controlRow(w int) string {
+	segments := make([]string, 0, len(searchModes))
+	for _, mode := range searchModes {
+		label := segmentLabel(mode)
+		if mode == s.queryMode {
+			// Marked as well as coloured, so the choice survives a terminal
+			// without colour.
+			segments = append(segments, s.st.tabActive.Render("["+label+"]"))
+			continue
+		}
+		segments = append(segments, s.st.dim.Render(" "+label+" "))
+	}
+
+	left := strings.Join(segments, " ")
+	right := s.statusText()
+	gap := w - lipgloss.Width(left) - lipgloss.Width(right)
+	if right == "" || gap < 1 {
+		// The control is the row's reason to exist; the status is what goes
+		// when they do not both fit.
+		return ansi.Truncate(left, max(0, w), "")
+	}
+	return left + strings.Repeat(" ", gap) + right
+}
+
+// statusText is the right of the control row: the search in progress, or
+// what the results on screen amount to.
+func (s *searchSection) statusText() string {
+	switch {
+	case s.loading:
+		return s.sh.spin.View() + " " + s.st.dim.Render("searching…")
+	case len(s.results) > 0:
+		return s.st.dim.Render(fmt.Sprintf("%d results", len(s.results)))
+	case strings.TrimSpace(s.lastQuery) != "":
+		return s.st.dim.Render("no results")
+	default:
+		return ""
+	}
+}
+
+// resultsView is the pane below the control row. Results already on screen
+// stay there while the next search runs, so the pane does not blank out
+// between one query and the next.
 func (s *searchSection) resultsView() string {
+	if len(s.list.Items()) > 0 {
+		return s.list.View()
+	}
 	if s.loading {
 		query := s.loadingQuery
 		if strings.TrimSpace(query) == "" {
-			query = s.lastQuery
+			query = "…"
 		}
-		if strings.TrimSpace(query) == "" {
-			query = "..."
-		}
-		return "  " + s.sh.spin.View() + " " + strings.ToLower(s.queryMode.Label()) +
-			" search (" + s.queryMode.Description() + ") for " + fmt.Sprintf("%q", query)
+		return s.st.dim.Render(fmt.Sprintf("  Searching for %q", query))
 	}
-
-	if len(s.list.Items()) == 0 {
-		if strings.TrimSpace(s.lastQuery) == "" {
-			return s.st.dim.Render(
-				fmt.Sprintf("  %s mode (%s). Type a query and press Enter.",
-					strings.ToLower(s.queryMode.Label()), s.queryMode.Description(),
-				),
-			)
-		}
-		return s.st.dim.Render(fmt.Sprintf("  No results for %q", s.lastQuery))
+	if strings.TrimSpace(s.lastQuery) == "" {
+		return s.st.dim.Render("  Type a query and press Enter.")
 	}
-	return s.list.View()
+	return s.st.dim.Render(fmt.Sprintf("  No results for %q", s.lastQuery))
 }
 
 // Resize gives the results the rows the input row and the header do not
 // take, and the input the columns its badges leave.
 func (s *searchSection) Resize(w, h int) tea.Cmd {
 	s.list.SetSize(w, max(1, h-searchChromeRows))
-	// "[NORMAL] [BOOK] / " eats the front of the row; the input takes what
-	// is left instead of being cut off mid-placeholder.
-	s.input.Width = max(4, w-20)
+	// The prompt takes the front of the row; the input takes what is left
+	// instead of being cut off mid-placeholder.
+	s.input.Width = max(4, w-6)
 	return nil
 }
 
 func (s *searchSection) Keys(k *keyMap) {
-	tabHint := hint("tab", k.PrevSection, k.NextSection)
-	switch {
-	case s.sub == searchSubResults:
-		k.Up.SetHelp("k", "navigate")
-		k.Down.SetHelp("j", "navigate")
-		// h and left go back to the input here, so the previous-section
-		// binding is left with the one key it really has.
-		k.PrevSection.SetKeys("shift+tab")
-		k.PrevSection.SetHelp("S-Tab", "previous tab")
-		k.SearchBack.SetHelp("Esc/h", "back to input")
-		k.SetReading.SetHelp("g", "add as reading")
-		k.SetWant.SetHelp("w", "add as want to read")
-		k.SetFinished.SetHelp("f", "add as finished")
-		k.SetDNF.SetHelp("d", "add as did not finish")
-		enable(&k.Help, &k.Up, &k.Down, &k.Details, &k.AddReading, &k.SetReading, &k.SetWant,
-			&k.SetFinished, &k.SetDNF, &k.SearchBack, &k.NextSection, &k.PrevSection,
-			&k.TabJump, &k.Density)
-		k.short = []key.Binding{
-			k.Help,
-			hint("navigate", k.Down, k.Up),
-			k.Details,
-			k.AddReading,
-			hint("status", k.SetReading, k.SetWant, k.SetFinished, k.SetDNF),
-			hintAs("h/l", "input/next", k.SearchBack, k.NextSection),
-			k.Density,
-			hintAs("Esc", "back", k.SearchBack),
+	if s.focus == inputFocused {
+		// The input owns the keyboard here, so every key advertised is one
+		// it does not swallow: no letters, no digits.
+		k.Down.SetKeys("down")
+		k.Down.SetHelp("↓", "results")
+		k.SearchMode.SetKeys("ctrl+t")
+		k.SearchMode.SetHelp("C-t", "cycle mode")
+		k.Back.SetHelp("Esc", "back")
+		enable(&k.SearchSubmit, &k.SearchMode, &k.Back)
+		if s.hasResults() {
+			enable(&k.Down)
 		}
-	case s.mode == searchModeInsert:
-		// ? is typed here, not a shortcut.
-		k.Back.SetHelp("Esc", "normal")
-		enable(&k.SearchSubmit, &k.Back)
-		k.short = []key.Binding{k.SearchSubmit, k.Back}
-	default:
-		// j goes down into the results (or on to the next tab), k up to the
-		// previous one: one label that fits both.
-		k.Up.SetHelp("k", "results / tab")
-		k.Down.SetHelp("j", "results / tab")
-		enable(&k.Help, &k.SearchInsert, &k.SearchAppend, &k.SearchMode,
-			&k.Density, &k.SearchSubmit, &k.NextSection, &k.PrevSection, &k.TabJump,
-			&k.Back, &k.Up, &k.Down)
-		k.short = []key.Binding{
-			k.Help,
-			k.SearchSubmit,
-			hint("insert", k.SearchInsert, k.SearchAppend),
-			hintAs("m", "mode", k.SearchMode),
-			tabHint,
-			k.Density,
-			k.Back,
-		}
+		k.short = []key.Binding{k.SearchSubmit, k.SearchMode, k.Down, k.Back}
+		return
+	}
+
+	// h and l walk the tab strip here as they do everywhere else: Esc and i
+	// are the way back to the input. A key that walked left off the strip in
+	// every other tab and stopped in a text field in this one would make the
+	// walk one-way.
+	//
+	// The keys that act on a result are only advertised when there is one:
+	// an empty results pane is the state the tab is first entered in, and it
+	// has nothing to open, shelve or scroll.
+	k.SearchMode.SetKeys("m")
+	k.SearchMode.SetHelp("m", "cycle mode")
+	enable(&k.Help, &k.Quit, &k.Search, &k.Sync, &k.SearchInput, &k.SearchMode,
+		&k.NextSection, &k.PrevSection, &k.TabJump, &k.Density)
+	k.short = []key.Binding{
+		k.Help,
+		hintAs("Esc/i", "input", k.SearchInput),
+		k.SearchMode,
+		hint("tab", k.PrevSection, k.NextSection),
+		k.Density,
+		k.Search,
+		hintAs("s", "sync", k.Sync),
+		k.Quit,
+	}
+	if !s.hasResults() {
+		return
+	}
+
+	k.Up.SetHelp("k", "navigate")
+	k.Down.SetHelp("j", "navigate")
+	k.SetReading.SetHelp("g", "add as reading")
+	k.SetWant.SetHelp("w", "add as want to read")
+	k.SetFinished.SetHelp("f", "add as finished")
+	k.SetDNF.SetHelp("d", "add as did not finish")
+	enable(&k.Up, &k.Down, &k.Details, &k.AddReading, &k.SetReading, &k.SetWant,
+		&k.SetFinished, &k.SetDNF)
+	k.short = []key.Binding{
+		k.Help,
+		hint("navigate", k.Down, k.Up),
+		k.Details,
+		k.AddReading,
+		hint("status", k.SetReading, k.SetWant, k.SetFinished, k.SetDNF),
+		k.SearchMode,
+		hintAs("Esc/i", "input", k.SearchInput),
+		hint("tab", k.PrevSection, k.NextSection),
+		k.Density,
+		k.Search,
+		hintAs("s", "sync", k.Sync),
+		k.Quit,
 	}
 }
 
 func (s *searchSection) Focus() { s.focused = true }
 
-// Blur leaves the input: a section switch takes the cursor with it.
+// Blur leaves the input: a section switch takes the cursor with it, and the
+// tab is left in the state it is entered in, so walking back onto it never
+// finds a text field holding the keyboard.
 func (s *searchSection) Blur() {
 	s.focused = false
-	s.input.Blur()
+	s.focusResults()
 }
 
-func (s *searchSection) CapturesKeys() bool {
-	return s.sub == searchSubInput && s.mode == searchModeInsert
-}
+func (s *searchSection) CapturesKeys() bool { return s.focus == inputFocused }
 
 func (s *searchSection) Title() string { return "Search" }
 
@@ -359,19 +400,34 @@ func (s *searchSection) Title() string { return "Search" }
 // the results, so typing a query does not flicker the pane through every
 // title the cursor happens to land on.
 func (s *searchSection) Selected() selection {
-	if s.sub != searchSubResults {
+	if s.focus != resultsFocused {
 		return selection{}
 	}
 	return selection{Result: s.selected()}
 }
 
-// focusInput jumps into the input in insert mode, keeping whatever query was
-// already typed.
+// focusInput puts the cursor at the end of whatever query is already typed.
 func (s *searchSection) focusInput() {
-	s.sub = searchSubInput
-	s.enterInsertMode()
+	s.focus = inputFocused
+	s.input.Focus()
 	s.input.CursorEnd()
 	s.updateSuggestions()
+}
+
+// focusInputIfEmpty is the Search tab reached by its own number: with
+// results to read the cursor stays on them, with nothing to read it goes
+// where the reader is about to type.
+func (s *searchSection) focusInputIfEmpty() {
+	if !s.hasResults() {
+		s.focusInput()
+	}
+}
+
+// focusResults hands the keyboard to the list, where every key is a command
+// again.
+func (s *searchSection) focusResults() {
+	s.focus = resultsFocused
+	s.input.Blur()
 }
 
 // ── Search helpers ─────────────────────────────────────────────────────────
@@ -392,9 +448,7 @@ func (s *searchSection) submit() tea.Cmd {
 	// Reuse in-memory results for the same query instead of refetching.
 	if strings.EqualFold(query, strings.TrimSpace(s.lastQuery)) &&
 		s.queryMode == s.lastMode && len(s.list.Items()) > 0 {
-		s.sub = searchSubResults
-		s.mode = searchModeNormal
-		s.input.Blur()
+		s.focusResults()
 		return request(reqToast{toastInfo, fmt.Sprintf("%s mode: showing cached results for %q",
 			strings.ToLower(s.queryMode.Label()),
 			query,
@@ -403,7 +457,6 @@ func (s *searchSection) submit() tea.Cmd {
 
 	s.loading = true
 	s.loadingQuery = query
-	s.refreshTitle()
 	s.seq++
 	return request(reqSearch{query: query, mode: s.queryMode, seq: s.seq})
 }
@@ -418,20 +471,19 @@ func (s *searchSection) applyLoaded(msg searchLoadedMsg) tea.Cmd {
 	s.loading = false
 	s.loadingQuery = ""
 	if msg.err != nil {
-		// The previous results are still on screen, so the header keeps
-		// naming them - including how many there are.
-		s.refreshTitle()
+		// The results already on screen stay there, and the control row
+		// keeps counting them.
 		return request(reqToast{toastError, msg.err.Error()})
 	}
 	s.lastQuery = msg.query
 	s.lastMode = msg.mode
 	s.results = msg.results
 	cmd := s.rebuildResults()
-	s.refreshTitle()
-	if len(msg.results) > 0 && s.focused {
-		// Only take focus if the user is still in the search section.
-		s.sub = searchSubResults
-		s.enterNormalMode()
+	if len(msg.results) > 0 && s.focused && s.focus == inputFocused {
+		// Only take the keyboard if the reader is still on this tab and
+		// still in the input: results landing behind their back must not
+		// move it.
+		s.focusResults()
 	}
 	return tea.Batch(cmd, request(reqSearchDone{query: msg.query, mode: msg.mode, results: len(msg.results)}))
 }
@@ -445,9 +497,6 @@ func (s *searchSection) setQueryMode(mode model.SearchMode) tea.Cmd {
 	// Picking the mode that is already set still says so: the key did
 	// something, and the toast is the only place the mode is spelled out.
 	s.queryMode = mode
-	// The results on screen were fetched in the old mode, so the header is
-	// left naming them; only the next search renames it.
-	s.refreshTitle()
 	s.input.Placeholder = searchPlaceholderForMode(mode)
 	s.updateSuggestions()
 	return request(reqToast{toastInfo, fmt.Sprintf("Search mode: %s (%s)", strings.ToLower(mode.Label()), mode.Description())})
@@ -541,31 +590,6 @@ func searchPlaceholderForMode(mode model.SearchMode) string {
 	default:
 		return "Search books..."
 	}
-}
-
-// refreshTitle names the results the panel is actually showing: the mode
-// they were fetched with and how many came back, not the mode the user has
-// switched to since.
-func (s *searchSection) refreshTitle() {
-	if s.loading {
-		s.list.Title = fmt.Sprintf("%s Results (loading...)", s.queryMode.Label())
-		return
-	}
-	mode := s.lastMode
-	if mode == "" {
-		mode = s.queryMode
-	}
-	s.list.Title = fmt.Sprintf("%s Results (%d)", mode.Label(), len(s.results))
-}
-
-func (s *searchSection) enterNormalMode() {
-	s.mode = searchModeNormal
-	s.input.Blur()
-}
-
-func (s *searchSection) enterInsertMode() {
-	s.mode = searchModeInsert
-	s.input.Focus()
 }
 
 // rebuildResults refreshes the rows from results at the current density,

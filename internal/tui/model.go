@@ -6,11 +6,13 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/Kameleon21/oku/internal/app"
+	"github.com/Kameleon21/oku/internal/model"
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -52,8 +54,11 @@ type Model struct {
 	// focus says which of its two panes takes the keys.
 	sections [tabCount]section
 	tab      tab
-	focus    focus
-	detail   *detailPane
+	// prevTab is the tab the current one was reached from, which Esc in the
+	// search input goes back to.
+	prevTab tab
+	focus   focus
+	detail  *detailPane
 
 	// modals is the stack of overlays; the top one takes the keys.
 	modals []modal
@@ -194,7 +199,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
-	return m, m.section().Update(keyMsg)
+
+	cmd := m.section().Update(keyMsg)
+	// A key that has just put the cursor in a text input takes the focus
+	// with it. Without this the detail pane keeps the thick border while
+	// the input owns the keyboard: the selection empties under it, so the
+	// pane blanks, and on a terminal too narrow to split the list being
+	// typed into is not drawn at all. It is enforced here rather than in
+	// the section because the section cannot see the focus, and every way
+	// into an input has to obey it.
+	if m.section().CapturesKeys() && m.focus == focusDetail {
+		cmd = tea.Batch(cmd, m.setFocus(focusContent))
+	}
+	return m, cmd
 }
 
 // rootKey handles the keys every tab shares. Like the sections, it only
@@ -252,6 +269,14 @@ func (m *Model) focusSectionInput() tea.Cmd {
 	cmd := m.setFocus(focusContent)
 	s.focusInput()
 	return cmd
+}
+
+// openEmptySectionInput puts the cursor in the section's input when the
+// section has nothing to show yet, for the one section that has one.
+func (m *Model) openEmptySectionInput() {
+	if s, ok := m.section().(interface{ focusInputIfEmpty() }); ok {
+		s.focusInputIfEmpty()
+	}
 }
 
 // updateCommon handles every message that is not a key press, whatever has
@@ -437,10 +462,20 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 		return m.showToast(r.level, r.text)
 
 	case reqSwitchTab:
-		if r.abs {
-			return m.setTab(r.to)
+		switch {
+		case r.back:
+			return m.setTab(m.backTab())
+		case r.abs:
+			cmd := m.setTab(r.to)
+			// A tab asked for by its own number is one the reader means to
+			// use: a section whose pane has nothing to show yet puts the
+			// cursor where they are about to type. Walking the strip never
+			// does — see searchFocus.
+			m.openEmptySectionInput()
+			return cmd
+		default:
+			return m.setTab((m.tab + tab(r.step) + tabCount) % tabCount)
 		}
-		return m.setTab((m.tab + tab(r.step) + tabCount) % tabCount)
 
 	case reqOpenModal:
 		m.push(r.m)
@@ -480,7 +515,7 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 
 	case reqSetPage:
 		if m.isLoading() {
-			return m.showToast(toastWarn, inFlightNotice)
+			return m.refuse(opProgress, r.token)
 		}
 		return m.beginLoading(stamped(updateProgressCmd(m.ctx, m.app, r.bookID, r.title, r.prevPage, r.raw), r.token))
 
@@ -494,6 +529,11 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 		return m.beginLoading(change)
 
 	case reqReview:
+		if m.isLoading() {
+			// The same guard the page prompt has: both modals go read-only
+			// while they save, so both need the refusal to reach them.
+			return m.refuse(opReview, r.token)
+		}
 		toastCmd := m.showToast(toastInfo, reviewSavePendingMessage(r.review))
 		save := m.beginLoading(stamped(submitReviewRatingCmd(m.ctx, m.app, r.bookID, r.rating, r.review), r.token))
 		return tea.Batch(save, toastCmd)
@@ -530,7 +570,9 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 			return m.beginLoading(stopTimerCmd(m.app))
 		}
 		if !r.reading {
-			return m.showToast(toastWarn, "Timers track a book you are reading — press t in the Reading list")
+			// The other lists hold books that are not being read, so t
+			// there asks which Reading book to track rather than refusing.
+			return m.handleRequest(reqTimerPick{prefer: r.book})
 		}
 		if r.book == nil {
 			return m.showToast(toastError, "no book selected")
@@ -541,16 +583,7 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 		if len(m.shared.reading) == 0 {
 			return m.showToast(toastError, "no currently reading books available — add a book to Reading first")
 		}
-		idx := 0
-		if sel := m.sections[tabReading].Selected().Book; sel != nil {
-			for i, b := range m.shared.reading {
-				if b.Book.ID == sel.Book.ID {
-					idx = i
-					break
-				}
-			}
-		}
-		m.push(newTimerPickerModal(m.shared, idx))
+		m.push(newTimerPickerModal(m.shared, m.timerPickIndex(r.prefer)))
 		return m.showToast(toastInfo, "Select a book and press Enter to start timer")
 
 	case reqTimer:
@@ -560,6 +593,35 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 		return m.beginLoading(stopTimerCmd(m.app))
 	}
 	return nil
+}
+
+// refuse answers a modal that asked to save while something else is still
+// running. The modal is drawn over a blank screen, so the toast behind it
+// cannot be read: the refusal is handed to the modal as its own failed
+// result, which is the path that already shows a reason inside the panel.
+// It is not an operation finishing, so it goes out as a broadcast and
+// leaves the in-flight count alone.
+func (m *Model) refuse(op opKind, token int) tea.Cmd {
+	cmd := m.broadcast(opDoneMsg{op: op, seq: token, err: errors.New(inFlightNotice)})
+	return tea.Batch(cmd, m.showToast(toastWarn, inFlightNotice))
+}
+
+// timerPickIndex is the book the picker opens on: prefer when the Reading
+// list holds it — the selection t was pressed over — and the Reading list's
+// own cursor otherwise.
+func (m *Model) timerPickIndex(prefer *model.UserBook) int {
+	wanted := []*model.UserBook{prefer, m.sections[tabReading].Selected().Book}
+	for _, b := range wanted {
+		if b == nil {
+			continue
+		}
+		for i, r := range m.shared.reading {
+			if r.Book.ID == b.Book.ID {
+				return i
+			}
+		}
+	}
+	return 0
 }
 
 // addRecentSearchQuery puts a query at the head of the history and returns the
@@ -631,11 +693,21 @@ func (m *Model) setTab(t tab) tea.Cmd {
 	if t == m.tab {
 		return nil
 	}
+	m.prevTab = m.tab
 	m.section().Blur()
 	m.tab = t
 	m.focus = focusContent
 	m.section().Focus()
 	return m.resize()
+}
+
+// backTab is where Esc goes from a tab that was reached by name: the one it
+// was reached from, or the first tab when that is this one.
+func (m *Model) backTab() tab {
+	if m.prevTab == m.tab {
+		return tabReading
+	}
+	return m.prevTab
 }
 
 // setFocus moves the keyboard between the two panes. On a terminal too

@@ -10,7 +10,7 @@
                                   │    Tab/S-Tab     tab (alias)                     │                                  
                                   │    /             search                          │                                  
                                   │    Esc           back                            │                                  
-                                  │    Esc           back to input                   │                                  
+                                  │    Esc/i         back to the input               │                                  
                                   │    g             top                             │                                  
                                   │    G             bottom                          │                                  
                                   │    C-u/C-d       half page                       │                                  
@@ -28,12 +28,12 @@
                                   │    f             set finished                    │                                  
                                   │    d             did not finish (asks)           │                                  
                                   │    x             ignore / remove (asks)          │                                  
-                                  │    i/a           insert                          │                                  
                                   │    m             cycle mode                      │                                  
                                   │    z             density                         │                                  
                                   │                                                  │                                  
                                   │  Timer                                           │                                  
                                   │    t             start timer                     │                                  
+                                  │    s             stop timer                      │                                  
                                   │  j/k scroll · ? or esc close   oku test          │                                  
                                   │                                                  │                                  
                                   ╰──────────────────────────────────────────────────╯                                  

@@ -1,9 +1,9 @@
  oku   1 Reading 3   2 Oku 3  ▸3 Search   4 Stats   5 Timer                                               synced 2m ago 
 ┏━ Search ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓╭─ Details ────────────────────────────────────────────────────────────╮
-┃ [NORMAL] [BOOK] / Search books...            ┃│                                                                      │
-┃ BOOK Results                                 ┃│    ____  __ __  __  __                                               │
+┃ / Search books...                            ┃│                                                                      │
+┃ [Title]  Author   Genre                      ┃│    ____  __ __  __  __                                               │
 ┃                                              ┃│   / __ \/ //_/ / / / /                                               │
-┃   book mode (Hardcover default). Type a quer ┃│  / / / / ,<   / / / /                                                │
+┃   Type a query and press Enter.              ┃│  / / / / ,<   / / / /                                                │
 ┃                                              ┃│ / /_/ / /| | / /_/ /                                                 │
 ┃                                              ┃│ \____/_/ |_| \____/                                                  │
 ┃                                              ┃│                                                                      │
@@ -37,4 +37,4 @@
 ┃                                              ┃│                                                                      │
 ┃                                              ┃│                                                                      │
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛╰──────────────────────────────────────────────────────────────────────╯
- ? help · ↵ search · i/a insert · m mode · z density · Esc back                                                         
+ ? help · Esc/i input · m cycle mode · h/l tab · z density · / search · s sync · q quit                                 
