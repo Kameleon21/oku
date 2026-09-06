@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Kameleon21/oku/internal/app"
+	"github.com/Kameleon21/oku/internal/model"
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -551,7 +552,9 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 			return m.beginLoading(stopTimerCmd(m.app))
 		}
 		if !r.reading {
-			return m.showToast(toastWarn, "Timers track a book you are reading — press t in the Reading list")
+			// The other lists hold books that are not being read, so t
+			// there asks which Reading book to track rather than refusing.
+			return m.handleRequest(reqTimerPick{prefer: r.book})
 		}
 		if r.book == nil {
 			return m.showToast(toastError, "no book selected")
@@ -562,16 +565,7 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 		if len(m.shared.reading) == 0 {
 			return m.showToast(toastError, "no currently reading books available — add a book to Reading first")
 		}
-		idx := 0
-		if sel := m.sections[tabReading].Selected().Book; sel != nil {
-			for i, b := range m.shared.reading {
-				if b.Book.ID == sel.Book.ID {
-					idx = i
-					break
-				}
-			}
-		}
-		m.push(newTimerPickerModal(m.shared, idx))
+		m.push(newTimerPickerModal(m.shared, m.timerPickIndex(r.prefer)))
 		return m.showToast(toastInfo, "Select a book and press Enter to start timer")
 
 	case reqTimer:
@@ -581,6 +575,24 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 		return m.beginLoading(stopTimerCmd(m.app))
 	}
 	return nil
+}
+
+// timerPickIndex is the book the picker opens on: prefer when the Reading
+// list holds it — the selection t was pressed over — and the Reading list's
+// own cursor otherwise.
+func (m *Model) timerPickIndex(prefer *model.UserBook) int {
+	wanted := []*model.UserBook{prefer, m.sections[tabReading].Selected().Book}
+	for _, b := range wanted {
+		if b == nil {
+			continue
+		}
+		for i, r := range m.shared.reading {
+			if r.Book.ID == b.Book.ID {
+				return i
+			}
+		}
+	}
+	return 0
 }
 
 // addRecentSearchQuery puts a query at the head of the history and returns the

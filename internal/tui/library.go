@@ -238,7 +238,9 @@ func (s *librarySection) Keys(k *keyMap) {
 	if s.sh.timer != nil {
 		k.Timer.SetHelp("t", "stop timer")
 	} else if s.tab != tabReading {
-		k.Timer.SetHelp("t", "timer (Reading list)")
+		// The books here are not being read, so t asks which of the ones
+		// that are should be timed.
+		k.Timer.SetHelp("t", "start a timer")
 	}
 	enable(&k.Quit, &k.Help, &k.Up, &k.Down, &k.NextSection, &k.PrevSection, &k.TabJump, &k.Search,
 		&k.Details, &k.ProgressUp, &k.ProgressDown, &k.Update, &k.Rate,
@@ -256,9 +258,7 @@ func (s *librarySection) Keys(k *keyMap) {
 		hint("page", k.ProgressUp, k.ProgressDown),
 		hintAs("u", "update", k.Update),
 	}
-	if s.tab == tabReading || s.sh.timer != nil {
-		k.short = append(k.short, k.Timer)
-	}
+	k.short = append(k.short, k.Timer)
 	// The bar has a word per key; the modal spells them out.
 	k.short = append(k.short, k.Search, hintAs("v", "rate", k.Rate), hintAs("s", "sync", k.Sync), k.Density, k.Refresh)
 }

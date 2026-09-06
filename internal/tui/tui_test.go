@@ -1170,16 +1170,55 @@ func TestTimerStartsAndStopsFromReadingList(t *testing.T) {
 	}
 }
 
-func TestTimerKeyOutsideReadingExplainsItself(t *testing.T) {
+// TestTimerKeyInOkuOpensThePicker: t over a list that is not the Reading one
+// used to answer with a toast telling the reader to go and press it
+// somewhere else. It opens the picker instead, on the book the cursor was
+// over when that book is one of the ones being read, and on the Reading
+// list's own selection otherwise.
+func TestTimerKeyInOkuOpensThePicker(t *testing.T) {
+	books := []model.UserBook{
+		{Book: model.Book{ID: 1, Title: "Dune"}},
+		{Book: model.Book{ID: 2, Title: "Foundation"}},
+		{Book: model.Book{ID: 3, Title: "Meditations"}},
+	}
+
+	// The Oku selection is not a book being read: the picker opens on the
+	// Reading list's cursor.
 	m := renderedDashboard(100, 40)
+	setLibrary(m, books, []model.UserBook{{Book: model.Book{ID: 9, Title: "Ulysses"}}})
+	readingSection(m).list.Select(2)
 	m.setTab(tabOku)
 
 	send(t, m, runeKey('t'))
 	if m.isLoading() {
-		t.Fatal("t in the Oku list has no book to track, so it should start nothing")
+		t.Fatal("t should open the picker, not start a timer straight away")
 	}
-	if !strings.Contains(m.toast.text, "Reading list") {
-		t.Fatalf("toast = %q, want it to point at the Reading list", m.toast.text)
+	picker := timerPickerOf(m)
+	if picker == nil {
+		t.Fatalf("top modal = %T, want the book picker", m.topModal())
+	}
+	if picker.idx != 2 {
+		t.Fatalf("picker opened on %d, want the Reading list's own selection (2)", picker.idx)
+	}
+
+	// The Oku selection is a book that is also being read — the shelves come
+	// from a cache that can lag a status change — so the picker opens on it.
+	m = renderedDashboard(100, 40)
+	setLibrary(m, books, []model.UserBook{{Book: model.Book{ID: 2, Title: "Foundation"}}})
+	m.setTab(tabOku)
+
+	send(t, m, runeKey('t'))
+	if picker = timerPickerOf(m); picker == nil {
+		t.Fatalf("top modal = %T, want the book picker", m.topModal())
+	}
+	if picker.idx != 1 {
+		t.Fatalf("picker opened on %d, want the book the cursor was over (1)", picker.idx)
+	}
+
+	// Enter starts a timer for it.
+	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.isLoading() {
+		t.Fatal("Enter over the picker should start the timer")
 	}
 }
 

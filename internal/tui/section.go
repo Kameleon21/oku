@@ -188,16 +188,19 @@ type reqTimer struct {
 
 // reqTimerToggle is t over a library list: stop the running timer, or start
 // one for the selection. Only the Reading list holds books a timer can
-// track, and the request is refused while work is in flight, since the
-// timer state only catches up when the load lands.
+// track — over any other list the key opens the picker instead — and the
+// request is refused while work is in flight, since the timer state only
+// catches up when the load lands.
 type reqTimerToggle struct {
 	book    *model.UserBook
 	reading bool
 }
 
-// reqTimerPick is t in the Timer section with no timer running: open the
-// book picker, preselecting the Reading list's selection.
-type reqTimerPick struct{}
+// reqTimerPick opens the book picker: t in the Timer section with no timer
+// running, and t over a list that is not the Reading one. prefer is the
+// book to open it on when the Reading list holds it; the Reading list's own
+// selection otherwise.
+type reqTimerPick struct{ prefer *model.UserBook }
 
 // reqOpenModal pushes a modal a section built: the page prompt, the review
 // editor.
