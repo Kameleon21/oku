@@ -1,0 +1,40 @@
+                                                                                                                        
+                                  ╭──────────────────────────────────────────────────╮                                  
+                                  │                                                  │                                  
+                                  │  Help                                            │                                  
+                                  │                                                  │                                  
+                                  │  Navigation                                      │                                  
+                                  │    j/k           navigate                        │                                  
+                                  │    1-5           jump to a tab                   │                                  
+                                  │    h/l           tab                             │                                  
+                                  │    Tab/S-Tab     tab (alias)                     │                                  
+                                  │    /             search                          │                                  
+                                  │    Esc           back                            │                                  
+                                  │    Esc           back to input                   │                                  
+                                  │    g             top                             │                                  
+                                  │    G             bottom                          │                                  
+                                  │    C-u/C-d       half page                       │                                  
+                                  │                                                  │                                  
+                                  │  Actions                                         │                                  
+                                  │    ↵             detail                          │                                  
+                                  │    ↵             add as reading                  │                                  
+                                  │    ↵             search                          │                                  
+                                  │    ↵             select                          │                                  
+                                  │    +/-           page ±10                        │                                  
+                                  │    u             update page                     │                                  
+                                  │    v             review / rate                   │                                  
+                                  │    g             set reading                     │                                  
+                                  │    w             set want to read                │                                  
+                                  │    f             set finished                    │                                  
+                                  │    d             did not finish (asks)           │                                  
+                                  │    x             ignore / remove (asks)          │                                  
+                                  │    i/a           insert                          │                                  
+                                  │    m             cycle mode                      │                                  
+                                  │    z             density                         │                                  
+                                  │                                                  │                                  
+                                  │  Timer                                           │                                  
+                                  │    t             start timer                     │                                  
+                                  │  j/k scroll · ? or esc close   oku test          │                                  
+                                  │                                                  │                                  
+                                  ╰──────────────────────────────────────────────────╯                                  
+                                                                                                                        
