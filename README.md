@@ -90,12 +90,19 @@ vim-style keys; arrow keys also work.
 | `u` | Set an exact page |
 | `U` | Undo the last change while its toast is visible |
 | `/` | Search |
+| `Ctrl+T` / `m` | Cycle the search mode: Title, Author, Genre |
 | `?` / `q` | Help / quit |
 
 On a terminal at least 100 columns wide the detail pane sits beside the list;
 below that `Enter` opens it in place of the list. In the Search tab `Enter`
 opens a result the same way, and `a` adds it to Reading. Press `?` for every
 control the focused tab understands.
+
+The Search tab has two states and no modes. `/` puts the cursor in the query,
+where every key is a character — `Ctrl+T` cycles Title/Author/Genre, `Enter`
+searches, `Esc` goes back to the tab you came from. `Esc` or `i` over the
+results puts it back in the query; there `m` cycles the mode and `j`/`k`,
+`Enter` and `a` work as they do in the other lists.
 
 ### Reading timer
 
