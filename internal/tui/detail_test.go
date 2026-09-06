@@ -203,13 +203,21 @@ func TestDetailRebuildsOnlyWhenSomethingChanged(t *testing.T) {
 		t.Fatal("a new selection should be a new detail")
 	}
 
-	// So does a data change, even when the selection has not moved.
+	// So does a data change, even when the selection has not moved: the row
+	// below is rendered from the sessions, which the load has just replaced.
 	sel = m.section().Selected()
 	m.detail.View(sel, tabReading)
-	stamp := m.detail.key.stamp
+	if strings.Contains(stripANSI(m.detail.View(sel, tabReading)), "Sessions (this book)") {
+		t.Fatal("the fixture should start with no sessions for this book")
+	}
+
+	end := fixedNow.Add(-30 * time.Minute)
+	m.shared.sessions = []model.ReadingSession{
+		{ID: 1, BookID: sel.Book.Book.ID, StartedAt: fixedNow.Add(-90 * time.Minute), EndedAt: &end},
+	}
 	m.broadcast(dataChangedMsg{dataLocal})
-	if m.detail.key.stamp == stamp {
-		t.Fatal("a data change should invalidate the pane")
+	if !strings.Contains(stripANSI(m.detail.View(sel, tabReading)), "Sessions (this book)") {
+		t.Fatal("a data change should rebuild the pane, not only mark it")
 	}
 }
 

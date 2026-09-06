@@ -47,6 +47,11 @@ type detailPane struct {
 	// key is what the rendered content was built from. A different key is
 	// the one reason to build it again.
 	key detailKey
+	// stamp is bumped by a data change and copied into the key at each
+	// render. It is deliberately not part of the key itself: a counter the
+	// comparison could see would advance on both sides at once and never
+	// register as a difference.
+	stamp int
 	// title is the pane title for the content on screen.
 	title string
 }
@@ -59,8 +64,9 @@ type detailKey struct {
 	updated time.Time
 	density Density
 	w       int
-	// stamp is bumped by a data change, so a book whose sessions or shelf
-	// moved under it is rendered again even though its id has not changed.
+	// stamp is the pane's data counter as it stood when the content was
+	// built, so a book whose sessions or shelf moved under it is rendered
+	// again even though its id has not changed.
 	stamp int
 }
 
@@ -72,7 +78,7 @@ func newDetailPane(sh *shared, st styles) *detailPane {
 // invalidates what is on screen.
 func (d *detailPane) Update(msg tea.Msg) tea.Cmd {
 	if _, ok := msg.(dataChangedMsg); ok {
-		d.key.stamp++
+		d.stamp++
 	}
 	return nil
 }
@@ -147,7 +153,7 @@ func (d *detailPane) Title(sel selection) string {
 // View renders the selection into the pane's box, rebuilding the content
 // only when something about it has changed.
 func (d *detailPane) View(sel selection, t tab) string {
-	k := detailKey{density: d.sh.density, w: d.w, stamp: d.key.stamp}
+	k := detailKey{density: d.sh.density, w: d.w, stamp: d.stamp}
 	switch {
 	case sel.Book != nil:
 		k.kind, k.id, k.updated = "book", sel.Book.Book.ID, sel.Book.UpdatedAt
