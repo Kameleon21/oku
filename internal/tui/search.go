@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"strings"
 
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/Kameleon21/oku/internal/format"
 	"github.com/Kameleon21/oku/internal/model"
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -142,9 +142,11 @@ func newSearchSection(sh *shared, st styles) *searchSection {
 	in := textinput.New()
 	in.Placeholder = "Search books..."
 	in.CharLimit = 120
-	in.Prompt = "/ "
-	in.PromptStyle = st.inputPrompt
-	in.TextStyle = st.inputText
+	in.Prompt = searchPrompt
+	in.SetStyles(st.textInputStyles(st.inputPrompt, st.inputText, st.dim))
+	// The root places the terminal's own cursor over the input, so it must
+	// not draw a block of its own on top of it.
+	in.SetVirtualCursor(false)
 	// Suggestions are the user's own search history, loaded with the rest of
 	// the local data; there are none until they have searched for something.
 	in.ShowSuggestions = true
@@ -160,7 +162,7 @@ func newSearchSection(sh *shared, st styles) *searchSection {
 
 func (s *searchSection) Update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return s.handleKey(msg)
 	case searchLoadedMsg:
 		return s.applyLoaded(msg)
@@ -171,6 +173,13 @@ func (s *searchSection) Update(msg tea.Msg) tea.Cmd {
 		}
 		s.updateSuggestions()
 		return cmd
+	case stylesChangedMsg:
+		// The delegate and the input hold resolved colours, so both are
+		// rebuilt rather than re-read.
+		s.st = msg.st
+		s.list.SetDelegate(newListDelegate(listRowSpacing, s.st))
+		s.input.SetStyles(s.st.textInputStyles(s.st.inputPrompt, s.st.inputText, s.st.dim))
+		return s.rebuildResults()
 	case list.FilterMatchesMsg:
 		// Another list's filter: this one has none (see newSearchSection).
 		return nil
@@ -184,7 +193,7 @@ func (s *searchSection) Update(msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
-func (s *searchSection) handleKey(msg tea.KeyMsg) tea.Cmd {
+func (s *searchSection) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	k := keysFor(s)
 	if s.focus == inputFocused {
 		switch {
@@ -213,8 +222,7 @@ func (s *searchSection) handleKey(msg tea.KeyMsg) tea.Cmd {
 
 	switch {
 	case key.Matches(msg, k.SearchInput):
-		s.focusInput()
-		return nil
+		return s.focusInput()
 	case key.Matches(msg, k.SearchMode):
 		return s.setQueryMode(s.queryMode.Next())
 	case key.Matches(msg, k.AddReading):
@@ -237,6 +245,21 @@ func (s *searchSection) handleKey(msg tea.KeyMsg) tea.Cmd {
 // searchChromeRows is what the pane spends above the results: the input,
 // the mode control, and a blank line between them and the list.
 const searchChromeRows = 3
+
+// searchPrompt is what the input draws in front of the query. Its width is
+// where the terminal's cursor starts, so the two are the same constant.
+const searchPrompt = "/ "
+
+// inputCursor is where the terminal's cursor belongs while the query has the
+// keyboard, relative to the section's own content box: the input is its
+// first row, and textinput.Cursor already counts the prompt in. The root
+// offsets it by the pane's origin.
+func (s *searchSection) inputCursor() *tea.Cursor {
+	if s.focus != inputFocused {
+		return nil
+	}
+	return s.input.Cursor()
+}
 
 // View is the whole pane: the query, the segmented mode control with the
 // state of the search on its right, and the results themselves.
@@ -311,7 +334,7 @@ func (s *searchSection) Resize(w, h int) tea.Cmd {
 	s.list.SetSize(w, max(1, h-searchChromeRows))
 	// The prompt takes the front of the row; the input takes what is left
 	// instead of being cut off mid-placeholder.
-	s.input.Width = max(4, w-6)
+	s.input.SetWidth(max(4, w-6))
 	return nil
 }
 
@@ -407,20 +430,24 @@ func (s *searchSection) Selected() selection {
 }
 
 // focusInput puts the cursor at the end of whatever query is already typed.
-func (s *searchSection) focusInput() {
+// Focus() answers with the cursor-blink command, which has to be run, so
+// every caller carries it back to the root.
+func (s *searchSection) focusInput() tea.Cmd {
 	s.focus = inputFocused
-	s.input.Focus()
+	cmd := s.input.Focus()
 	s.input.CursorEnd()
 	s.updateSuggestions()
+	return cmd
 }
 
 // focusInputIfEmpty is the Search tab reached by its own number: with
 // results to read the cursor stays on them, with nothing to read it goes
 // where the reader is about to type.
-func (s *searchSection) focusInputIfEmpty() {
-	if !s.hasResults() {
-		s.focusInput()
+func (s *searchSection) focusInputIfEmpty() tea.Cmd {
+	if s.hasResults() {
+		return nil
 	}
+	return s.focusInput()
 }
 
 // focusResults hands the keyboard to the list, where every key is a command

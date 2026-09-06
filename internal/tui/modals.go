@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"strings"
 
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/Kameleon21/oku/internal/model"
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -30,6 +30,34 @@ type modal interface {
 	// textarea's width.
 	Resize(lay layout)
 }
+
+// cursorModal is a modal with a text field in it. The root runs Init when the
+// modal is pushed — textinput.Focus answers with the cursor command, which
+// has to run — and places the terminal's own cursor at Cursor, offset by the
+// panel's origin on screen.
+type cursorModal interface {
+	modal
+	Init() tea.Cmd
+	// Cursor is where the cursor belongs relative to the panel's top-left
+	// corner, or nil when no field has it.
+	Cursor() *tea.Cursor
+}
+
+// A panel's own frame, which a cursor inside one of its fields is measured
+// against: renderModalPanel draws one border column, the helpModal style's
+// padding (one row, modalPadW columns), then the title and a blank row.
+const (
+	modalPadW     = 2
+	modalContentX = 1 + modalPadW
+	modalContentY = 1 + 1 + 2
+)
+
+// modalInnerW is the columns a panel of this width leaves its content. A row
+// wider than this is wrapped by the panel style, which would push everything
+// below it — the cursor's row included — down by a line, so the rows a field
+// is positioned against are truncated to it. The width is the panel's outer
+// width, border included, so the content loses modalContentX on each side.
+func modalInnerW(width int) int { return max(1, width-2*modalContentX) }
 
 // ── Confirm ────────────────────────────────────────────────────────────────
 
@@ -55,7 +83,7 @@ func newConfirmState(message string) confirmState {
 // handleKey answers the question with the confirm bindings of k: yes and no
 // close it, the arrows move between the buttons, and Select takes the one
 // under the cursor.
-func (c *confirmState) handleKey(msg tea.KeyMsg, k keyMap) (confirmed bool, handled bool) {
+func (c *confirmState) handleKey(msg tea.KeyPressMsg, k keyMap) (confirmed bool, handled bool) {
 	switch {
 	case key.Matches(msg, k.ConfirmNo):
 		c.Active = false
@@ -120,7 +148,7 @@ func newConfirmModal(message string, onYes tea.Cmd) *confirmModal {
 }
 
 func (c *confirmModal) Update(msg tea.Msg) (bool, tea.Cmd) {
-	keyMsg, ok := msg.(tea.KeyMsg)
+	keyMsg, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return false, nil
 	}
@@ -160,7 +188,10 @@ type pageModal struct {
 	current int
 	total   int
 	input   textinput.Model
-	token   int
+	// focusCmd is what the input's Focus() answered with; the root runs it
+	// when the modal is pushed.
+	focusCmd tea.Cmd
+	token    int
 	// submitting says a save has been asked for and not come back yet; err
 	// is what it came back with. A failed save keeps the modal open with the
 	// typed value intact, the way the review modal does: the status bar sits
@@ -177,24 +208,45 @@ func newPageModal(sh *shared, st styles, b model.UserBook) *pageModal {
 	in.Placeholder = "370 or +10 or -5"
 	in.CharLimit = 32
 	in.Prompt = "› "
-	in.PromptStyle = st.modalKey
-	in.TextStyle = st.modalValue
-	in.PlaceholderStyle = st.modalDim
-	in.Focus()
+	in.SetStyles(st.textInputStyles(st.modalKey, st.modalValue, st.modalDim))
+	// The root draws the terminal's own cursor over the panel, so the input
+	// must not draw a block of its own on top of it.
+	in.SetVirtualCursor(false)
+	// Focused before the literal, not inside it: the order in which a
+	// composite literal's fields are evaluated is not specified, and Focus
+	// mutates the input the literal copies.
+	focusCmd := in.Focus()
 
 	return &pageModal{
-		bookID:  b.Book.ID,
-		title:   b.Book.Title,
-		current: currentPage(b),
-		total:   b.Book.Pages,
-		input:   in,
-		token:   sh.nextToken(),
+		bookID:   b.Book.ID,
+		title:    b.Book.Title,
+		current:  currentPage(b),
+		total:    b.Book.Pages,
+		input:    in,
+		focusCmd: focusCmd,
+		token:    sh.nextToken(),
 	}
+}
+
+// Init is the command the input's Focus() answered with, which the root runs
+// when the modal is pushed.
+func (p *pageModal) Init() tea.Cmd { return p.focusCmd }
+
+// Cursor puts the terminal's cursor in the input, which is the third row of
+// the panel's content: the title and the current page come first.
+func (p *pageModal) Cursor() *tea.Cursor {
+	cur := p.input.Cursor()
+	if cur == nil {
+		return nil
+	}
+	cur.X += modalContentX
+	cur.Y += modalContentY + 2
+	return cur
 }
 
 func (p *pageModal) Update(msg tea.Msg) (bool, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		k := keysFor(p)
 		if p.submitting {
 			// Read-only until the save reports back — including a refusal,
@@ -231,6 +283,9 @@ func (p *pageModal) Update(msg tea.Msg) (bool, tea.Cmd) {
 			return false, nil
 		}
 		return true, nil
+	case stylesChangedMsg:
+		p.input.SetStyles(msg.st.textInputStyles(msg.st.modalKey, msg.st.modalValue, msg.st.modalDim))
+		return false, nil
 	}
 	var cmd tea.Cmd
 	p.input, cmd = p.input.Update(msg)
@@ -245,9 +300,12 @@ func (p *pageModal) View(lay layout, st styles) string {
 	if p.total > 0 {
 		current = fmt.Sprintf("current: %d/%d", p.current, p.total)
 	}
+	// The title is cut rather than wrapped: a wrapped one would move the
+	// input, and the cursor is placed on a row this panel promises.
+	inner := modalInnerW(pageModalWidth(lay))
 	rows := []string{
-		st.modalValue.Render(p.title),
-		st.modalDim.Render(current),
+		st.modalValue.Render(ansi.Truncate(p.title, inner, "…")),
+		st.modalDim.Render(ansi.Truncate(current, inner, "…")),
 		p.input.View(),
 		"",
 	}
@@ -258,7 +316,7 @@ func (p *pageModal) View(lay layout, st styles) string {
 		rows = append(rows, st.modalError.Render(p.err))
 	}
 	content := strings.Join(append(rows, st.modalDim.Render("Enter save · Esc cancel")), "\n")
-	return renderModalPanel("Update page", content, max(36, min(60, lay.W-10)), st)
+	return renderModalPanel("Update page", content, pageModalWidth(lay), st)
 }
 
 func (p *pageModal) Keys(k *keyMap) {
@@ -271,7 +329,17 @@ func (p *pageModal) Keys(k *keyMap) {
 	k.short = []key.Binding{k.Select, k.Back}
 }
 
-func (p *pageModal) Resize(layout) {}
+// Resize gives the input the room the panel leaves it. A v2 textinput draws
+// nothing wider than its width, placeholder included, and zero is not "no
+// limit" as it was in v1: without this the hint is cut to one character.
+func (p *pageModal) Resize(lay layout) {
+	p.input.SetWidth(max(8, modalInnerW(pageModalWidth(lay))-lipgloss.Width(p.input.Prompt)))
+}
+
+// pageModalWidth is the panel's own width, which View and Resize both need.
+func pageModalWidth(lay layout) int {
+	return max(36, min(60, lay.W-10))
+}
 
 // ── Review / rating ────────────────────────────────────────────────────────
 
@@ -297,7 +365,10 @@ type reviewModal struct {
 	rating textinput.Model
 	text   textarea.Model
 	focus  reviewFocus
-	token  int
+	// focusCmd is what the focused field's Focus() answered with; the root
+	// runs it when the modal is pushed.
+	focusCmd tea.Cmd
+	token    int
 	// submitting makes the fields read-only until the save reports back.
 	submitting bool
 	err        string
@@ -310,24 +381,20 @@ func newReviewModal(sh *shared, st styles, book model.UserBook) *reviewModal {
 	rating := textinput.New()
 	rating.Placeholder = "4.5"
 	rating.CharLimit = 4
+	// A v2 textinput draws nothing wider than its width, and zero is not "no
+	// limit" as it was in v1: the field is as wide as it accepts.
+	rating.SetWidth(4)
 	rating.Prompt = reviewFieldFocused + "Rating: "
-	rating.PromptStyle = st.modalKey
-	rating.TextStyle = st.modalValue
-	rating.PlaceholderStyle = st.modalDim
+	rating.SetStyles(st.textInputStyles(st.modalKey, st.modalValue, st.modalDim))
+	rating.SetVirtualCursor(false)
 
 	text := textarea.New()
 	text.Placeholder = "Write your review..."
 	text.SetWidth(60)
 	text.SetHeight(8)
 	text.ShowLineNumbers = false
-	for _, fs := range []*textarea.Style{&text.FocusedStyle, &text.BlurredStyle} {
-		fs.Base = st.modalBg
-		fs.Text = st.modalValue
-		fs.Placeholder = st.modalDim
-		fs.Prompt = st.modalKey
-		fs.CursorLine = st.modalBg
-		fs.EndOfBuffer = st.modalBg
-	}
+	text.SetStyles(st.textAreaStyles(st.modalBg, st.modalKey, st.modalValue, st.modalDim))
+	text.SetVirtualCursor(false)
 
 	if book.Rating > 0 {
 		rating.SetValue(fmt.Sprintf("%.1f", book.Rating))
@@ -335,27 +402,52 @@ func newReviewModal(sh *shared, st styles, book model.UserBook) *reviewModal {
 	text.SetValue(book.Review)
 
 	r := &reviewModal{book: book, rating: rating, text: text, token: sh.nextToken()}
-	r.focusRating()
+	r.focusCmd = r.focusRating()
 	return r
 }
 
-func (r *reviewModal) focusRating() {
-	r.focus = reviewFocusRating
-	r.rating.Prompt = reviewFieldFocused + "Rating: "
-	r.rating.Focus()
-	r.text.Blur()
+// Init is the command the focused field's Focus() answered with, which the
+// root runs when the modal is pushed.
+func (r *reviewModal) Init() tea.Cmd { return r.focusCmd }
+
+// The rows the two fields sit on inside the panel's content: title, author,
+// a blank, the rating; then a blank, the Review label and the textarea.
+const (
+	reviewRatingRow = 3
+	reviewTextRow   = 6
+)
+
+// Cursor puts the terminal's cursor in whichever field has the keyboard.
+func (r *reviewModal) Cursor() *tea.Cursor {
+	cur, row := r.rating.Cursor(), reviewRatingRow
+	if r.focus == reviewFocusText {
+		cur, row = r.text.Cursor(), reviewTextRow
+	}
+	if cur == nil {
+		return nil
+	}
+	cur.X += modalContentX
+	cur.Y += modalContentY + row
+	return cur
 }
 
-func (r *reviewModal) focusText() {
+func (r *reviewModal) focusRating() tea.Cmd {
+	r.focus = reviewFocusRating
+	r.rating.Prompt = reviewFieldFocused + "Rating: "
+	r.text.Blur()
+	return r.rating.Focus()
+}
+
+func (r *reviewModal) focusText() tea.Cmd {
 	r.focus = reviewFocusText
 	r.rating.Prompt = reviewFieldBlurred + "Rating: "
 	r.rating.Blur()
-	r.text.Focus()
+	return r.text.Focus()
 }
 
 func (r *reviewModal) Update(msg tea.Msg) (bool, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return r.handleKey(msg)
 	case opDoneMsg:
 		if msg.op != opReview || msg.seq != r.token {
@@ -368,11 +460,16 @@ func (r *reviewModal) Update(msg tea.Msg) (bool, tea.Cmd) {
 			return false, nil
 		}
 		return true, nil
+	case stylesChangedMsg:
+		st := msg.st
+		r.rating.SetStyles(st.textInputStyles(st.modalKey, st.modalValue, st.modalDim))
+		r.text.SetStyles(st.textAreaStyles(st.modalBg, st.modalKey, st.modalValue, st.modalDim))
+		return false, nil
 	}
 	return false, r.updateField(msg)
 }
 
-func (r *reviewModal) handleKey(msg tea.KeyMsg) (bool, tea.Cmd) {
+func (r *reviewModal) handleKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	k := keysFor(r)
 	if r.submitting {
 		// The fields are read-only until the save reports back; cancelling
@@ -388,18 +485,14 @@ func (r *reviewModal) handleKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 		return true, request(reqToast{toastInfo, "Review update cancelled"})
 	case key.Matches(msg, k.ReviewNextField):
 		if r.focus == reviewFocusRating {
-			r.focusText()
-		} else {
-			r.focusRating()
+			return false, r.focusText()
 		}
-		return false, nil
+		return false, r.focusRating()
 	case key.Matches(msg, k.ReviewPrevField):
 		if r.focus == reviewFocusText {
-			r.focusRating()
-		} else {
-			r.focusText()
+			return false, r.focusRating()
 		}
-		return false, nil
+		return false, r.focusText()
 	case key.Matches(msg, k.ReviewSave):
 		rating, err := model.ParseRating(r.rating.Value())
 		if err != nil {
@@ -435,10 +528,15 @@ func (r *reviewModal) View(lay layout, st styles) string {
 		ratingLabel = fmt.Sprintf("%.1f", rating)
 	}
 
+	width := reviewModalWidth(lay)
+	// Both rows are cut rather than wrapped: a wrapped one would move the
+	// fields, and the cursor is placed on rows this panel promises.
+	inner := modalInnerW(width)
+
 	var sb strings.Builder
-	sb.WriteString(st.modalValue.Render(r.book.Book.Title))
+	sb.WriteString(st.modalValue.Render(ansi.Truncate(r.book.Book.Title, inner, "…")))
 	sb.WriteString("\n")
-	sb.WriteString(st.modalDim.Render(fallback(r.book.Book.AuthorString(), "Unknown author")))
+	sb.WriteString(st.modalDim.Render(ansi.Truncate(fallback(r.book.Book.AuthorString(), "Unknown author"), inner, "…")))
 	sb.WriteString("\n\n")
 	sb.WriteString(r.rating.View())
 	sb.WriteString(st.modalBg.Render("  "))
@@ -466,11 +564,12 @@ func (r *reviewModal) View(lay layout, st styles) string {
 
 	sb.WriteString(st.modalDim.Render("Tab/Shift+Tab switch fields   Ctrl+S save   Esc cancel"))
 
-	width := max(70, lay.W-10)
-	if width > 100 {
-		width = 100
-	}
 	return renderModalPanel("Review / Rate Book", sb.String(), width, st)
+}
+
+// reviewModalWidth is the panel's own width, which View and Resize both need.
+func reviewModalWidth(lay layout) int {
+	return min(100, max(70, lay.W-10))
 }
 
 func (r *reviewModal) Keys(k *keyMap) {
@@ -503,7 +602,7 @@ func newTimerPickerModal(sh *shared, idx int) *timerPickerModal {
 
 func (p *timerPickerModal) Update(msg tea.Msg) (bool, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return p.handleKey(msg)
 	case timerOpDoneMsg:
 		return true, nil
@@ -520,7 +619,7 @@ func (p *timerPickerModal) Update(msg tea.Msg) (bool, tea.Cmd) {
 	return false, nil
 }
 
-func (p *timerPickerModal) handleKey(msg tea.KeyMsg) (bool, tea.Cmd) {
+func (p *timerPickerModal) handleKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	k := keysFor(p)
 	switch {
 	case key.Matches(msg, k.Quit):
@@ -631,7 +730,11 @@ func newHelpModal(keys func() keyMap, version string, st styles) *helpModal {
 }
 
 func (h *helpModal) Update(msg tea.Msg) (bool, tea.Cmd) {
-	keyMsg, ok := msg.(tea.KeyMsg)
+	if st, ok := msg.(stylesChangedMsg); ok {
+		h.st = st.st
+		return false, nil
+	}
+	keyMsg, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return false, nil
 	}
@@ -642,13 +745,13 @@ func (h *helpModal) Update(msg tea.Msg) (bool, tea.Cmd) {
 	case key.Matches(keyMsg, k.Quit):
 		return false, tea.Quit
 	case key.Matches(keyMsg, k.Down):
-		h.vp.LineDown(1)
+		h.vp.ScrollDown(1)
 	case key.Matches(keyMsg, k.Up):
-		h.vp.LineUp(1)
+		h.vp.ScrollUp(1)
 	case key.Matches(keyMsg, k.HalfPageDown):
-		h.vp.HalfViewDown()
+		h.vp.HalfPageDown()
 	case key.Matches(keyMsg, k.HalfPageUp):
-		h.vp.HalfViewUp()
+		h.vp.HalfPageUp()
 	case key.Matches(keyMsg, k.ScrollTop):
 		h.vp.GotoTop()
 	case key.Matches(keyMsg, k.ScrollBottom):
@@ -666,15 +769,18 @@ func (h *helpModal) Resize(lay layout) {
 		height = min(height, max(helpModalMinBodyRows, lay.H-helpModalChromeRows-helpModalMarginRows))
 	}
 
-	offset := h.vp.YOffset
-	h.vp = viewport.New(helpModalWidth-h.st.helpModal.GetHorizontalPadding(), height)
+	offset := h.vp.YOffset()
+	h.vp = viewport.New(
+		viewport.WithWidth(helpModalWidth-h.st.helpModal.GetHorizontalPadding()),
+		viewport.WithHeight(height),
+	)
 	h.vp.SetContent(body)
 	h.vp.SetYOffset(offset)
 }
 
 func (h *helpModal) View(_ layout, st styles) string {
 	footer := "? or esc close"
-	if h.vp.TotalLineCount() > h.vp.Height {
+	if h.vp.TotalLineCount() > h.vp.Height() {
 		footer = "j/k scroll · ? or esc close"
 	}
 	if v := strings.TrimSpace(h.version); v != "" {
@@ -694,8 +800,8 @@ func (h *helpModal) View(_ layout, st styles) string {
 // the modal style's own fill carries its background.
 func (h *helpModal) rows() string {
 	lines := strings.Split(h.body(), "\n")
-	height := max(1, h.vp.Height)
-	start := clampInt(h.vp.YOffset, 0, max(0, len(lines)-height))
+	height := max(1, h.vp.Height())
+	start := clampInt(h.vp.YOffset(), 0, max(0, len(lines)-height))
 
 	rows := make([]string, 0, height)
 	rows = append(rows, lines[start:min(len(lines), start+height)]...)
@@ -778,14 +884,23 @@ func renderModalPanel(title, content string, width int, st styles) string {
 	return style.Render(body)
 }
 
-// overlayModal centres a panel over a blank screen. True compositing over
-// the dashboard needs lipgloss v2; on v1 the blanked background is what
-// ships.
-func overlayModal(lay layout, panel string) string {
-	return lipgloss.Place(
-		lay.W, lay.H,
-		lipgloss.Center, lipgloss.Center,
-		panel,
-		lipgloss.WithWhitespaceChars(" "),
-	)
+// overlayModal composes the panel over the dashboard: lipgloss v2 draws both
+// into one cell buffer, so the frame stays readable behind the modal instead
+// of being blanked out for it. The panel's origin comes back with the frame,
+// because a cursor inside one of its fields is placed against it.
+func overlayModal(lay layout, frame, panel string) (composed string, x, y int) {
+	w, h := max(minFrameWidth, lay.W), max(1, lay.H)
+	x = max(0, (w-lipgloss.Width(panel))/2)
+	y = max(0, (h-lipgloss.Height(panel))/2)
+
+	// A layer's own X/Y only counts against its parent, so the two go into a
+	// compositor together rather than being composed one after the other:
+	// Canvas.Compose draws a bare layer at the canvas origin.
+	composed = lipgloss.NewCanvas(w, h).
+		Compose(lipgloss.NewCompositor(
+			lipgloss.NewLayer(fitBlock(frame, w, h)),
+			lipgloss.NewLayer(panel).X(x).Y(y).Z(1),
+		)).
+		Render()
+	return composed, x, y
 }

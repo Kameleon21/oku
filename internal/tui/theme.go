@@ -2,61 +2,78 @@ package tui
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // ── Theme ───────────────────────────────────────────────────────────────────
 
 // Theme names the colours the dashboard and the CLI output are drawn with.
-// Every colour is adaptive: lipgloss picks the Light or the Dark value when
-// it renders, from the terminal's reported background (or from the `theme`
-// config key, see ApplyThemeSetting). The palette is warm on a dark terminal
-// and the same hues darkened on a light one, so nothing washes out.
+// Every colour is resolved for one background: lipgloss v2 has no adaptive
+// colour, so NewTheme is handed the answer instead — the background the
+// terminal reports (tea.BackgroundColorMsg for the dashboard, a query at
+// startup for the CLI), or the `theme` config key when that pins it (see
+// ApplyThemeSetting). The palette is warm on a dark terminal and the same
+// hues darkened on a light one, so nothing washes out.
 type Theme struct {
-	Accent        lipgloss.AdaptiveColor // focus, key hints, selection
-	Heading       lipgloss.AdaptiveColor // titles
-	Text          lipgloss.AdaptiveColor // body text
-	TextMuted     lipgloss.AdaptiveColor // descriptions, secondary text
-	TextDim       lipgloss.AdaptiveColor // hints, counts, subtle text
-	Border        lipgloss.AdaptiveColor // unfocused borders, empty tracks
-	BorderFocused lipgloss.AdaptiveColor // focused borders
-	Surface       lipgloss.AdaptiveColor // status bar and modal background
-	Success       lipgloss.AdaptiveColor // done, progress filled
-	Warning       lipgloss.AdaptiveColor // wait, retry
-	Error         lipgloss.AdaptiveColor // failures, destructive
-	Heat1         lipgloss.AdaptiveColor // activity ramp, lightest
-	Heat2         lipgloss.AdaptiveColor
-	Heat3         lipgloss.AdaptiveColor
-	Heat4         lipgloss.AdaptiveColor // activity ramp, busiest
+	Accent        color.Color // focus, key hints, selection
+	Heading       color.Color // titles
+	Text          color.Color // body text
+	TextMuted     color.Color // descriptions, secondary text
+	TextDim       color.Color // hints, counts, subtle text
+	Border        color.Color // unfocused borders, empty tracks
+	BorderFocused color.Color // focused borders
+	Surface       color.Color // status bar and modal background
+	Success       color.Color // done, progress filled
+	Warning       color.Color // wait, retry
+	Error         color.Color // failures, destructive
+	Heat1         color.Color // activity ramp, lightest
+	Heat2         color.Color
+	Heat3         color.Color
+	Heat4         color.Color // activity ramp, busiest
 }
 
-// DefaultTheme is the built-in palette, in 256-colour indices. The dark side
-// is the gold-and-olive look the dashboard has always had; the light side
-// keeps the hues but drops their luminance so they read on white.
-func DefaultTheme() Theme {
+// NewTheme is the built-in palette in 256-colour indices, resolved for a dark
+// or a light terminal. The dark side is the gold-and-olive look the dashboard
+// has always had; the light side keeps the hues but drops their luminance so
+// they read on white.
+func NewTheme(isDark bool) Theme {
+	ld := lipgloss.LightDark(isDark)
+	// c takes the light index first, as lipgloss.LightDark does.
+	c := func(light, dark string) color.Color {
+		return ld(lipgloss.Color(light), lipgloss.Color(dark))
+	}
 	return Theme{
-		Accent:        lipgloss.AdaptiveColor{Dark: "179", Light: "130"},
-		Heading:       lipgloss.AdaptiveColor{Dark: "223", Light: "235"},
-		Text:          lipgloss.AdaptiveColor{Dark: "252", Light: "236"},
-		TextMuted:     lipgloss.AdaptiveColor{Dark: "245", Light: "242"},
-		TextDim:       lipgloss.AdaptiveColor{Dark: "243", Light: "245"},
-		Border:        lipgloss.AdaptiveColor{Dark: "238", Light: "250"},
-		BorderFocused: lipgloss.AdaptiveColor{Dark: "179", Light: "130"},
-		Surface:       lipgloss.AdaptiveColor{Dark: "236", Light: "254"},
-		Success:       lipgloss.AdaptiveColor{Dark: "107", Light: "64"},
-		Warning:       lipgloss.AdaptiveColor{Dark: "215", Light: "166"},
-		Error:         lipgloss.AdaptiveColor{Dark: "167", Light: "160"},
+		Accent:        c("130", "179"),
+		Heading:       c("235", "223"),
+		Text:          c("236", "252"),
+		TextMuted:     c("242", "245"),
+		TextDim:       c("245", "243"),
+		Border:        c("250", "238"),
+		BorderFocused: c("130", "179"),
+		Surface:       c("254", "236"),
+		Success:       c("64", "107"),
+		Warning:       c("166", "215"),
+		Error:         c("160", "167"),
 		// A four-step ramp that stays visible at both ends: the dark side
 		// climbs from a muted green to a pale one, the light side from a
 		// pale green down to a deep one.
-		Heat1: lipgloss.AdaptiveColor{Dark: "65", Light: "150"},
-		Heat2: lipgloss.AdaptiveColor{Dark: "71", Light: "107"},
-		Heat3: lipgloss.AdaptiveColor{Dark: "113", Light: "64"},
-		Heat4: lipgloss.AdaptiveColor{Dark: "156", Light: "22"},
+		Heat1: c("150", "65"),
+		Heat2: c("107", "71"),
+		Heat3: c("64", "113"),
+		Heat4: c("22", "156"),
 	}
 }
+
+// DefaultTheme is the palette for a dark terminal, which is what the
+// dashboard draws with until the terminal answers the background query and
+// what the CLI falls back to when it is not writing to one.
+func DefaultTheme() Theme { return NewTheme(true) }
 
 // ── Styles ──────────────────────────────────────────────────────────────────
 
@@ -66,6 +83,11 @@ func DefaultTheme() Theme {
 // hands the terminal's background to the program as a message, so the whole
 // set has to be rebuildable mid-run.
 type styles struct {
+	// th is the palette the set was derived from, which the bubbles widgets
+	// need in colour form rather than as a style: a real cursor takes a
+	// colour, not a foreground.
+	th Theme
+
 	// Panes. The focused one differs in shape as well as colour: a thick
 	// border survives NO_COLOR and a 16-colour terminal, where the accent
 	// alone would not.
@@ -159,6 +181,8 @@ func newStyles(th Theme) styles {
 	modalBg := lipgloss.NewStyle().Background(th.Surface)
 
 	return styles{
+		th: th,
+
 		paneBorder:        lipgloss.NewStyle().Foreground(th.Border),
 		paneBorderFocused: lipgloss.NewStyle().Foreground(th.BorderFocused),
 		paneTitle:         lipgloss.NewStyle().Bold(true).Foreground(th.TextMuted),
@@ -276,19 +300,78 @@ func newStyles(th Theme) styles {
 
 // ── Theme setting ───────────────────────────────────────────────────────────
 
+// pinnedDark is what the `theme` config key answered, when it answered:
+// nil for "auto", which leaves the terminal to be asked.
+var pinnedDark *bool
+
 // ApplyThemeSetting honours the `theme` config key. "auto" (or empty) leaves
-// lipgloss to detect the terminal background; "dark" and "light" pin it, for
-// terminals that do not answer the query or answer it wrongly.
+// the background to be detected — the dashboard asks the terminal for it and
+// the CLI queries it once at startup; "dark" and "light" pin it, for terminals
+// that do not answer the query or answer it wrongly.
 func ApplyThemeSetting(setting string) error {
 	switch strings.ToLower(strings.TrimSpace(setting)) {
 	case "", "auto":
-		return nil
+		pinnedDark = nil
 	case "dark":
-		lipgloss.SetHasDarkBackground(true)
+		v := true
+		pinnedDark = &v
 	case "light":
-		lipgloss.SetHasDarkBackground(false)
+		v := false
+		pinnedDark = &v
 	default:
 		return fmt.Errorf("invalid theme %q in config (valid: auto, dark, light)", setting)
 	}
 	return nil
+}
+
+// PinnedDark reports the background the `theme` config key pinned, if it
+// pinned one. The dashboard skips the terminal query when it did, and the CLI
+// skips its own detection.
+func PinnedDark() (isDark bool, pinned bool) {
+	if pinnedDark == nil {
+		return false, false
+	}
+	return *pinnedDark, true
+}
+
+// ── Widget styles ───────────────────────────────────────────────────────────
+
+// textInputStyles fills a v2 textinput.Styles from the three styles v1 set
+// through PromptStyle, TextStyle and PlaceholderStyle. Both focus states get
+// the same look: every input in the dashboard is drawn only while it has the
+// keyboard, so a blurred palette would never be seen.
+func (s styles) textInputStyles(prompt, text, placeholder lipgloss.Style) textinput.Styles {
+	state := textinput.StyleState{
+		Prompt:      prompt,
+		Text:        text,
+		Placeholder: placeholder,
+		Suggestion:  placeholder,
+	}
+	return textinput.Styles{Focused: state, Blurred: state, Cursor: s.cursorStyle()}
+}
+
+// textAreaStyles is textInputStyles for the review modal's body field. base
+// carries the panel's background, which every row of the field needs or the
+// modal ends up striped.
+func (s styles) textAreaStyles(base, prompt, text, placeholder lipgloss.Style) textarea.Styles {
+	state := textarea.StyleState{
+		Base:        base,
+		Text:        text,
+		Placeholder: placeholder,
+		Prompt:      prompt,
+		CursorLine:  base,
+		EndOfBuffer: base,
+	}
+	return textarea.Styles{
+		Focused: state,
+		Blurred: state,
+		Cursor:  textarea.CursorStyle(s.cursorStyle()),
+	}
+}
+
+// cursorStyle is the terminal's own cursor, in the accent colour. The inputs
+// draw no block of their own — see SetVirtualCursor(false) — so this is the
+// shape and colour the terminal is asked for.
+func (s styles) cursorStyle() textinput.CursorStyle {
+	return textinput.CursorStyle{Color: s.th.Accent, Shape: tea.CursorBlock, Blink: true}
 }

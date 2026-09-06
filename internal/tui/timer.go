@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 	"github.com/Kameleon21/oku/internal/format"
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 // timerSection shows the running timer, or how to start one, with today's
@@ -23,7 +23,11 @@ func newTimerSection(sh *shared, st styles) *timerSection {
 }
 
 func (s *timerSection) Update(msg tea.Msg) tea.Cmd {
-	keyMsg, ok := msg.(tea.KeyMsg)
+	if st, ok := msg.(stylesChangedMsg); ok {
+		s.st = st.st
+		return nil
+	}
+	keyMsg, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return nil
 	}

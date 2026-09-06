@@ -28,11 +28,11 @@ func newRootCmd(version string) *cobra.Command {
 			if _, err := tui.ParseDensity(outputView); err != nil {
 				return err
 			}
-			// The palette is adaptive; the config key only overrides what
-			// the terminal reports about its background, for the TUI and
-			// the coloured CLI output alike. A config that does not load is
-			// left for the command to report (or, for `config edit`, to
-			// tolerate), so only the theme value itself is checked here.
+			// The config key only overrides what the terminal reports about
+			// its background, for the TUI and the coloured CLI output alike.
+			// A config that does not load is left for the command to report
+			// (or, for `config edit`, to tolerate), so only the theme value
+			// itself is checked here.
 			if cfg, err := config.Load(); err == nil {
 				return tui.ApplyThemeSetting(cfg.Theme)
 			}

@@ -46,7 +46,7 @@ func newRateCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("Rating updated to %s (%s)\n", pageStyle.Render(fmt.Sprintf("%.1f", rating)), model.StarString(rating))
+			outPrintf("Rating updated to %s (%s)\n", pageStyle().Render(fmt.Sprintf("%.1f", rating)), model.StarString(rating))
 			return nil
 		},
 	}

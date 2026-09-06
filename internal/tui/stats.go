@@ -5,13 +5,14 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/Kameleon21/oku/internal/charts"
 	"github.com/Kameleon21/oku/internal/format"
 	"github.com/Kameleon21/oku/internal/model"
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // statsSection is the reading statistics page: Hardcover library stats
@@ -47,7 +48,7 @@ type statsKey struct {
 }
 
 func newStatsSection(sh *shared, st styles) *statsSection {
-	return &statsSection{sh: sh, st: st, vp: viewport.New(1, 1)}
+	return &statsSection{sh: sh, st: st, vp: viewport.New(viewport.WithWidth(1), viewport.WithHeight(1))}
 }
 
 func (s *statsSection) Update(msg tea.Msg) tea.Cmd {
@@ -60,7 +61,13 @@ func (s *statsSection) Update(msg tea.Msg) tea.Cmd {
 		}
 		return nil
 	}
-	keyMsg, ok := msg.(tea.KeyMsg)
+	if msg, ok := msg.(stylesChangedMsg); ok {
+		// The page is drawn with the styles, so the memo has to go with them.
+		s.st = msg.st
+		s.key = statsKey{}
+		return nil
+	}
+	keyMsg, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return nil
 	}
@@ -71,13 +78,13 @@ func (s *statsSection) Update(msg tea.Msg) tea.Cmd {
 	k := keysFor(s)
 	switch {
 	case key.Matches(keyMsg, k.Down):
-		s.vp.LineDown(1)
+		s.vp.ScrollDown(1)
 	case key.Matches(keyMsg, k.Up):
-		s.vp.LineUp(1)
+		s.vp.ScrollUp(1)
 	case key.Matches(keyMsg, k.HalfPageDown):
-		s.vp.HalfViewDown()
+		s.vp.HalfPageDown()
 	case key.Matches(keyMsg, k.HalfPageUp):
-		s.vp.HalfViewUp()
+		s.vp.HalfPageUp()
 	case key.Matches(keyMsg, k.ScrollTop):
 		s.vp.GotoTop()
 	case key.Matches(keyMsg, k.ScrollBottom):
@@ -97,16 +104,16 @@ func (s *statsSection) build() {
 		return
 	}
 	s.key = k
-	offset := s.vp.YOffset
-	s.vp.Height = max(1, s.h)
+	offset := s.vp.YOffset()
+	s.vp.SetHeight(max(1, s.h))
 	s.vp.SetContent(s.render(s.w))
-	if s.vp.TotalLineCount() > s.vp.Height {
+	if s.vp.TotalLineCount() > s.vp.Height() {
 		// The badge takes the pane's last row for itself. Stamped over the
 		// page it would cover whatever chart happened to be on that row,
 		// wherever the reader had scrolled to.
-		s.vp.Height = max(1, s.h-1)
+		s.vp.SetHeight(max(1, s.h-1))
 	}
-	s.vp.SetYOffset(min(offset, max(0, s.vp.TotalLineCount()-s.vp.Height)))
+	s.vp.SetYOffset(min(offset, max(0, s.vp.TotalLineCount()-s.vp.Height())))
 }
 
 // View draws the visible slice of the page, with a scroll indicator on the
@@ -121,8 +128,8 @@ func (s *statsSection) View(w, h int) string {
 	// The viewport is a row shorter than the pane when the page overflows,
 	// so the row the badge is stamped on is the empty one fitBlock adds.
 	out := fitBlock(s.vp.View(), w, h)
-	if total := s.vp.TotalLineCount(); total > s.vp.Height {
-		last := min(total, s.vp.YOffset+s.vp.Height)
+	if total := s.vp.TotalLineCount(); total > s.vp.Height() {
+		last := min(total, s.vp.YOffset()+s.vp.Height())
 		out = stampOverflowBadge(out, fmt.Sprintf("▲ %d/%d ▼", last, total), w, s.st)
 	}
 	return out
@@ -133,7 +140,8 @@ func (s *statsSection) Resize(w, h int) tea.Cmd {
 		return nil
 	}
 	s.w, s.h = w, h
-	s.vp.Width, s.vp.Height = max(1, w), max(1, h)
+	s.vp.SetWidth(max(1, w))
+	s.vp.SetHeight(max(1, h))
 	// The charts are drawn to the width they are given, so the page itself
 	// changes with the pane.
 	s.key = statsKey{}
@@ -378,6 +386,9 @@ func (s *statsSection) yearsChart(rs *model.ReadingStats, w int) chartBlock {
 	return chartBlock{"Books per year", charts.BarChartH(rows, 4, chartBarW(w, 4), s.st.barPalette(s.st.statsBarFilled))}
 }
 
+// genreLabelW is the widest a genre label is drawn, ellipsis included.
+const genreLabelW = 14
+
 func (s *statsSection) genresChart(rs *model.ReadingStats, w int) chartBlock {
 	if len(rs.Genres) == 0 {
 		return chartBlock{}
@@ -385,12 +396,11 @@ func (s *statsSection) genresChart(rs *model.ReadingStats, w int) chartBlock {
 	labelW := 0
 	rows := make([]model.LabelCount, 0, len(rs.Genres))
 	for _, g := range rs.Genres {
-		label := g.Label
-		if len(label) > 14 {
-			label = label[:13] + "…"
-		}
-		if len(label) > labelW {
-			labelW = len(label)
+		// Cut by cells, not by bytes: a genre with an accent in it was being
+		// sliced mid-rune.
+		label := ansi.Truncate(g.Label, genreLabelW, "…")
+		if w := ansi.StringWidth(label); w > labelW {
+			labelW = w
 		}
 		rows = append(rows, model.LabelCount{Label: label, Count: g.Count})
 	}

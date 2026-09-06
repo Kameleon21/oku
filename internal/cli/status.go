@@ -35,7 +35,7 @@ func newStatusCmd() *cobra.Command {
 			if err != nil && !errors.Is(err, app.ErrCacheRefresh) {
 				return err
 			}
-			fmt.Printf("Status changed to %s\n", statusStyle.Render(status.Label()))
+			outPrintf("Status changed to %s\n", statusStyle().Render(status.Label()))
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
 			}

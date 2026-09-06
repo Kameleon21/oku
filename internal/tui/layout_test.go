@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // TestComputeLayout pins the geometry every pane is drawn from: where the
@@ -91,7 +91,7 @@ func TestLayoutIsPushedIntoThePanes(t *testing.T) {
 	if got, want := readingSection(m).list.Height(), m.lay.InnerH; got != want {
 		t.Fatalf("list height = %d, want the pane's inner height %d", got, want)
 	}
-	if got, want := m.detail.vp.Width, m.lay.DetailInner; got != want {
+	if got, want := m.detail.vp.Width(), m.lay.DetailInner; got != want {
 		t.Fatalf("detail width = %d, want %d", got, want)
 	}
 

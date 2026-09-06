@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/Kameleon21/oku/internal/model"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // TestPaceAndETA pins the estimate the detail pane prints. The pace assumes
@@ -316,7 +316,7 @@ func TestDetailKeepsItsScrollAcrossAReload(t *testing.T) {
 	setLibrary(m, books, m.shared.oku)
 	m.setTab(tabReading)
 
-	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	send(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	// The viewport has nothing to scroll until it has been rendered once,
 	// which in the program every key press is followed by.
 	m.frame()
@@ -324,8 +324,8 @@ func TestDetailKeepsItsScrollAcrossAReload(t *testing.T) {
 		send(t, m, runeKey('j'))
 	}
 	m.frame()
-	if m.detail.vp.YOffset != 5 {
-		t.Fatalf("YOffset = %d after five j, want 5", m.detail.vp.YOffset)
+	if m.detail.vp.YOffset() != 5 {
+		t.Fatalf("YOffset = %d after five j, want 5", m.detail.vp.YOffset())
 	}
 
 	// A reload of the same book: the sessions under the review change, the
@@ -336,22 +336,22 @@ func TestDetailKeepsItsScrollAcrossAReload(t *testing.T) {
 	}
 	m.broadcast(dataChangedMsg{dataLocal})
 	m.frame()
-	if got := m.detail.vp.YOffset; got != 5 {
+	if got := m.detail.vp.YOffset(); got != 5 {
 		t.Fatalf("YOffset = %d after a reload, want the reader left where they were (5)", got)
 	}
 
 	// A different book is a different page, and starts at the top.
-	send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	send(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
 	send(t, m, runeKey('j'))
 	m.frame()
-	if got := m.detail.vp.YOffset; got != 0 {
+	if got := m.detail.vp.YOffset(); got != 0 {
 		t.Fatalf("YOffset = %d for a new selection, want 0", got)
 	}
 
 	// A rebuild that leaves less content than the offset clamps rather than
 	// scrolling past the end.
 	send(t, m, runeKey('k'))
-	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	send(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	for i := 0; i < 5; i++ {
 		send(t, m, runeKey('j'))
 	}
@@ -359,7 +359,7 @@ func TestDetailKeepsItsScrollAcrossAReload(t *testing.T) {
 	books[0].Review = "Short."
 	setLibrary(m, books, m.shared.oku)
 	m.frame()
-	if got := m.detail.vp.YOffset; got != 0 {
+	if got := m.detail.vp.YOffset(); got != 0 {
 		t.Fatalf("YOffset = %d once the content got shorter, want it clamped to 0", got)
 	}
 }
@@ -376,7 +376,7 @@ func TestSearchResultOpensInTheDetailPane(t *testing.T) {
 		s.rebuildResults()
 		s.focusResults()
 
-		send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+		send(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 		if m.focus != focusDetail {
 			t.Fatalf("%dx%d: Enter over a result should open the detail pane, focus = %v", size[0], size[1], m.focus)
 		}
@@ -392,7 +392,7 @@ func TestSearchResultOpensInTheDetailPane(t *testing.T) {
 			t.Fatalf("%dx%d: a should add the result as reading", size[0], size[1])
 		}
 
-		send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+		send(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
 		if m.focus != focusContent {
 			t.Fatalf("%dx%d: Esc should go back to the results", size[0], size[1])
 		}
@@ -404,7 +404,7 @@ func TestSearchResultOpensInTheDetailPane(t *testing.T) {
 func TestSlashLeavesTheDetailPane(t *testing.T) {
 	m := renderedDashboard(120, 40)
 	m.setTab(tabReading)
-	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	send(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.focus != focusDetail {
 		t.Fatal("Enter should focus the detail pane")
 	}
@@ -423,7 +423,7 @@ func TestSlashLeavesTheDetailPane(t *testing.T) {
 	// The Oku tab reaches the input the same way.
 	m = renderedDashboard(120, 40)
 	m.setTab(tabOku)
-	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	send(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	send(t, m, runeKey('/'))
 	if m.tab != tabSearch || m.focus != focusContent || !searchOf(m).CapturesKeys() {
 		t.Fatalf("/ from the Oku detail: tab=%v focus=%v capturing=%v", m.tab, m.focus, searchOf(m).CapturesKeys())
@@ -501,11 +501,11 @@ func TestTabKeysAndFocusRouting(t *testing.T) {
 	if m.tab != tabOku {
 		t.Fatalf("l = %v, want Oku", m.tab)
 	}
-	send(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	send(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if m.tab != tabSearch {
 		t.Fatalf("tab = %v, want Search", m.tab)
 	}
-	send(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
+	send(t, m, tea.KeyPressMsg{Mod: tea.ModShift, Code: tea.KeyTab})
 	if m.tab != tabOku {
 		t.Fatalf("shift+tab = %v, want Oku", m.tab)
 	}
@@ -528,14 +528,14 @@ func TestTabKeysAndFocusRouting(t *testing.T) {
 	}
 
 	// A tab with no detail cannot be focused into one.
-	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	send(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.focus != focusContent {
 		t.Fatalf("Enter in the Timer tab should not move the focus, got %v", m.focus)
 	}
 
 	// Switching tabs gives the keyboard back to the list.
 	send(t, m, runeKey('1'))
-	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	send(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.focus != focusDetail {
 		t.Fatal("Enter in Reading should focus the detail pane")
 	}
@@ -555,7 +555,7 @@ func TestNarrowScreenEnterSwapsThePane(t *testing.T) {
 		t.Fatal("80 columns is too narrow to split")
 	}
 
-	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	send(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !m.lay.DetailOnly {
 		t.Fatal("Enter on a narrow terminal should give the detail pane the width")
 	}
@@ -569,7 +569,7 @@ func TestNarrowScreenEnterSwapsThePane(t *testing.T) {
 		t.Fatal("+ should still update the selected book's progress")
 	}
 
-	send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	send(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
 	if m.lay.DetailOnly || m.focus != focusContent {
 		t.Fatal("Esc should put the list back")
 	}

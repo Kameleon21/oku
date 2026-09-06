@@ -5,10 +5,10 @@ import (
 	"os"
 	"strings"
 
+	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 	"github.com/Kameleon21/oku/internal/model"
-	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 )
 
@@ -24,6 +24,9 @@ type reviewFormModel struct {
 	ratingInput textinput.Model
 	reviewInput textarea.Model
 	focus       reviewFieldFocus
+	// focusCmd is what the focused field's Focus() answered with; Init runs
+	// it so the cursor appears.
+	focusCmd tea.Cmd
 
 	errMsg    string
 	submitted bool
@@ -37,6 +40,9 @@ func newReviewFormModel(book model.UserBook) reviewFormModel {
 	ratingIn.Prompt = "Rating (0-5, 0.5 steps): "
 	ratingIn.Placeholder = "4.5"
 	ratingIn.CharLimit = 4
+	// A v2 textinput draws nothing wider than its width, and zero is not
+	// "no limit" as it was in v1: the field is as wide as it accepts.
+	ratingIn.SetWidth(4)
 	if book.Rating > 0 {
 		ratingIn.SetValue(fmt.Sprintf("%.1f", book.Rating))
 	}
@@ -48,18 +54,24 @@ func newReviewFormModel(book model.UserBook) reviewFormModel {
 	reviewIn.SetValue(book.Review)
 	reviewIn.ShowLineNumbers = false
 
+	// The form draws the terminal's own cursor (see View), so neither field
+	// paints a block of its own.
+	ratingIn.SetVirtualCursor(false)
+	reviewIn.SetVirtualCursor(false)
+
 	m := reviewFormModel{
 		book:        book,
 		ratingInput: ratingIn,
 		reviewInput: reviewIn,
 		focus:       reviewFocusRating,
 	}
-	m.focusRatingField()
+	m.focusCmd = m.focusRatingField()
 	return m
 }
 
+// Init runs the command the focused field's Focus() answered with.
 func (m reviewFormModel) Init() tea.Cmd {
-	return textinput.Blink
+	return m.focusCmd
 }
 
 func (m reviewFormModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -71,25 +83,21 @@ func (m reviewFormModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.reviewInput.SetWidth(width)
 		return m, nil
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c", "esc":
 			m.cancelled = true
 			return m, tea.Quit
 		case "tab":
 			if m.focus == reviewFocusRating {
-				m.focusReviewField()
-			} else {
-				m.focusRatingField()
+				return m, m.focusReviewField()
 			}
-			return m, nil
+			return m, m.focusRatingField()
 		case "shift+tab":
 			if m.focus == reviewFocusText {
-				m.focusRatingField()
-			} else {
-				m.focusReviewField()
+				return m, m.focusRatingField()
 			}
-			return m, nil
+			return m, m.focusReviewField()
 		case "ctrl+s":
 			rating, err := model.ParseRating(m.ratingInput.Value())
 			if err != nil {
@@ -113,7 +121,34 @@ func (m reviewFormModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m reviewFormModel) View() string {
+// The rows the two fields are drawn on, counted from the top of the form:
+// the heading, a blank, the title and the author, a blank, then the rating;
+// a blank and the "Review:" label separate it from the textarea.
+const (
+	reviewFormRatingRow = 5
+	reviewFormReviewRow = 8
+)
+
+func (m reviewFormModel) View() tea.View {
+	v := tea.NewView(m.body())
+	v.Cursor = m.cursor()
+	return v
+}
+
+// cursor is the terminal's own cursor, in whichever field has the keyboard.
+func (m reviewFormModel) cursor() *tea.Cursor {
+	cur, row := m.ratingInput.Cursor(), reviewFormRatingRow
+	if m.focus == reviewFocusText {
+		cur, row = m.reviewInput.Cursor(), reviewFormReviewRow
+	}
+	if cur == nil {
+		return nil
+	}
+	cur.Y += row
+	return cur
+}
+
+func (m reviewFormModel) body() string {
 	rating, err := model.ParseRating(m.ratingInput.Value())
 	stars := "☆☆☆☆☆"
 	ratingLine := "unrated"
@@ -147,16 +182,16 @@ func (m reviewFormModel) View() string {
 	return b.String()
 }
 
-func (m *reviewFormModel) focusRatingField() {
+func (m *reviewFormModel) focusRatingField() tea.Cmd {
 	m.focus = reviewFocusRating
-	m.ratingInput.Focus()
 	m.reviewInput.Blur()
+	return m.ratingInput.Focus()
 }
 
-func (m *reviewFormModel) focusReviewField() {
+func (m *reviewFormModel) focusReviewField() tea.Cmd {
 	m.focus = reviewFocusText
 	m.ratingInput.Blur()
-	m.reviewInput.Focus()
+	return m.reviewInput.Focus()
 }
 
 func newReviewCmd() *cobra.Command {
@@ -207,7 +242,7 @@ func newReviewCmd() *cobra.Command {
 				return fmt.Errorf("unexpected review form result type %T", final)
 			}
 			if result.cancelled || !result.submitted {
-				fmt.Println("Cancelled.")
+				outPrintln("Cancelled.")
 				return nil
 			}
 
@@ -215,12 +250,12 @@ func newReviewCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("Updated review and rating for %s\n", titleStyle.Render(ub.Book.Title))
-			fmt.Printf("Rating: %s (%s)\n", pageStyle.Render(fmt.Sprintf("%.1f", result.rating)), model.StarString(result.rating))
+			outPrintf("Updated review and rating for %s\n", titleStyle().Render(ub.Book.Title))
+			outPrintf("Rating: %s (%s)\n", pageStyle().Render(fmt.Sprintf("%.1f", result.rating)), model.StarString(result.rating))
 			if strings.TrimSpace(result.review) == "" {
-				fmt.Println("Review cleared.")
+				outPrintln("Review cleared.")
 			} else {
-				fmt.Println("Review updated.")
+				outPrintln("Review updated.")
 			}
 			return nil
 		},

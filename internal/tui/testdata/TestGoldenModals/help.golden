@@ -1,40 +1,40 @@
-                                                                                                                        
-                                  ╭──────────────────────────────────────────────────╮                                  
-                                  │                                                  │                                  
-                                  │  Help                                            │                                  
-                                  │                                                  │                                  
-                                  │  Navigation                                      │                                  
-                                  │    j/k           navigate                        │                                  
-                                  │    1-5           jump to a tab                   │                                  
-                                  │    h/l           tab                             │                                  
-                                  │    Tab/S-Tab     tab (alias)                     │                                  
-                                  │    /             search                          │                                  
-                                  │    Esc           back                            │                                  
-                                  │    Esc/i         back to the input               │                                  
-                                  │    g             top                             │                                  
-                                  │    G             bottom                          │                                  
-                                  │    C-u/C-d       half page                       │                                  
-                                  │                                                  │                                  
-                                  │  Actions                                         │                                  
-                                  │    ↵             detail                          │                                  
-                                  │    a             add as reading                  │                                  
-                                  │    ↵             search                          │                                  
-                                  │    ↵             select                          │                                  
-                                  │    +/-           page ±10                        │                                  
-                                  │    u             update page                     │                                  
-                                  │    v             review / rate                   │                                  
-                                  │    g             set reading                     │                                  
-                                  │    w             set want to read                │                                  
-                                  │    f             set finished                    │                                  
-                                  │    d             did not finish (asks)           │                                  
-                                  │    x             ignore / remove (asks)          │                                  
-                                  │    m             cycle mode                      │                                  
-                                  │    z             density                         │                                  
-                                  │                                                  │                                  
-                                  │  Timer                                           │                                  
-                                  │    t             start timer                     │                                  
-                                  │    s             stop timer                      │                                  
-                                  │  j/k scroll · ? or esc close   oku test          │                                  
-                                  │                                                  │                                  
-                                  ╰──────────────────────────────────────────────────╯                                  
-                                                                                                                        
+ oku  ▸1 Reading 3   2 Oku 3   3 Search   4 Stats   5 Timer                                               synced 2m ago 
+┏━ Reading (3) ━━━━━━━━━━━━━━━━━━━━╭────────────────────────────────────────────────╮──────────────────────────────────╮
+┃ │ The Communist Manifesto        │                                                │                                  │
+┃ │ Karl Marx, Friedrich Engels · 7│  Help                                          │2026                              │
+┃   Money                          │                                                │                                  │
+┃   David McWilliams · 360/416 ████│  Navigation                                    │░░░░░░░░░░░░░  p.70 / 305 · 22%   │
+┃   Software Architecture: The Hard│    j/k           navigate                      │Nov)                              │
+┃   Neal Ford, Mark Richards, Pramo│    1-5           jump to a tab                 │                                  │
+┃                                  │    h/l           tab                           │ommunity    ★ 3.60 (382)          │
+┃                                  │    Tab/S-Tab     tab (alias)                   │eleased     1848                  │
+┃                                  │    /             search                        │· Classics · Nonfiction           │
+┃                                  │    Esc           back                          │                                  │
+┃                                  │    Esc/i         back to the input             │                                  │
+┃                                  │    g             top                           │                                  │
+┃                                  │    G             bottom                        │                                  │
+┃                                  │    C-u/C-d       half page                     │                                  │
+┃                                  │                                                │                                  │
+┃                                  │  Actions                                       │                                  │
+┃                                  │    ↵             detail                        │ace is the best part, and the     │
+┃                                  │    a             add as reading                │actually lives. Worth the evening │
+┃                                  │    ↵             search                        │                                  │
+┃                                  │    ↵             select                        │                                  │
+┃                                  │    +/-           page ±10                      │                                  │
+┃                                  │    u             update page                   │                                  │
+┃                                  │    v             review / rate                 │                                  │
+┃                                  │    g             set reading                   │                                  │
+┃                                  │    w             set want to read              │                                  │
+┃                                  │    f             set finished                  │                                  │
+┃                                  │    d             did not finish (asks)         │                                  │
+┃                                  │    x             ignore / remove (asks)        │                                  │
+┃                                  │    m             cycle mode                    │                                  │
+┃                                  │    z             density                       │                                  │
+┃                                  │                                                │                                  │
+┃                                  │  Timer                                         │                                  │
+┃                                  │    t             start timer                   │                                  │
+┃                                  │    s             stop timer                    │                                  │
+┃                                  │  j/k scroll · ? or esc close   oku test        │                                  │
+┃                                  │                                                │                                  │
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╰────────────────────────────────────────────────╯──────────────────────────────────╯
+ j/k scroll · Esc close                                                                                                 

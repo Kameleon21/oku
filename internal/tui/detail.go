@@ -6,12 +6,12 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/Kameleon21/oku/internal/format"
 	"github.com/Kameleon21/oku/internal/model"
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -69,13 +69,19 @@ type detailKey struct {
 }
 
 func newDetailPane(sh *shared, st styles) *detailPane {
-	return &detailPane{sh: sh, st: st, vp: viewport.New(1, 1)}
+	return &detailPane{sh: sh, st: st, vp: viewport.New(viewport.WithWidth(1), viewport.WithHeight(1))}
 }
 
 // Update takes the broadcast messages the pane cares about: a data change
 // invalidates what is on screen.
 func (d *detailPane) Update(msg tea.Msg) tea.Cmd {
-	if _, ok := msg.(dataChangedMsg); ok {
+	switch msg := msg.(type) {
+	case dataChangedMsg:
+		d.stamp++
+	case stylesChangedMsg:
+		// The rendered content carries resolved colours, so a new palette
+		// invalidates it the same way new data does.
+		d.st = msg.st
 		d.stamp++
 	}
 	return nil
@@ -87,16 +93,16 @@ func (d *detailPane) Update(msg tea.Msg) tea.Cmd {
 //
 // g and G are deliberately not scroll keys here: they set a shelf in the
 // library, and a detail pane that stole them would be a trap.
-func (d *detailPane) handleKey(msg tea.KeyMsg, k keyMap) bool {
+func (d *detailPane) handleKey(msg tea.KeyPressMsg, k keyMap) bool {
 	switch {
 	case key.Matches(msg, k.Down):
-		d.vp.LineDown(1)
+		d.vp.ScrollDown(1)
 	case key.Matches(msg, k.Up):
-		d.vp.LineUp(1)
+		d.vp.ScrollUp(1)
 	case key.Matches(msg, k.HalfPageDown):
-		d.vp.HalfViewDown()
+		d.vp.HalfPageDown()
 	case key.Matches(msg, k.HalfPageUp):
-		d.vp.HalfViewUp()
+		d.vp.HalfPageUp()
 	default:
 		return false
 	}
@@ -107,7 +113,8 @@ func (d *detailPane) handleKey(msg tea.KeyMsg, k keyMap) bool {
 // content is rebuilt at the next View.
 func (d *detailPane) Resize(w, h int) {
 	d.w, d.h = w, h
-	d.vp.Width, d.vp.Height = max(1, w), max(1, h)
+	d.vp.SetWidth(max(1, w))
+	d.vp.SetHeight(max(1, h))
 }
 
 // Keys relabels the bindings for a focused detail pane: j/k scroll it, Esc
@@ -166,11 +173,11 @@ func (d *detailPane) View(sel selection, t tab) string {
 		// landing, a timer stopping — keeps the reader where they were in a
 		// long review, clamped in case the content is now shorter.
 		sameSelection := k.kind == d.key.kind && k.id == d.key.id
-		offset := d.vp.YOffset
+		offset := d.vp.YOffset()
 		d.key = k
 		d.vp.SetContent(d.render(sel, t))
 		if sameSelection {
-			d.vp.SetYOffset(min(offset, max(0, d.vp.TotalLineCount()-d.vp.Height)))
+			d.vp.SetYOffset(min(offset, max(0, d.vp.TotalLineCount()-d.vp.Height())))
 		} else {
 			d.vp.GotoTop()
 		}

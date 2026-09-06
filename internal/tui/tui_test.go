@@ -4,15 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image/color"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/Kameleon21/oku/internal/model"
-	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -104,7 +106,7 @@ func TestSubmitSearchSetsLoadingState(t *testing.T) {
 	searchOf(m).input.SetValue("dune")
 	searchOf(m).queryMode = model.SearchModeAuthor
 
-	cmd := send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	cmd := send(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("submitting a non-empty query should start a search")
 	}
@@ -129,7 +131,7 @@ func TestSubmitSearchGuardAndEmptyValidation(t *testing.T) {
 	searchOf(m).focusInput()
 	searchOf(m).loading = true
 	searchOf(m).input.SetValue("dune")
-	if cmd := send(t, m, tea.KeyMsg{Type: tea.KeyEnter}); cmd == nil {
+	if cmd := send(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}); cmd == nil {
 		t.Fatal("a query typed over an in-flight search should be searchable")
 	}
 
@@ -137,7 +139,7 @@ func TestSubmitSearchGuardAndEmptyValidation(t *testing.T) {
 	m.inflight = 0
 	searchOf(m).loading = false
 
-	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	send(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.isLoading() || searchOf(m).loading {
 		t.Fatal("an empty query should not be searched for")
 	}
@@ -284,7 +286,7 @@ func TestReviewSaveKeepsModalOpenWhileSaving(t *testing.T) {
 	review.rating.SetValue("3")
 	review.text.SetValue("Strong first half.")
 
-	cmd := send(t, m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	cmd := send(t, m, tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 's'})
 
 	if cmd == nil {
 		t.Fatal("expected save command")
@@ -310,7 +312,7 @@ func TestTimerSelectEnterClampsStaleIndex(t *testing.T) {
 	// Stale: the list shrank while the picker was open.
 	m.push(newTimerPickerModal(m.shared, 5))
 
-	cmd := send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	cmd := send(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	if cmd == nil {
 		t.Fatal("enter on a valid list should start the timer")
@@ -353,7 +355,7 @@ func TestAsyncResultsAreAppliedInEveryMode(t *testing.T) {
 			m.setTab(tabSearch)
 			searchOf(m).focusInput()
 			searchOf(m).input.SetValue("dune")
-			if cmd := send(t, m, tea.KeyMsg{Type: tea.KeyEnter}); cmd == nil {
+			if cmd := send(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}); cmd == nil {
 				t.Fatal("submitting the query should start a search")
 			}
 
@@ -394,7 +396,7 @@ func TestStaleSearchResultIsIgnored(t *testing.T) {
 	m.setTab(tabSearch)
 	searchOf(m).focusInput()
 	searchOf(m).input.SetValue("dune")
-	if cmd := send(t, m, tea.KeyMsg{Type: tea.KeyEnter}); cmd == nil {
+	if cmd := send(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}); cmd == nil {
 		t.Fatal("the first query should start a search")
 	}
 	staleSeq := searchOf(m).seq
@@ -402,7 +404,7 @@ func TestStaleSearchResultIsIgnored(t *testing.T) {
 	// The user retypes before the first response lands.
 	searchOf(m).loading = false
 	searchOf(m).input.SetValue("foundation")
-	if cmd := send(t, m, tea.KeyMsg{Type: tea.KeyEnter}); cmd == nil {
+	if cmd := send(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}); cmd == nil {
 		t.Fatal("the second query should start a search")
 	}
 
@@ -588,7 +590,7 @@ func TestReviewSaveFailureKeepsModalOpen(t *testing.T) {
 	review.rating.SetValue("3")
 	review.text.SetValue("Strong first half.")
 
-	send(t, m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	send(t, m, tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 's'})
 	m.Update(opDoneMsg{op: opReview, seq: review.token, err: errors.New("save failed")})
 
 	if m.isLoading() {
@@ -645,7 +647,7 @@ func TestReviewSaveSuccessClosesModal(t *testing.T) {
 	review := openReview(m, model.UserBook{Book: model.Book{ID: 42, Title: "Dune"}})
 	review.rating.SetValue("3")
 
-	send(t, m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	send(t, m, tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 's'})
 	_, cmd := m.Update(opDoneMsg{
 		op:        opReview,
 		seq:       review.token,
@@ -760,7 +762,7 @@ func TestPageModalEnterIsGuardedWhileInFlight(t *testing.T) {
 	send(t, m, runeKey('u'))
 	pageModalOf(m).input.SetValue("120")
 
-	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	send(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	if m.inflight != 1 {
 		t.Fatalf("inflight = %d: enter must not submit a page update while one is in flight", m.inflight)
@@ -785,6 +787,111 @@ func TestPageModalEnterIsGuardedWhileInFlight(t *testing.T) {
 	}
 }
 
+// TestModalIsComposedOverTheDashboard: the panel is drawn onto the frame
+// rather than over a blanked screen, so the header and both panes are still
+// on the terminal behind it.
+func TestModalIsComposedOverTheDashboard(t *testing.T) {
+	m := renderedDashboard(120, 40)
+	setLibrary(m, []model.UserBook{{Book: model.Book{ID: 1, Title: "Dune", Pages: 300}}}, nil)
+	behind := m.View().Content
+
+	m.push(newPageModal(m.shared, m.st, m.shared.reading[0]))
+	over := m.View().Content
+	if over == behind {
+		t.Fatal("the modal changed nothing on screen")
+	}
+	for _, want := range []string{"oku", "Reading (1)", "Update page"} {
+		if !strings.Contains(stripANSI(over), want) {
+			t.Fatalf("the modal frame is missing %q:\n%s", want, stripANSI(over))
+		}
+	}
+}
+
+// TestPageModalPutsTheRealCursorInItsInput: the prompt draws no block of its
+// own, so the terminal's cursor has to land inside the placed panel.
+func TestPageModalPutsTheRealCursorInItsInput(t *testing.T) {
+	m := renderedDashboard(120, 40)
+	setLibrary(m, []model.UserBook{{Book: model.Book{ID: 1, Title: "Dune", Pages: 300}}}, nil)
+	m.push(newPageModal(m.shared, m.st, m.shared.reading[0]))
+
+	cur := m.View().Cursor
+	if cur == nil {
+		t.Fatal("the page prompt has no cursor")
+	}
+	// The panel is centred, so the cursor is inside it rather than at the
+	// input's own origin.
+	panel := m.topModal().View(m.lay, m.st)
+	x := (m.lay.W - lipgloss.Width(panel)) / 2
+	y := (m.lay.H - lipgloss.Height(panel)) / 2
+	if cur.X <= x || cur.Y <= y {
+		t.Fatalf("cursor = (%d,%d), want it inside the panel placed at (%d,%d)", cur.X, cur.Y, x, y)
+	}
+	if cur.Y != y+modalContentY+2 {
+		t.Fatalf("cursor row = %d, want the input's row %d", cur.Y, y+modalContentY+2)
+	}
+}
+
+// TestModalCursorSurvivesALongTitle: a title wider than the panel would be
+// wrapped by the panel style and push every row below it — the field's row
+// included — down a line, leaving the cursor above what it points at. Both
+// modals cut their title instead.
+func TestModalCursorSurvivesALongTitle(t *testing.T) {
+	long := strings.Repeat("Ab", 48) // 96 columns
+	if len(long) != 96 {
+		t.Fatalf("the fixture title is %d columns, want 96", len(long))
+	}
+	book := model.UserBook{Book: model.Book{ID: 1, Title: long, Pages: 300}, CurrentPage: 100}
+
+	for _, size := range [][2]int{{80, 24}, {120, 40}} {
+		for _, open := range []struct {
+			name string
+			push func(*Model) modal
+		}{
+			{"page", func(m *Model) modal { return newPageModal(m.shared, m.st, book) }},
+			{"review", func(m *Model) modal { return newReviewModal(m.shared, m.st, book) }},
+		} {
+			t.Run(fmt.Sprintf("%s_%dx%d", open.name, size[0], size[1]), func(t *testing.T) {
+				m := renderedDashboard(size[0], size[1])
+				setLibrary(m, []model.UserBook{book}, nil)
+				m.push(open.push(m))
+
+				panel := m.topModal().View(m.lay, m.st)
+				y := (m.lay.H - lipgloss.Height(panel)) / 2
+				cur := m.View().Cursor
+				if cur == nil {
+					t.Fatal("the focused field has no cursor")
+				}
+				// The cursor's row has to be one of the panel's own, and the
+				// glyph under it has to be part of the field rather than the
+				// second half of a wrapped title.
+				row := strings.Split(stripANSI(m.View().Content), "\n")[cur.Y]
+				if !strings.Contains(row, "›") && !strings.Contains(row, "Rating:") {
+					t.Fatalf("cursor row %d (panel at %d) is %q, want the field's row", cur.Y, y, row)
+				}
+			})
+		}
+	}
+}
+
+// TestCursorIsDroppedWhenTheTerminalHasNoRoomForIt: a panel taller than the
+// window is clamped by the frame, so the field may not be drawn at all. A
+// cursor past the last row would sit somewhere the reader is not looking.
+func TestCursorIsDroppedWhenTheTerminalHasNoRoomForIt(t *testing.T) {
+	book := model.UserBook{Book: model.Book{ID: 1, Title: "Dune", Pages: 300}, CurrentPage: 100}
+	for _, size := range [][2]int{{100, 3}, {20, 5}} {
+		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
+			m := renderedDashboard(size[0], size[1])
+			setLibrary(m, []model.UserBook{book}, nil)
+			m.push(newPageModal(m.shared, m.st, book))
+
+			if cur := m.View().Cursor; cur != nil {
+				t.Fatalf("cursor = (%d,%d) on a %dx%d terminal, want none",
+					cur.X, cur.Y, size[0], size[1])
+			}
+		})
+	}
+}
+
 // TestPageModalIsReadOnlyWhileSaving is the review modal's rule for the page
 // prompt: the fields stop taking keys until the save reports back, so a
 // second Enter cannot start a second update, and Esc still cancels.
@@ -795,7 +902,7 @@ func TestPageModalIsReadOnlyWhileSaving(t *testing.T) {
 	page := pageModalOf(m)
 	page.input.SetValue("120")
 
-	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	send(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !page.submitting || m.inflight != 1 {
 		t.Fatalf("submitting=%v inflight=%d, want the save started", page.submitting, m.inflight)
 	}
@@ -804,12 +911,12 @@ func TestPageModalIsReadOnlyWhileSaving(t *testing.T) {
 	if page.input.Value() != "120" {
 		t.Fatalf("input = %q, want it read-only while saving", page.input.Value())
 	}
-	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	send(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.inflight != 1 {
 		t.Fatalf("inflight = %d, want the second Enter to have started nothing", m.inflight)
 	}
 
-	send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	send(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
 	if m.topModal() != nil {
 		t.Fatalf("top modal = %T, want Esc to cancel out of a saving prompt", m.topModal())
 	}
@@ -828,7 +935,7 @@ func TestReviewSaveIsGuardedWhileInFlight(t *testing.T) {
 	review := openReview(m, m.shared.reading[0])
 	review.rating.SetValue("4")
 
-	send(t, m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	send(t, m, tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 's'})
 
 	if m.inflight != 1 {
 		t.Fatalf("inflight = %d: the save must not start over another operation", m.inflight)
@@ -851,7 +958,7 @@ func TestPageModalClosesOnItsOwnResult(t *testing.T) {
 	page := pageModalOf(m)
 	page.input.SetValue("120")
 
-	cmd := send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	cmd := send(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil || !m.isLoading() {
 		t.Fatal("enter should submit the page update")
 	}
@@ -874,7 +981,7 @@ func TestPageModalFailureKeepsModalOpen(t *testing.T) {
 	page := pageModalOf(m)
 	page.input.SetValue("120")
 
-	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	send(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !page.submitting {
 		t.Fatal("enter should mark the prompt as saving")
 	}
@@ -895,7 +1002,7 @@ func TestPageModalFailureKeepsModalOpen(t *testing.T) {
 	}
 
 	// The corrected save closes it.
-	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	send(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m.Update(opDoneMsg{op: opProgress, seq: page.token, info: "Progress updated to page 120"})
 	if m.topModal() != nil {
 		t.Fatalf("top modal = %T, want the prompt closed by a successful save", m.topModal())
@@ -985,7 +1092,7 @@ func TestReviewModalIsReadOnlyWhileSaving(t *testing.T) {
 	review.rating.SetValue("3")
 	review.text.SetValue("Strong first half.")
 
-	send(t, m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	send(t, m, tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 's'})
 	pendingSeq := review.token
 
 	m.Update(runeKey('x'))
@@ -994,7 +1101,7 @@ func TestReviewModalIsReadOnlyWhileSaving(t *testing.T) {
 	}
 
 	// Cancelling drops the pending result instead of reopening the modal.
-	send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	send(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
 	if m.topModal() != nil {
 		t.Fatal("esc should close the modal even while saving")
 	}
@@ -1013,7 +1120,7 @@ func TestSearchErrorClearsLoadingTitle(t *testing.T) {
 	m.setTab(tabSearch)
 	searchOf(m).focusInput()
 	searchOf(m).input.SetValue("dune")
-	if cmd := send(t, m, tea.KeyMsg{Type: tea.KeyEnter}); cmd == nil {
+	if cmd := send(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}); cmd == nil {
 		t.Fatal("submitting the query should start a search")
 	}
 
@@ -1081,7 +1188,7 @@ func TestViewFillsTerminalExactly(t *testing.T) {
 					if got := len(strings.Split(m.frame(), "\n")); got != h {
 						t.Fatalf("%dx%d tab %v focus %v modal %s: frame has %d lines, want %d", w, h, tb, focus, name, got, h)
 					}
-					lines := strings.Split(m.View(), "\n")
+					lines := strings.Split(m.View().Content, "\n")
 					if len(lines) != h {
 						t.Fatalf("%dx%d tab %v focus %v modal %s: view has %d lines, want %d", w, h, tb, focus, name, len(lines), h)
 					}
@@ -1287,7 +1394,7 @@ func TestTimerKeyInOkuOpensThePicker(t *testing.T) {
 	}
 
 	// Enter starts a timer for it.
-	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	send(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !m.isLoading() {
 		t.Fatal("Enter over the picker should start the timer")
 	}
@@ -1299,7 +1406,7 @@ func TestEnterDoesNotChangeStatus(t *testing.T) {
 		m.setTab(tb)
 		before := m.shared.reading[0].StatusID
 
-		send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+		send(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 		if m.isLoading() {
 			t.Fatalf("tab %v: Enter started an operation", tb)
 		}
@@ -1314,7 +1421,7 @@ func TestEnterDoesNotChangeStatus(t *testing.T) {
 		}
 
 		// Esc gives it back.
-		send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+		send(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
 		if m.focus != focusContent {
 			t.Fatalf("tab %v: Esc should return to the list, focus = %v", tb, m.focus)
 		}
@@ -1365,7 +1472,7 @@ func TestHelpModalFitsTheTerminalAndScrolls(t *testing.T) {
 		if lines := strings.Split(m.frame(), "\n"); len(lines) != h {
 			t.Fatalf("height %d: help frame has %d lines, want %d", h, len(lines), h)
 		}
-		if help.vp.TotalLineCount() <= help.vp.Height {
+		if help.vp.TotalLineCount() <= help.vp.Height() {
 			t.Fatalf("height %d: the help body should be taller than the window", h)
 		}
 		if !strings.Contains(help.View(m.lay, m.st), "j/k scroll") {
@@ -1373,12 +1480,12 @@ func TestHelpModalFitsTheTerminalAndScrolls(t *testing.T) {
 		}
 
 		m.Update(runeKey('j'))
-		if help.vp.YOffset != 1 {
-			t.Fatalf("height %d: j should scroll the body, YOffset = %d", h, help.vp.YOffset)
+		if help.vp.YOffset() != 1 {
+			t.Fatalf("height %d: j should scroll the body, YOffset = %d", h, help.vp.YOffset())
 		}
 
 		m.Update(runeKey('k'))
-		if got := help.vp.YOffset; got != 0 {
+		if got := help.vp.YOffset(); got != 0 {
 			t.Fatalf("height %d: k should scroll back, YOffset = %d", h, got)
 		}
 
@@ -1430,7 +1537,7 @@ func TestIgnoreAsksBeforeItChangesTheStatus(t *testing.T) {
 
 	// Esc is the same answer as n.
 	escaped := asked()
-	send(t, escaped, tea.KeyMsg{Type: tea.KeyEsc})
+	send(t, escaped, tea.KeyPressMsg{Code: tea.KeyEsc})
 	if escaped.topModal() != nil || escaped.isLoading() {
 		t.Fatal("esc should drop the change")
 	}
@@ -1598,70 +1705,73 @@ func TestSecondTimerPressIsGuardedWhileInFlight(t *testing.T) {
 }
 
 func TestThemeResolvesDistinctColoursForLightAndDark(t *testing.T) {
-	withColorProfile(t)
-
-	th := DefaultTheme()
-	colours := map[string]lipgloss.AdaptiveColor{
-		"accent": th.Accent, "heading": th.Heading, "text": th.Text,
-		"textMuted": th.TextMuted, "textDim": th.TextDim, "border": th.Border,
-		"borderFocused": th.BorderFocused, "surface": th.Surface,
-		"success": th.Success, "warning": th.Warning, "error": th.Error,
-		"heat1": th.Heat1, "heat2": th.Heat2, "heat3": th.Heat3, "heat4": th.Heat4,
+	dark, light := NewTheme(true), NewTheme(false)
+	colours := map[string][2]color.Color{
+		"accent": {light.Accent, dark.Accent}, "heading": {light.Heading, dark.Heading},
+		"text": {light.Text, dark.Text}, "textMuted": {light.TextMuted, dark.TextMuted},
+		"textDim": {light.TextDim, dark.TextDim}, "border": {light.Border, dark.Border},
+		"borderFocused": {light.BorderFocused, dark.BorderFocused},
+		"surface":       {light.Surface, dark.Surface}, "success": {light.Success, dark.Success},
+		"warning": {light.Warning, dark.Warning}, "error": {light.Error, dark.Error},
+		"heat1": {light.Heat1, dark.Heat1}, "heat2": {light.Heat2, dark.Heat2},
+		"heat3": {light.Heat3, dark.Heat3}, "heat4": {light.Heat4, dark.Heat4},
 	}
-	for name, c := range colours {
-		if c.Light == "" || c.Dark == "" {
-			t.Fatalf("%s: both sides of the theme must be set, got %+v", name, c)
+	for name, pair := range colours {
+		l, d := pair[0], pair[1]
+		if l == nil || d == nil {
+			t.Fatalf("%s: both sides of the theme must be set, got light=%v dark=%v", name, l, d)
 		}
-		if c.Light == c.Dark {
-			t.Fatalf("%s: light and dark are the same value %q", name, c.Light)
+		if l == d {
+			t.Fatalf("%s: light and dark are the same value %v", name, l)
 		}
-
-		style := lipgloss.NewStyle().Foreground(c)
-		lipgloss.SetHasDarkBackground(true)
-		dark := style.Render("x")
-		lipgloss.SetHasDarkBackground(false)
-		light := style.Render("x")
-		if dark == light {
-			t.Fatalf("%s: renders the same on a light and a dark terminal: %q", name, dark)
+		if lRender, dRender := renderColour(l), renderColour(d); lRender == dRender {
+			t.Fatalf("%s: renders the same on a light and a dark terminal: %q", name, dRender)
 		}
 	}
 
 	// The heat ramp has four distinct steps on each side.
 	for _, side := range []struct {
 		name string
-		pick func(lipgloss.AdaptiveColor) string
-	}{
-		{"dark", func(c lipgloss.AdaptiveColor) string { return c.Dark }},
-		{"light", func(c lipgloss.AdaptiveColor) string { return c.Light }},
-	} {
+		th   Theme
+	}{{"dark", dark}, {"light", light}} {
 		seen := map[string]bool{}
-		for _, c := range []lipgloss.AdaptiveColor{th.Heat1, th.Heat2, th.Heat3, th.Heat4} {
-			if seen[side.pick(c)] {
-				t.Fatalf("%s heat ramp repeats %q", side.name, side.pick(c))
+		for _, c := range []color.Color{side.th.Heat1, side.th.Heat2, side.th.Heat3, side.th.Heat4} {
+			r := renderColour(c)
+			if seen[r] {
+				t.Fatalf("%s heat ramp repeats %q", side.name, r)
 			}
-			seen[side.pick(c)] = true
+			seen[r] = true
 		}
 	}
 }
 
+// renderColour is one colour as the terminal would receive it, so two
+// palette entries can be compared by what they actually draw.
+func renderColour(c color.Color) string {
+	return lipgloss.NewStyle().Foreground(c).Render("x")
+}
+
 func TestApplyThemeSetting(t *testing.T) {
-	withColorProfile(t)
+	t.Cleanup(func() { _ = ApplyThemeSetting("auto") })
 
 	if err := ApplyThemeSetting("light"); err != nil {
 		t.Fatalf("ApplyThemeSetting(light) error = %v", err)
 	}
-	if lipgloss.HasDarkBackground() {
-		t.Fatal("theme = light should pin a light background")
+	if isDark, pinned := PinnedDark(); !pinned || isDark {
+		t.Fatalf("theme = light should pin a light background, got isDark=%v pinned=%v", isDark, pinned)
 	}
 	if err := ApplyThemeSetting("Dark"); err != nil {
 		t.Fatalf("ApplyThemeSetting(Dark) error = %v", err)
 	}
-	if !lipgloss.HasDarkBackground() {
-		t.Fatal("theme = dark should pin a dark background")
+	if isDark, pinned := PinnedDark(); !pinned || !isDark {
+		t.Fatalf("theme = dark should pin a dark background, got isDark=%v pinned=%v", isDark, pinned)
 	}
 	for _, ok := range []string{"", "auto", " AUTO "} {
 		if err := ApplyThemeSetting(ok); err != nil {
 			t.Fatalf("ApplyThemeSetting(%q) error = %v, want none", ok, err)
+		}
+		if _, pinned := PinnedDark(); pinned {
+			t.Fatalf("theme = %q should leave the background to be detected", ok)
 		}
 	}
 	if err := ApplyThemeSetting("solarized"); err == nil {
@@ -1669,33 +1779,73 @@ func TestApplyThemeSetting(t *testing.T) {
 	}
 }
 
-// keyMsgFor turns a binding's key name into the KeyMsg Bubble Tea would send
-// for it.
-// slicesContain reports whether want is one of keys.
-func slicesContain(keys []string, want string) bool {
-	for _, k := range keys {
-		if k == want {
-			return true
-		}
+// TestBackgroundColourRebuildsTheStyles is the v2 replacement for lipgloss's
+// adaptive colour: the terminal reports its background and the whole palette
+// is rebuilt, list delegates and memoised pages included.
+func TestBackgroundColourRebuildsTheStyles(t *testing.T) {
+	m := renderedDashboard(120, 40)
+	before := m.View().Content
+	if !m.isDark {
+		t.Fatal("the dashboard should start dark, before the terminal answers")
 	}
-	return false
+
+	m.Update(backgroundMsg(false))
+	if m.isDark {
+		t.Fatal("a light background should have been applied")
+	}
+	if after := m.View().Content; after == before {
+		t.Fatal("the frame renders the same after the palette was rebuilt for a light terminal")
+	}
+	if got, want := renderColour(m.st.th.Accent), renderColour(NewTheme(false).Accent); got != want {
+		t.Fatalf("accent = %q after a light background, want %q", got, want)
+	}
 }
 
-func keyMsgFor(t *testing.T, name string) tea.KeyMsg {
+// TestPinnedThemeIgnoresTheTerminal: a `theme` config key is an answer, so
+// the terminal is neither asked nor listened to.
+func TestPinnedThemeIgnoresTheTerminal(t *testing.T) {
+	if err := ApplyThemeSetting("dark"); err != nil {
+		t.Fatalf("ApplyThemeSetting(dark) error = %v", err)
+	}
+	t.Cleanup(func() { _ = ApplyThemeSetting("auto") })
+
+	m := renderedDashboard(120, 40)
+	before := m.View().Content
+	m.Update(backgroundMsg(false))
+	if !m.isDark {
+		t.Fatal("a pinned dark theme should survive a light background report")
+	}
+	if after := m.View().Content; after != before {
+		t.Fatal("a pinned theme should not repaint on a background report")
+	}
+}
+
+// keyMsgFor turns a binding's key name into the key press Bubble Tea would
+// send for it. v2 keys are a code plus modifiers rather than a type, and
+// String() is what the binding was written against, so the table is walked
+// by name.
+func keyMsgFor(t *testing.T, name string) tea.KeyPressMsg {
 	t.Helper()
-	for _, kt := range []tea.KeyType{
-		tea.KeyEnter, tea.KeyEsc, tea.KeyTab, tea.KeyShiftTab,
+	for _, code := range []rune{
+		tea.KeyEnter, tea.KeyEsc, tea.KeyTab,
 		tea.KeyUp, tea.KeyDown, tea.KeyLeft, tea.KeyRight,
 		tea.KeyHome, tea.KeyEnd, tea.KeyPgUp, tea.KeyPgDown,
-		tea.KeyCtrlC, tea.KeyCtrlD, tea.KeyCtrlU, tea.KeyCtrlS, tea.KeyCtrlT,
 	} {
-		if (tea.KeyMsg{Type: kt}).String() == name {
-			return tea.KeyMsg{Type: kt}
+		for _, mod := range []tea.KeyMod{0, tea.ModShift, tea.ModCtrl} {
+			msg := tea.KeyPressMsg{Mod: mod, Code: code}
+			if msg.String() == name {
+				return msg
+			}
+		}
+	}
+	for _, c := range "cdustg" {
+		if msg := (tea.KeyPressMsg{Mod: tea.ModCtrl, Code: c}); msg.String() == name {
+			return msg
 		}
 	}
 	runes := []rune(name)
 	if len(runes) != 1 {
-		t.Fatalf("no KeyMsg for key %q", name)
+		t.Fatalf("no key press for key %q", name)
 	}
 	return runeKey(runes[0])
 }
@@ -1757,7 +1907,7 @@ func TestEveryAdvertisedBindingIsHandled(t *testing.T) {
 			m.setFocus(focusDetail)
 			if scrolled {
 				m.frame() // fills the viewport, which is what there is to scroll
-				m.detail.vp.LineDown(5)
+				m.detail.vp.ScrollDown(5)
 			}
 			return m
 		}
@@ -1796,7 +1946,7 @@ func TestEveryAdvertisedBindingIsHandled(t *testing.T) {
 			m := base(80, 24)
 			m.setTab(tabStats)
 			m.frame() // fills the viewport, which is what there is to scroll
-			statsOf(m).vp.LineDown(1)
+			statsOf(m).vp.ScrollDown(1)
 			return m
 		}}},
 		{name: "timer, idle", variants: []func() *Model{inSection(tabTimer)}, selfKey: "5"},
@@ -1884,9 +2034,9 @@ func helpBody(m *Model) string {
 // teaches the other sections' keys: from Reading it names the search keys,
 // dimmed, after the groups that apply.
 func TestHelpModalListsEveryGroupWithTheActiveOnesFirst(t *testing.T) {
-	// Dimming is the difference between a live key and a dead one, so the
-	// two only render differently with a colour profile to render in.
-	withColorProfile(t)
+	// Dimming is the difference between a live key and a dead one. A v2
+	// style always writes its colour — the profile is applied on the way out
+	// to the terminal — so the two differ here with no setup.
 	m := renderedDashboard(120, 40)
 	m.setTab(tabReading)
 	body := stripANSI(helpBody(m))
@@ -1936,11 +2086,11 @@ func TestOverloadedKeysMatchTheirHelp(t *testing.T) {
 		t.Fatalf("i over the results: focus=%v tab=%v, want the input", searchOf(m).focus, m.tab)
 	}
 	m = overResults()
-	send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	send(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
 	if searchOf(m).focus != inputFocused {
 		t.Fatalf("Esc over the results: focus=%v, want the input", searchOf(m).focus)
 	}
-	if !slicesContain(k.PrevSection.Keys(), "h") {
+	if !slices.Contains(k.PrevSection.Keys(), "h") {
 		t.Fatal("h should still walk the strip over the results")
 	}
 	m = overResults()
@@ -1952,7 +2102,7 @@ func TestOverloadedKeysMatchTheirHelp(t *testing.T) {
 		t.Fatalf("results help should say Esc/i goes back to the input and h/l walk the strip:\n%s", rows)
 	}
 	m = overResults()
-	m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m.Update(tea.KeyPressMsg{Mod: tea.ModShift, Code: tea.KeyTab})
 	if m.tab != tabOku {
 		t.Fatalf("shift+tab over the results: section=%v, want the previous section", m.tab)
 	}
@@ -1964,7 +2114,7 @@ func TestOverloadedKeysMatchTheirHelp(t *testing.T) {
 	if d := list.activeKeys().upDownDesc(); d != "navigate" {
 		t.Fatalf("upDownDesc over the list = %q, want navigate", d)
 	}
-	send(t, list, tea.KeyMsg{Type: tea.KeyEnter})
+	send(t, list, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if list.focus != focusDetail {
 		t.Fatal("Enter should focus the detail pane")
 	}

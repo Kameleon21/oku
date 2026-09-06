@@ -11,13 +11,13 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/Kameleon21/oku/internal/app"
 	"github.com/Kameleon21/oku/internal/model"
-	"github.com/charmbracelet/bubbles/help"
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // ── Dashboard Model ────────────────────────────────────────────────────────
@@ -47,6 +47,11 @@ type Model struct {
 	// st is every style the dashboard draws with, derived from a Theme. It is
 	// a value on the model so a theme change can rebuild it mid-run.
 	st styles
+	// isDark is the background the palette was built for, and themePinned
+	// says the `theme` config key answered for it — in which case the
+	// terminal is never asked and its answer, if one arrives, is ignored.
+	isDark      bool
+	themePinned bool
 
 	shared *shared
 
@@ -106,11 +111,16 @@ func New(ctx context.Context, a *app.App, density Density, version string) *Mode
 		ctx = context.Background()
 	}
 
-	st := newStyles(DefaultTheme())
+	// The palette needs an answer lipgloss v2 no longer gives itself. The
+	// `theme` config key pins one; otherwise the dashboard draws dark until
+	// the terminal replies to Init's RequestBackgroundColor.
+	isDark, pinned := PinnedDark()
+	if !pinned {
+		isDark = true
+	}
+	st := newStyles(NewTheme(isDark))
 
-	s := spinner.New()
-	s.Spinner = spinner.MiniDot
-	s.Style = st.spinner
+	s := spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(st.spinner))
 
 	sh := &shared{
 		density: density,
@@ -118,22 +128,17 @@ func New(ctx context.Context, a *app.App, density Density, version string) *Mode
 		spin:    s,
 	}
 
-	hlp := help.New()
-	hlp.ShortSeparator = " · "
-	hlp.Styles.ShortKey = st.keyHint
-	hlp.Styles.ShortDesc = st.desc
-	hlp.Styles.ShortSeparator = st.dim
-	hlp.Styles.Ellipsis = st.dim
-
 	m := &Model{
-		app:     a,
-		ctx:     ctx,
-		version: version,
-		st:      st,
-		shared:  sh,
-		tab:     tabReading,
-		detail:  newDetailPane(sh, st),
-		help:    hlp,
+		app:         a,
+		ctx:         ctx,
+		version:     version,
+		st:          st,
+		isDark:      isDark,
+		themePinned: pinned,
+		shared:      sh,
+		tab:         tabReading,
+		detail:      newDetailPane(sh, st),
+		help:        newHelp(st),
 		// Init starts the cached-library and local-data loads, so two
 		// commands are already in flight.
 		inflight: 2,
@@ -150,6 +155,33 @@ func New(ctx context.Context, a *app.App, density Density, version string) *Mode
 	return m
 }
 
+// newHelp is the help bar's renderer, styled from st. It is rebuilt with the
+// styles when the terminal reports its background.
+func newHelp(st styles) help.Model {
+	hlp := help.New()
+	hlp.ShortSeparator = " · "
+	hlp.Styles.ShortKey = st.keyHint
+	hlp.Styles.ShortDesc = st.desc
+	hlp.Styles.ShortSeparator = st.dim
+	hlp.Styles.Ellipsis = st.dim
+	return hlp
+}
+
+// applyBackground rebuilds the palette for the background the terminal
+// reported. lipgloss v2 resolves a colour once rather than at render time,
+// so every style, every list delegate and every memoised page has to be
+// rebuilt — which is what stylesChangedMsg asks the sections to do.
+func (m *Model) applyBackground(isDark bool) tea.Cmd {
+	if m.themePinned || isDark == m.isDark {
+		return nil
+	}
+	m.isDark = isDark
+	m.st = newStyles(NewTheme(isDark))
+	m.help = newHelp(m.st)
+	m.shared.spin.Style = m.st.spinner
+	return m.broadcast(stylesChangedMsg{st: m.st})
+}
+
 // section is the content pane of the tab on screen.
 func (m *Model) section() section {
 	return m.sections[m.tab]
@@ -158,12 +190,18 @@ func (m *Model) section() section {
 // ── Init ───────────────────────────────────────────────────────────────────
 
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		m.shared.spin.Tick,
 		loadCachedLibraryCmd(m.app),
 		loadLocalDataCmd(m.app, m.shared.now),
 		backgroundCheckCmd(),
-	)
+	}
+	if !m.themePinned {
+		// v2 has no adaptive colour: the palette is rebuilt when the
+		// terminal answers with its background (see applyBackground).
+		cmds = append(cmds, tea.RequestBackgroundColor)
+	}
+	return tea.Batch(cmds...)
 }
 
 // ── Update ─────────────────────────────────────────────────────────────────
@@ -173,7 +211,7 @@ func (m *Model) Init() tea.Cmd {
 // keyboard; the focused detail pane scrolls on j/k; the section gets the
 // rest. Everything else is common handling plus a broadcast.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	keyMsg, isKey := msg.(tea.KeyMsg)
+	keyMsg, isKey := msg.(tea.KeyPressMsg)
 	if !isKey {
 		return m, m.updateCommon(msg)
 	}
@@ -217,13 +255,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // rootKey handles the keys every tab shares. Like the sections, it only
 // answers with requests: quitting, help and moving the focus are the
 // exceptions, since they start no work.
-func (m *Model) rootKey(msg tea.KeyMsg, k keyMap) (tea.Cmd, bool) {
+func (m *Model) rootKey(msg tea.KeyPressMsg, k keyMap) (tea.Cmd, bool) {
 	switch {
 	case key.Matches(msg, k.Quit):
 		return tea.Quit, true
 	case key.Matches(msg, k.Help):
-		m.openHelp()
-		return nil, true
+		return m.openHelp(), true
 	case key.Matches(msg, k.Undo):
 		return request(reqUndo{}), true
 	case key.Matches(msg, k.TabJump):
@@ -262,21 +299,21 @@ func (m *Model) rootKey(msg tea.KeyMsg, k keyMap) (tea.Cmd, bool) {
 // input that owns the keys while the detail pane still holds the focus would
 // draw the thick border around a pane no key reaches.
 func (m *Model) focusSectionInput() tea.Cmd {
-	s, ok := m.section().(interface{ focusInput() })
+	s, ok := m.section().(inputSection)
 	if !ok {
 		return nil
 	}
-	cmd := m.setFocus(focusContent)
-	s.focusInput()
-	return cmd
+	return tea.Batch(m.setFocus(focusContent), s.focusInput())
 }
 
 // openEmptySectionInput puts the cursor in the section's input when the
 // section has nothing to show yet, for the one section that has one.
-func (m *Model) openEmptySectionInput() {
-	if s, ok := m.section().(interface{ focusInputIfEmpty() }); ok {
-		s.focusInputIfEmpty()
+func (m *Model) openEmptySectionInput() tea.Cmd {
+	s, ok := m.section().(inputSection)
+	if !ok {
+		return nil
 	}
+	return s.focusInputIfEmpty()
 }
 
 // updateCommon handles every message that is not a key press, whatever has
@@ -334,6 +371,9 @@ func (m *Model) handleCommon(msg tea.Msg) tea.Cmd {
 		}
 		// Just triggers a re-render for the timer display.
 		return timerTickCmd()
+
+	case tea.BackgroundColorMsg:
+		return m.applyBackground(msg.IsDark())
 
 	case tea.WindowSizeMsg:
 		m.lay.W, m.lay.H = msg.Width, msg.Height
@@ -471,19 +511,16 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 			// use: a section whose pane has nothing to show yet puts the
 			// cursor where they are about to type. Walking the strip never
 			// does — see searchFocus.
-			m.openEmptySectionInput()
-			return cmd
+			return tea.Batch(cmd, m.openEmptySectionInput())
 		default:
 			return m.setTab((m.tab + tab(r.step) + tabCount) % tabCount)
 		}
 
 	case reqOpenModal:
-		m.push(r.m)
-		return nil
+		return m.push(r.m)
 
 	case reqHelp:
-		m.openHelp()
-		return nil
+		return m.openHelp()
 
 	case reqRunOp:
 		return m.beginLoading(r.cmd)
@@ -523,8 +560,7 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 		b := r.book
 		change := changeStatusCmd(m.ctx, m.app, b.Book.ID, b.Book.Title, b.StatusID, r.to)
 		if r.confirm {
-			m.push(newConfirmModal(fmt.Sprintf("Mark '%s' as %s?", b.Book.Title, r.to.Label()), change))
-			return nil
+			return m.push(newConfirmModal(fmt.Sprintf("Mark '%s' as %s?", b.Book.Title, r.to.Label()), change))
 		}
 		return m.beginLoading(change)
 
@@ -583,8 +619,8 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 		if len(m.shared.reading) == 0 {
 			return m.showToast(toastError, "no currently reading books available — add a book to Reading first")
 		}
-		m.push(newTimerPickerModal(m.shared, m.timerPickIndex(r.prefer)))
-		return m.showToast(toastInfo, "Select a book and press Enter to start timer")
+		open := m.push(newTimerPickerModal(m.shared, m.timerPickIndex(r.prefer)))
+		return tea.Batch(open, m.showToast(toastInfo, "Select a book and press Enter to start timer"))
 
 	case reqTimer:
 		if r.start {
@@ -730,7 +766,7 @@ func (m *Model) setFocus(f focus) tea.Cmd {
 // must be run, or an active filter goes blank.
 func (m *Model) resize() tea.Cmd {
 	m.lay = computeLayout(m.lay.W, m.lay.H, m.tab, m.focus == focusDetail)
-	m.help.Width = m.helpBarWidth()
+	m.help.SetWidth(m.helpBarWidth())
 
 	cmd := m.section().Resize(m.lay.ContentInner, m.lay.InnerH)
 	m.detail.Resize(m.lay.DetailInner, m.lay.InnerH)
@@ -748,10 +784,16 @@ func (m *Model) topModal() modal {
 	return nil
 }
 
-// push puts a modal on top of the stack.
-func (m *Model) push(mod modal) {
+// push puts a modal on top of the stack. A modal with a text field answers
+// with the command its Focus() returned, which has to be run for the cursor
+// to appear.
+func (m *Model) push(mod modal) tea.Cmd {
 	m.modals = append(m.modals, mod)
 	m.modalsChanged()
+	if c, ok := mod.(cursorModal); ok {
+		return c.Init()
+	}
+	return nil
 }
 
 // pop drops the top modal.
@@ -772,30 +814,93 @@ func (m *Model) modalsChanged() {
 }
 
 // openHelp shows the help modal, scrolled back to the top.
-func (m *Model) openHelp() {
-	m.push(newHelpModal(m.keysBehind, m.version, m.st))
+func (m *Model) openHelp() tea.Cmd {
+	return m.push(newHelpModal(m.keysBehind, m.version, m.st))
 }
 
 // ── View ───────────────────────────────────────────────────────────────────
 
-func (m *Model) View() string {
-	return m.fitToScreen(m.frame())
+// View is the frame plus the terminal's own cursor. The alt screen is a
+// field of the view in v2 rather than a program option, so it is set here
+// on every frame.
+func (m *Model) View() tea.View {
+	frame, cur := m.render()
+	v := tea.NewView(m.fitToScreen(frame))
+	v.AltScreen = true
+	v.Cursor = cur
+	return v
 }
 
 // frame renders the dashboard at its natural size. View clamps it to the
 // terminal; keeping the two apart lets a test assert that the layout really
 // fills the screen instead of being padded into it.
 func (m *Model) frame() string {
+	frame, _ := m.render()
+	return frame
+}
+
+// render is the frame and the cursor that belongs to it. They are built
+// together because a cursor inside a modal is placed against the panel's
+// origin, which only the compositing knows.
+func (m *Model) render() (string, *tea.Cursor) {
 	if !m.shared.loaded {
-		return "\n  " + m.shared.spin.View() + " Loading dashboard..."
+		return "\n  " + m.shared.spin.View() + " Loading dashboard...", nil
 	}
-	if top := m.topModal(); top != nil {
-		// True compositing over the dashboard needs lipgloss v2; on v1 the
-		// modal is centred over a blank screen.
-		return fitBlock(overlayModal(m.lay, top.View(m.lay, m.st)),
-			max(minFrameWidth, m.lay.W), max(1, m.lay.H))
+	dashboard := m.header(m.lay) + "\n" + m.body(m.lay) + "\n" + m.footer(m.lay)
+
+	top := m.topModal()
+	if top == nil {
+		return dashboard, m.onScreen(m.sectionCursor())
 	}
-	return m.header(m.lay) + "\n" + m.body(m.lay) + "\n" + m.footer(m.lay)
+	// The panel is composed over the dashboard rather than over a blank
+	// screen: the frame behind it stays readable.
+	frame, x, y := overlayModal(m.lay, dashboard, top.View(m.lay, m.st))
+	return frame, m.onScreen(offsetCursor(modalCursor(top), x, y))
+}
+
+// onScreen drops a cursor the terminal has no room for. A panel taller or
+// wider than the window is clamped by the frame, so the field it belongs to
+// may not be drawn at all; asking for a cursor past the last row would put it
+// somewhere the reader is not looking.
+func (m *Model) onScreen(cur *tea.Cursor) *tea.Cursor {
+	if cur == nil || cur.X < 0 || cur.Y < 0 || cur.X >= m.lay.W || cur.Y >= m.lay.H {
+		return nil
+	}
+	return cur
+}
+
+// modalCursor is the top modal's cursor, for the modals that have a field.
+func modalCursor(top modal) *tea.Cursor {
+	c, ok := top.(cursorModal)
+	if !ok {
+		return nil
+	}
+	return c.Cursor()
+}
+
+// sectionCursor is the terminal's cursor while a section's text input owns
+// the keyboard. The content pane is the leftmost one, so the input's own
+// offset only has to clear the pane's border and padding and the header.
+func (m *Model) sectionCursor() *tea.Cursor {
+	if m.lay.DetailOnly {
+		return nil
+	}
+	s, ok := m.section().(inputSection)
+	if !ok {
+		return nil
+	}
+	return offsetCursor(s.inputCursor(), borderW/2+padW/2, headerRows+1)
+}
+
+// offsetCursor moves a cursor to where its owner was drawn, and passes a
+// missing one through.
+func offsetCursor(cur *tea.Cursor, x, y int) *tea.Cursor {
+	if cur == nil {
+		return nil
+	}
+	cur.X += x
+	cur.Y += y
+	return cur
 }
 
 // body is the row of panes between the header and the footer: the content
@@ -837,7 +942,9 @@ func Run(ctx context.Context, a *app.App, density Density, version string) error
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	p := tea.NewProgram(New(runCtx, a, density, version), tea.WithAltScreen())
+	// The alt screen is a field of the View in v2, so it is no longer a
+	// program option; see Model.View.
+	p := tea.NewProgram(New(runCtx, a, density, version))
 	_, err := p.Run()
 	cancel()
 	return err

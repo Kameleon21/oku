@@ -4,8 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/Kameleon21/oku/internal/model"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 // searchModel is a loaded dashboard whose Search tab holds results, on the
@@ -35,7 +36,7 @@ func TestSearchStateMachine(t *testing.T) {
 		name string
 		// arrange leaves the dashboard in the state the key is pressed from.
 		arrange func(t *testing.T) *Model
-		key     tea.KeyMsg
+		key     tea.KeyPressMsg
 		// want is checked after the key.
 		want func(t *testing.T, m *Model)
 	}{
@@ -74,13 +75,13 @@ func TestSearchStateMachine(t *testing.T) {
 		{
 			name:    "tab onto the tab lands on the results",
 			arrange: func(t *testing.T) *Model { return searchModel(t, tabOku, true) },
-			key:     tea.KeyMsg{Type: tea.KeyTab},
+			key:     tea.KeyPressMsg{Code: tea.KeyTab},
 			want:    func(t *testing.T, m *Model) { wantState(t, m, tabSearch, resultsFocused) },
 		},
 		{
 			name:    "Esc in the input goes back to the tab it came from",
 			arrange: func(t *testing.T) *Model { return inInput(t, searchModel(t, tabOku, true)) },
-			key:     tea.KeyMsg{Type: tea.KeyEsc},
+			key:     tea.KeyPressMsg{Code: tea.KeyEsc},
 			want: func(t *testing.T, m *Model) {
 				if m.tab != tabOku {
 					t.Fatalf("tab = %v, want the one the input was reached from", m.tab)
@@ -93,13 +94,13 @@ func TestSearchStateMachine(t *testing.T) {
 		{
 			name:    "↓ in the input with results moves to them",
 			arrange: func(t *testing.T) *Model { return inInput(t, searchModel(t, tabReading, true)) },
-			key:     tea.KeyMsg{Type: tea.KeyDown},
+			key:     tea.KeyPressMsg{Code: tea.KeyDown},
 			want:    func(t *testing.T, m *Model) { wantState(t, m, tabSearch, resultsFocused) },
 		},
 		{
 			name:    "↓ in the input with no results stays put",
 			arrange: func(t *testing.T) *Model { return inInput(t, searchModel(t, tabReading, false)) },
-			key:     tea.KeyMsg{Type: tea.KeyDown},
+			key:     tea.KeyPressMsg{Code: tea.KeyDown},
 			want:    func(t *testing.T, m *Model) { wantState(t, m, tabSearch, inputFocused) },
 		},
 		{
@@ -140,7 +141,7 @@ func TestSearchStateMachine(t *testing.T) {
 		{
 			name:    "ctrl+t cycles the mode while typing",
 			arrange: func(t *testing.T) *Model { return inInput(t, searchModel(t, tabReading, false)) },
-			key:     tea.KeyMsg{Type: tea.KeyCtrlT},
+			key:     tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 't'},
 			want: func(t *testing.T, m *Model) {
 				wantState(t, m, tabSearch, inputFocused)
 				if got := searchOf(m).queryMode; got != model.SearchModeAuthor {
@@ -168,7 +169,7 @@ func TestSearchStateMachine(t *testing.T) {
 				searchOf(m).input.SetValue("foundation")
 				return m
 			},
-			key: tea.KeyMsg{Type: tea.KeyEnter},
+			key: tea.KeyPressMsg{Code: tea.KeyEnter},
 			want: func(t *testing.T, m *Model) {
 				if !searchOf(m).loading {
 					t.Fatal("Enter should have started a search")
@@ -178,7 +179,7 @@ func TestSearchStateMachine(t *testing.T) {
 		{
 			name:    "Esc over the results goes back to the input",
 			arrange: func(t *testing.T) *Model { return searchModel(t, tabSearch, true) },
-			key:     tea.KeyMsg{Type: tea.KeyEsc},
+			key:     tea.KeyPressMsg{Code: tea.KeyEsc},
 			want:    func(t *testing.T, m *Model) { wantState(t, m, tabSearch, inputFocused) },
 		},
 		{
@@ -260,7 +261,7 @@ func TestSearchStateMachine(t *testing.T) {
 		{
 			name:    "Esc from a focused detail pane goes back to the results",
 			arrange: func(t *testing.T) *Model { return inDetail(t, searchModel(t, tabSearch, true)) },
-			key:     tea.KeyMsg{Type: tea.KeyEsc},
+			key:     tea.KeyPressMsg{Code: tea.KeyEsc},
 			want: func(t *testing.T, m *Model) {
 				wantState(t, m, tabSearch, resultsFocused)
 				if m.focus != focusContent {
@@ -271,7 +272,7 @@ func TestSearchStateMachine(t *testing.T) {
 		{
 			name:    "↵ over the results opens the detail pane",
 			arrange: func(t *testing.T) *Model { return searchModel(t, tabSearch, true) },
-			key:     tea.KeyMsg{Type: tea.KeyEnter},
+			key:     tea.KeyPressMsg{Code: tea.KeyEnter},
 			want: func(t *testing.T, m *Model) {
 				if m.focus != focusDetail {
 					t.Fatalf("focus = %v, want the detail pane", m.focus)
@@ -293,7 +294,7 @@ func TestSearchStateMachine(t *testing.T) {
 // detail pane.
 func inDetail(t *testing.T, m *Model) *Model {
 	t.Helper()
-	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	send(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.focus != focusDetail {
 		t.Fatal("Enter over a result should focus the detail pane")
 	}
@@ -331,7 +332,7 @@ func wantState(t *testing.T, m *Model, tb tab, f searchFocus) {
 // typed into were not on screen at all.
 func TestSearchInputNeverLeavesTheFocusOnTheDetailPane(t *testing.T) {
 	for _, size := range [][2]int{{120, 40}, {80, 24}} {
-		for _, key := range []tea.KeyMsg{runeKey('i'), runeKey('/')} {
+		for _, key := range []tea.KeyPressMsg{runeKey('i'), runeKey('/')} {
 			m := searchModel(t, tabSearch, true)
 			m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 			inDetail(t, m)
@@ -349,7 +350,7 @@ func TestSearchInputNeverLeavesTheFocusOnTheDetailPane(t *testing.T) {
 			// And Esc out of the input is the plain one: back to the tab
 			// it was reached from, with the focus still on a pane that has
 			// something in it.
-			send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+			send(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
 			if m.tab != tabReading || m.focus != focusContent {
 				t.Fatalf("%dx%d %q: Esc left tab=%v focus=%v, want the tab it came from", size[0], size[1], key, m.tab, m.focus)
 			}
@@ -364,10 +365,10 @@ func TestSearchEscTwiceLeavesTheTab(t *testing.T) {
 	send(t, m, runeKey('3'))
 	wantState(t, m, tabSearch, resultsFocused)
 
-	send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	send(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
 	wantState(t, m, tabSearch, inputFocused)
 
-	send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	send(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
 	if m.tab != tabReading {
 		t.Fatalf("tab after the second Esc = %v, want the one the tab was reached from", m.tab)
 	}
@@ -424,6 +425,35 @@ func TestSearchErrorKeepsTheResultsOnScreen(t *testing.T) {
 	}
 	if m.toast.level != toastError || !strings.Contains(m.toast.text, "network down") {
 		t.Fatalf("toast = %+v, want the failure reported", m.toast)
+	}
+}
+
+// TestSearchInputPutsTheRealCursorInTheQuery: the input draws no block of
+// its own any more, so the terminal's cursor has to land on the character
+// after the query, inside the pane.
+func TestSearchInputPutsTheRealCursorInTheQuery(t *testing.T) {
+	m := renderedDashboard(120, 40)
+	send(t, m, runeKey('/'))
+	for _, r := range "dune" {
+		send(t, m, runeKey(r))
+	}
+
+	cur := m.View().Cursor
+	if cur == nil {
+		t.Fatal("the focused query has no cursor")
+	}
+	// The pane spends a border column and a space; the prompt "/ " and the
+	// four typed characters follow it.
+	wantX := borderW/2 + padW/2 + lipgloss.Width(searchPrompt) + len("dune")
+	wantY := headerRows + 1
+	if cur.X != wantX || cur.Y != wantY {
+		t.Fatalf("cursor = (%d,%d), want (%d,%d)", cur.X, cur.Y, wantX, wantY)
+	}
+
+	// The results take the keyboard, and the cursor goes with it.
+	searchOf(m).focusResults()
+	if cur := m.View().Cursor; cur != nil {
+		t.Fatalf("cursor = %+v with the keyboard on the results, want none", cur)
 	}
 }
 
