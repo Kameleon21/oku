@@ -1,40 +1,40 @@
-                                                                                                                        
-                                                                                                                        
-                                                                                                                        
-                                                                                                                        
-                                                                                                                        
-                                                                                                                        
-                                                                                                                        
-                                                                                                                        
-                                                                                                                        
-                                                                                                                        
-                                                                                                                        
-                                                                                                                        
-                           ╭────────────────────────────────────────────────────────────────╮                           
-                           │                                                                │                           
-                           │  Reading Timer                                                 │                           
-                           │                                                                │                           
-                           │  Select a book, Enter starts the timer                         │                           
-                           │                                                                │                           
-                           │    The Communist Manifesto                                     │                           
-                           │    Karl Marx, Friedrich Engels                                 │                           
-                           │  ▸ Money                                                       │                           
-                           │    David McWilliams                                            │                           
-                           │    Software Architecture: The Hard Parts                       │                           
-                           │    Neal Ford, Mark Richards, Pramod Sadalage, Zhamak Dehgh…    │                           
-                           │                                                                │                           
-                           │  j/k move · Enter start · Esc cancel                           │                           
-                           │                                                                │                           
-                           ╰────────────────────────────────────────────────────────────────╯                           
-                                                                                                                        
-                                                                                                                        
-                                                                                                                        
-                                                                                                                        
-                                                                                                                        
-                                                                                                                        
-                                                                                                                        
-                                                                                                                        
-                                                                                                                        
-                                                                                                                        
-                                                                                                                        
-                                                                                                                        
+ oku  ▸1 Reading 3   2 Oku 3   3 Search   4 Stats   5 Timer                                               synced 2m ago 
+┏━ Reading (3) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓╭─ The Communist Manifesto ────────────────────────────────────────────╮
+┃ │ The Communist Manifesto                    ┃│ Karl Marx, Friedrich Engels                                          │
+┃ │ Karl Marx, Friedrich Engels · 70/305 ██░░… ┃│ Currently Reading · started 12 Aug 2026                              │
+┃   Money                                      ┃│                                                                      │
+┃   David McWilliams · 360/416 ████████░░ 86%  ┃│ ███████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  p.70 / 305 · 22%   │
+┃   Software Architecture: The Hard Parts      ┃│ 3 pages/day · ~3 months left (≈ 25 Nov)                              │
+┃   Neal Ford, Mark Richards, Pramod Sadalage… ┃│                                                                      │
+┃                                              ┃│ Your rating  ★★★★☆ 4.0            Community    ★ 3.60 (382)          │
+┃                                              ┃│ Series       —                    Released     1848                  │
+┃                                              ┃│ Genres       Politics · Philosophy · Classics · Nonfiction           │
+┃                                              ┃│                                                                      │
+┃                           ╭──────────────────────────────────────────────────────────────╮                           │
+┃                           │                                                              │                           │
+┃                           │  Reading Timer                                               │                           │
+┃                           │                                                              │                           │
+┃                           │  Select a book, Enter starts the timer                       │                           │
+┃                           │                                                              │                           │
+┃                           │    The Communist Manifesto                                   │the best part, and the     │
+┃                           │    Karl Marx, Friedrich Engels                               │y lives. Worth the evening │
+┃                           │  ▸ Money                                                     │                           │
+┃                           │    David McWilliams                                          │                           │
+┃                           │    Software Architecture: The Hard Parts                     │                           │
+┃                           │    Neal Ford, Mark Richards, Pramod Sadalage, Zhamak Dehgh…  │                           │
+┃                           │                                                              │                           │
+┃                           │  j/k move · Enter start · Esc cancel                         │                           │
+┃                           │                                                              │                           │
+┃                           ╰──────────────────────────────────────────────────────────────╯                           │
+┃                                              ┃│                                                                      │
+┃                                              ┃│                                                                      │
+┃                                              ┃│                                                                      │
+┃                                              ┃│                                                                      │
+┃                                              ┃│                                                                      │
+┃                                              ┃│                                                                      │
+┃                                              ┃│                                                                      │
+┃                                              ┃│                                                                      │
+┃                                              ┃│                                                                      │
+┃                                              ┃│                                                                      │
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛╰──────────────────────────────────────────────────────────────────────╯
+ ? help · j/k choose · ↵ start · Esc cancel · q quit                                                                    
