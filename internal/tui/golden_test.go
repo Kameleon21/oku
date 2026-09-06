@@ -185,4 +185,21 @@ func TestGoldenColour(t *testing.T) {
 			golden.RequireEqual(t, []byte(frameAt(m, colorprofile.TrueColor)))
 		})
 	}
+
+	// One frame per named palette, so a change to any of them shows up as a
+	// diff and a reviewer can read the hexes out of the frame. The palette is
+	// chosen the way the config key chooses it — before the model is built,
+	// which is when lipgloss v2 resolves the colours — and the terminal is
+	// never asked, so no background message is fed in.
+	for _, nt := range NamedThemes() {
+		t.Run(nt.Name, func(t *testing.T) {
+			if err := ApplyThemeSetting(nt.Name); err != nil {
+				t.Fatalf("ApplyThemeSetting(%s) error = %v", nt.Name, err)
+			}
+			t.Cleanup(func() { _ = ApplyThemeSetting("auto") })
+
+			m := newGoldenModel(t, 120, 40, tabReading)
+			golden.RequireEqual(t, []byte(frameAt(m, colorprofile.TrueColor)))
+		})
+	}
 }
