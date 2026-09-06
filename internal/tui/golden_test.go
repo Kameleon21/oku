@@ -53,8 +53,12 @@ func newGoldenModel(t *testing.T, w, h int, tb tab, opts ...goldenOpt) *Model {
 	return m
 }
 
-// withDetailFocus moves the keyboard to the detail pane, as Enter does.
-func withDetailFocus(m *Model) { m.setFocus(focusDetail) }
+// withDetailFocus presses Enter, which is the only way a reader reaches the
+// detail pane: a golden taken from a focus no key can produce would prove
+// nothing about the dashboard.
+func withDetailFocus(m *Model) {
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+}
 
 // withResults fills the Search tab with the demo results and puts the cursor
 // in them.

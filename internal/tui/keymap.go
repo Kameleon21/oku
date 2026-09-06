@@ -119,8 +119,10 @@ func newKeyMap() keyMap {
 		SearchAppend: bind("a", "append", "a"),
 		SearchMode:   bind("m", "cycle mode", "m"),
 		SearchSubmit: bind("↵", "search", "enter"),
-		AddReading:   bind("↵", "add as reading", "enter"),
-		SearchBack:   bind("Esc", "back to input", "esc", "h", "left"),
+		// Enter opens a result in the detail pane, the way it opens a book
+		// everywhere else, so shelving one has a key of its own.
+		AddReading: bind("a", "add as reading", "a"),
+		SearchBack: bind("Esc", "back to input", "esc", "h", "left"),
 
 		Select: bind("↵", "select", "enter"),
 		// The dialog has always answered to shifted letters too.

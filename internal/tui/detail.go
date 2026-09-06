@@ -52,8 +52,6 @@ type detailPane struct {
 	// comparison could see would advance on both sides at once and never
 	// register as a difference.
 	stamp int
-	// title is the pane title for the content on screen.
-	title string
 }
 
 // detailKey identifies the content in the viewport: what it is, which one,
@@ -164,11 +162,19 @@ func (d *detailPane) View(sel selection, t tab) string {
 	}
 
 	if k != d.key {
+		// A new book starts at the top; the same book redrawn — a reconcile
+		// landing, a timer stopping — keeps the reader where they were in a
+		// long review, clamped in case the content is now shorter.
+		sameSelection := k.kind == d.key.kind && k.id == d.key.id
+		offset := d.vp.YOffset
 		d.key = k
 		d.vp.SetContent(d.render(sel, t))
-		d.vp.GotoTop()
+		if sameSelection {
+			d.vp.SetYOffset(min(offset, max(0, d.vp.TotalLineCount()-d.vp.Height)))
+		} else {
+			d.vp.GotoTop()
+		}
 	}
-	d.title = d.Title(sel)
 	return d.vp.View()
 }
 
@@ -424,10 +430,15 @@ func plural(n int, unit string) string {
 // ISO date says that is worth a column here.
 func releaseYear(raw string) string {
 	raw = strings.TrimSpace(raw)
-	if len(raw) >= 4 && raw[:4] >= "0000" && raw[:4] <= "9999" {
-		return raw[:4]
+	if len(raw) < 4 {
+		return raw
 	}
-	return raw
+	for i := 0; i < 4; i++ {
+		if raw[i] < '0' || raw[i] > '9' {
+			return raw
+		}
+	}
+	return raw[:4]
 }
 
 // sessionsBlock lists this book's own timer sessions, newest first.
@@ -512,7 +523,7 @@ func renderSearchResult(r model.SearchResult, shelf map[int]model.UserBook, w in
 		line(st.dim.Render(cut("hardcover.app/books/"+r.Slug, w)))
 	}
 	line("")
-	line(st.dim.Render(cut("↵ add as reading · w want to read · f finished · d dnf", w)))
+	line(st.dim.Render(cut("a add as reading · w want to read · f finished · d dnf", w)))
 	return strings.TrimRight(sb.String(), "\n")
 }
 
@@ -548,8 +559,11 @@ func gridRows(w int, st styles, cells ...[2]string) []string {
 			continue
 		}
 
+		// The left cell is cut a column short of the halfway mark and then
+		// padded out to it, so a value long enough to be truncated still
+		// leaves a space before the right column's label.
 		half := w / 2
-		leftRow := field(left[0], left[1], half, st)
+		leftRow := field(left[0], left[1], half-1, st)
 		rightRow := field(right[0], right[1], w-half, st)
 		switch {
 		case leftRow == "" && rightRow == "":

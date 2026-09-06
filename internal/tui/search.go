@@ -303,11 +303,13 @@ func (s *searchSection) Keys(k *keyMap) {
 		k.SetWant.SetHelp("w", "add as want to read")
 		k.SetFinished.SetHelp("f", "add as finished")
 		k.SetDNF.SetHelp("d", "add as did not finish")
-		enable(&k.Help, &k.Up, &k.Down, &k.AddReading, &k.SetReading, &k.SetWant, &k.SetFinished,
-			&k.SetDNF, &k.SearchBack, &k.NextSection, &k.PrevSection, &k.TabJump, &k.Density)
+		enable(&k.Help, &k.Up, &k.Down, &k.Details, &k.AddReading, &k.SetReading, &k.SetWant,
+			&k.SetFinished, &k.SetDNF, &k.SearchBack, &k.NextSection, &k.PrevSection,
+			&k.TabJump, &k.Density)
 		k.short = []key.Binding{
 			k.Help,
 			hint("navigate", k.Down, k.Up),
+			k.Details,
 			k.AddReading,
 			hint("status", k.SetReading, k.SetWant, k.SetFinished, k.SetDNF),
 			hintAs("h/l", "input/next", k.SearchBack, k.NextSection),

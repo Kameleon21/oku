@@ -17,7 +17,7 @@
                                   │                                                  │                                  
                                   │  Actions                                         │                                  
                                   │    ↵             detail                          │                                  
-                                  │    ↵             add as reading                  │                                  
+                                  │    a             add as reading                  │                                  
                                   │    ↵             search                          │                                  
                                   │    ↵             select                          │                                  
                                   │    +/-           page ±10                        │                                  

@@ -231,9 +231,7 @@ func (m *Model) rootKey(msg tea.KeyMsg, k keyMap) (tea.Cmd, bool) {
 	case key.Matches(msg, k.NextSection):
 		return m.setTab((m.tab + 1) % tabCount), true
 	case key.Matches(msg, k.Search):
-		cmd := m.setTab(tabSearch)
-		m.focusSectionInput()
-		return cmd, true
+		return tea.Batch(m.setTab(tabSearch), m.focusSectionInput()), true
 	case key.Matches(msg, k.Sync):
 		return request(reqSync{}), true
 	case key.Matches(msg, k.Density):
@@ -242,12 +240,18 @@ func (m *Model) rootKey(msg tea.KeyMsg, k keyMap) (tea.Cmd, bool) {
 	return nil, false
 }
 
-// focusSectionInput puts the cursor in the section's text input, for the
-// one section that has one.
-func (m *Model) focusSectionInput() {
-	if s, ok := m.section().(interface{ focusInput() }); ok {
-		s.focusInput()
+// focusSectionInput puts the cursor in the section's text input, for the one
+// section that has one. The keyboard goes back to the content pane first: an
+// input that owns the keys while the detail pane still holds the focus would
+// draw the thick border around a pane no key reaches.
+func (m *Model) focusSectionInput() tea.Cmd {
+	s, ok := m.section().(interface{ focusInput() })
+	if !ok {
+		return nil
 	}
+	cmd := m.setFocus(focusContent)
+	s.focusInput()
+	return cmd
 }
 
 // updateCommon handles every message that is not a key press, whatever has

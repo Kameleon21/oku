@@ -7,6 +7,7 @@ import (
 
 	"github.com/Kameleon21/oku/internal/model"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // TestPaceAndETA pins the estimate the detail pane prints. The pace assumes
@@ -136,6 +137,28 @@ func TestDetailOmitsRowsItHasNoDataFor(t *testing.T) {
 	}
 }
 
+// TestDetailGridKeepsAGapBetweenItsColumns checks a left value long enough
+// to be cut does not run into the right column's label.
+func TestDetailGridKeepsAGapBetweenItsColumns(t *testing.T) {
+	m := newTestModel()
+	for _, w := range []int{56, 60, 68, 80, 116} {
+		rows := gridRows(w, m.st,
+			[2]string{"Series", strings.Repeat("A very long series name ", 6)},
+			[2]string{"Released", "1848"},
+		)
+		if len(rows) != 1 {
+			t.Fatalf("width %d: got %d rows, want the pair on one", w, len(rows))
+		}
+		row := stripANSI(rows[0])
+		if i := strings.Index(row, "Released"); i < 1 || row[i-1] != ' ' {
+			t.Fatalf("width %d: the cut left value runs into the right label: %q", w, row)
+		}
+		if got := lipgloss.Width(rows[0]); got > w {
+			t.Fatalf("width %d: the grid row is %d wide", w, got)
+		}
+	}
+}
+
 // TestDetailShowsOnlyThisBooksSessions filters the shared history down to
 // the book on screen.
 func TestDetailShowsOnlyThisBooksSessions(t *testing.T) {
@@ -218,6 +241,130 @@ func TestDetailRebuildsOnlyWhenSomethingChanged(t *testing.T) {
 	m.broadcast(dataChangedMsg{dataLocal})
 	if !strings.Contains(stripANSI(m.detail.View(sel, tabReading)), "Sessions (this book)") {
 		t.Fatal("a data change should rebuild the pane, not only mark it")
+	}
+}
+
+// TestDetailKeepsItsScrollAcrossAReload pins what a background reconcile or
+// a finished timer must not do: throw the reader back to the top of a long
+// review they were halfway through. A new selection still starts at the top.
+func TestDetailKeepsItsScrollAcrossAReload(t *testing.T) {
+	m := renderedDashboard(120, 40)
+	books := m.shared.reading
+	books[0].Review = strings.Repeat("A review long enough to scroll the detail pane. ", 60)
+	setLibrary(m, books, m.shared.oku)
+	m.setTab(tabReading)
+
+	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	// The viewport has nothing to scroll until it has been rendered once,
+	// which in the program every key press is followed by.
+	m.frame()
+	for i := 0; i < 5; i++ {
+		send(t, m, runeKey('j'))
+	}
+	m.frame()
+	if m.detail.vp.YOffset != 5 {
+		t.Fatalf("YOffset = %d after five j, want 5", m.detail.vp.YOffset)
+	}
+
+	// A reload of the same book: the sessions under the review change, the
+	// reader's place does not.
+	end := fixedNow.Add(-30 * time.Minute)
+	m.shared.sessions = []model.ReadingSession{
+		{ID: 1, BookID: books[0].Book.ID, StartedAt: fixedNow.Add(-90 * time.Minute), EndedAt: &end},
+	}
+	m.broadcast(dataChangedMsg{dataLocal})
+	m.frame()
+	if got := m.detail.vp.YOffset; got != 5 {
+		t.Fatalf("YOffset = %d after a reload, want the reader left where they were (5)", got)
+	}
+
+	// A different book is a different page, and starts at the top.
+	send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	send(t, m, runeKey('j'))
+	m.frame()
+	if got := m.detail.vp.YOffset; got != 0 {
+		t.Fatalf("YOffset = %d for a new selection, want 0", got)
+	}
+
+	// A rebuild that leaves less content than the offset clamps rather than
+	// scrolling past the end.
+	send(t, m, runeKey('k'))
+	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	for i := 0; i < 5; i++ {
+		send(t, m, runeKey('j'))
+	}
+	m.frame()
+	books[0].Review = "Short."
+	setLibrary(m, books, m.shared.oku)
+	m.frame()
+	if got := m.detail.vp.YOffset; got != 0 {
+		t.Fatalf("YOffset = %d once the content got shorter, want it clamped to 0", got)
+	}
+}
+
+// TestSearchResultOpensInTheDetailPane is the keyboard path the README
+// promises: Enter over a result opens it, Esc goes back, and shelving it is
+// its own key so Enter is free to mean what it means everywhere else.
+func TestSearchResultOpensInTheDetailPane(t *testing.T) {
+	for _, size := range [][2]int{{120, 40}, {80, 24}} {
+		m := renderedDashboard(size[0], size[1])
+		m.setTab(tabSearch)
+		s := searchOf(m)
+		s.results = []model.SearchResult{{ID: 1, Title: "Dune", Authors: []string{"Frank Herbert"}, Pages: 412, Slug: "dune"}}
+		s.rebuildResults()
+		s.sub = searchSubResults
+
+		send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+		if m.focus != focusDetail {
+			t.Fatalf("%dx%d: Enter over a result should open the detail pane, focus = %v", size[0], size[1], m.focus)
+		}
+		if m.isLoading() {
+			t.Fatalf("%dx%d: Enter must not shelve the result", size[0], size[1])
+		}
+		if !strings.Contains(stripANSI(m.frame()), "hardcover.app/books/dune") {
+			t.Fatalf("%dx%d: the result's detail should be on screen:\n%s", size[0], size[1], stripANSI(m.frame()))
+		}
+
+		// a shelves it, from either focus.
+		if cmd := send(t, m, runeKey('a')); cmd == nil {
+			t.Fatalf("%dx%d: a should add the result as reading", size[0], size[1])
+		}
+
+		send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+		if m.focus != focusContent {
+			t.Fatalf("%dx%d: Esc should go back to the results", size[0], size[1])
+		}
+	}
+}
+
+// TestSlashLeavesTheDetailPane checks that jumping to the search input never
+// leaves the keyboard pointed at a pane that no key reaches.
+func TestSlashLeavesTheDetailPane(t *testing.T) {
+	m := renderedDashboard(120, 40)
+	m.setTab(tabReading)
+	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.focus != focusDetail {
+		t.Fatal("Enter should focus the detail pane")
+	}
+
+	send(t, m, runeKey('/'))
+	if m.tab != tabSearch {
+		t.Fatalf("/ should open the Search tab, got %v", m.tab)
+	}
+	if m.focus != focusContent {
+		t.Fatalf("/ should give the keyboard back to the content pane, focus = %v", m.focus)
+	}
+	if !searchOf(m).CapturesKeys() {
+		t.Fatal("/ should put the cursor in the search input")
+	}
+
+	// The Oku tab reaches the input the same way.
+	m = renderedDashboard(120, 40)
+	m.setTab(tabOku)
+	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	send(t, m, runeKey('/'))
+	if m.tab != tabSearch || m.focus != focusContent || !searchOf(m).CapturesKeys() {
+		t.Fatalf("/ from the Oku detail: tab=%v focus=%v capturing=%v", m.tab, m.focus, searchOf(m).CapturesKeys())
 	}
 }
 

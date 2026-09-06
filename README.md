@@ -93,8 +93,9 @@ vim-style keys; arrow keys also work.
 | `?` / `q` | Help / quit |
 
 On a terminal at least 100 columns wide the detail pane sits beside the list;
-below that `Enter` opens it in place of the list. Press `?` for every control
-the focused tab understands.
+below that `Enter` opens it in place of the list. In the Search tab `Enter`
+opens a result the same way, and `a` adds it to Reading. Press `?` for every
+control the focused tab understands.
 
 ### Reading timer
 
