@@ -6,13 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/colorprofile"
 )
 
-func runeKey(r rune) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
+func runeKey(r rune) tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: r, Text: string(r)}
 }
 
 // newTestModel builds a dashboard with no app, so every command that would
@@ -69,25 +69,33 @@ func deliver(t *testing.T, m *Model, cmd tea.Cmd) tea.Cmd {
 	return next
 }
 
-// withColorProfile renders in colour for the duration of a test. Tests have
-// no terminal, so lipgloss would otherwise strip every colour and a light and
-// a dark render would be the same bytes.
-func withColorProfile(t *testing.T) {
-	t.Helper()
-	setColorProfile(t, termenv.ANSI256, true)
+// frameAt is the view's content at a colour profile. lipgloss v2 has no
+// global profile: a style always writes its colour and the terminal's writer
+// downsamples on the way out, so a test that wants the same bytes wherever it
+// runs does that downsampling itself.
+func frameAt(m *Model, p colorprofile.Profile) string {
+	return atProfile(m.View().Content, p)
 }
 
-// setColorProfile pins the profile and the background for one test, and puts
-// both back afterwards. Goldens use it to render the same bytes wherever
-// they run.
-func setColorProfile(t *testing.T, profile termenv.Profile, dark bool) {
-	t.Helper()
-	lipgloss.SetColorProfile(profile)
-	lipgloss.SetHasDarkBackground(dark)
-	t.Cleanup(func() {
-		lipgloss.SetColorProfile(termenv.Ascii)
-		lipgloss.SetHasDarkBackground(true)
-	})
+// atProfile downsamples one rendered string, the way the program's output
+// writer would.
+func atProfile(s string, p colorprofile.Profile) string {
+	var b strings.Builder
+	w := &colorprofile.Writer{Forward: &b, Profile: p}
+	_, _ = w.WriteString(s)
+	return b.String()
+}
+
+// layoutProfile is what the layout goldens are written at: no colour and no
+// attributes, so a diff shows the frame rather than a wall of escapes.
+const layoutProfile = colorprofile.NoTTY
+
+// backgroundMsg is the terminal answering Init's RequestBackgroundColor.
+func backgroundMsg(dark bool) tea.BackgroundColorMsg {
+	if dark {
+		return tea.BackgroundColorMsg{Color: lipgloss.Color("#000000")}
+	}
+	return tea.BackgroundColorMsg{Color: lipgloss.Color("#ffffff")}
 }
 
 // stripANSI removes the escape sequences so a test can look at the glyphs.

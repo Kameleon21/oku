@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 
 	"github.com/Kameleon21/oku/internal/format"
 	"github.com/Kameleon21/oku/internal/model"
@@ -14,16 +14,45 @@ import (
 )
 
 // The CLI output shares the dashboard's palette, so a book looks the same in
-// `oku reading` as it does in the TUI.
+// `oku reading` as it does in the TUI. lipgloss v2 resolves a colour when the
+// style is built rather than when it renders, so the styles are rebuilt once
+// the background is known — see detectOutputTheme — rather than being set up
+// as adaptive constants.
 var (
 	th = tui.DefaultTheme()
 
-	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(th.Accent)
-	authorStyle = lipgloss.NewStyle().Foreground(th.TextMuted)
-	pageStyle   = lipgloss.NewStyle().Foreground(th.Success)
-	statusStyle = lipgloss.NewStyle().Foreground(th.Heading).Bold(true)
-	dimStyle    = lipgloss.NewStyle().Foreground(th.TextDim)
+	titleStyle  lipgloss.Style
+	authorStyle lipgloss.Style
+	pageStyle   lipgloss.Style
+	statusStyle lipgloss.Style
+	dimStyle    lipgloss.Style
 )
+
+func init() { applyOutputTheme(tui.DefaultTheme()) }
+
+// applyOutputTheme rebuilds the five output styles from one palette.
+func applyOutputTheme(t tui.Theme) {
+	th = t
+	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(th.Accent)
+	authorStyle = lipgloss.NewStyle().Foreground(th.TextMuted)
+	pageStyle = lipgloss.NewStyle().Foreground(th.Success)
+	statusStyle = lipgloss.NewStyle().Foreground(th.Heading).Bold(true)
+	dimStyle = lipgloss.NewStyle().Foreground(th.TextDim)
+}
+
+// detectOutputTheme settles the background the CLI's colours are chosen for,
+// once per run: the `theme` config key when it pins one, the terminal's own
+// answer when there is a terminal to ask, and dark when the output is a pipe
+// or a file and nothing can be asked.
+func detectOutputTheme() {
+	isDark := true
+	if pinned, ok := tui.PinnedDark(); ok {
+		isDark = pinned
+	} else if isInteractiveTerminal(os.Stdin) && isInteractiveTerminal(os.Stdout) {
+		isDark = lipgloss.HasDarkBackground(os.Stdin, os.Stdout)
+	}
+	applyOutputTheme(tui.NewTheme(isDark))
+}
 
 // currentOutputDensity is the --view flag, already validated by the root
 // command's PersistentPreRunE, so a value that does not parse here can only be

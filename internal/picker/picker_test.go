@@ -3,8 +3,8 @@ package picker
 import (
 	"testing"
 
-	"github.com/charmbracelet/bubbles/list"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/list"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Kameleon21/oku/internal/model"
 )
@@ -24,8 +24,8 @@ func newTestPicker(t *testing.T) pickerModel {
 	return pickerModel{list: l}
 }
 
-func keyMsg(r rune) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
+func keyMsg(r rune) tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: r, Text: string(r)}
 }
 
 func update(t *testing.T, m pickerModel, msg tea.Msg) pickerModel {
@@ -55,7 +55,7 @@ func TestEscWhileFilteringExitsFilterNotPicker(t *testing.T) {
 	m := newTestPicker(t)
 
 	m = update(t, m, keyMsg('/'))
-	m = update(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	m = update(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
 
 	if m.quitting {
 		t.Fatal("esc inside the filter quit the picker")
@@ -81,7 +81,7 @@ func TestCtrlCQuitsWhileFiltering(t *testing.T) {
 	m := newTestPicker(t)
 
 	m = update(t, m, keyMsg('/'))
-	m = update(t, m, tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = update(t, m, tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 'c'})
 
 	if !m.quitting {
 		t.Fatal("ctrl+c should quit even while filtering")

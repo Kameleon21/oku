@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/Kameleon21/oku/internal/model"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/x/exp/teatest"
+	"github.com/charmbracelet/x/exp/teatest/v2"
 )
 
 // TestDashboardRunsInAProgram is the one test that runs the model through a
@@ -38,6 +38,6 @@ func TestDashboardRunsInAProgram(t *testing.T) {
 		return bytes.Contains(b, []byte("Reading (")) && bytes.Contains(b, []byte("The Communist Manifesto"))
 	}, teatest.WithCheckInterval(10*time.Millisecond), teatest.WithDuration(5*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	tm.Send(tea.KeyPressMsg{Code: 'q', Text: "q"})
 	tm.WaitFinished(t, teatest.WithFinalTimeout(5*time.Second))
 }

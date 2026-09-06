@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/Kameleon21/oku/internal/model"
-	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/exp/golden"
-	"github.com/muesli/termenv"
 )
 
 // The golden frames are synchronous snapshots: a model is built from the
@@ -20,9 +20,11 @@ import (
 //
 //	go test ./internal/tui -update
 //
-// The layout cases render with termenv.Ascii, so a diff shows the frame and
-// not a wall of escape sequences; two Reading cases render in TrueColor,
-// light and dark, to keep the palette itself covered.
+// The layout cases are written at the NoTTY profile, so a diff shows the
+// frame and not a wall of escape sequences; two Reading cases are written in
+// TrueColor, one for a light terminal and one for a dark one, to keep the
+// palette itself covered. lipgloss v2 has no global profile, so the frame is
+// downsampled by the test rather than by a setting (see frameAt).
 
 // goldenOpt arranges a golden model before it is rendered.
 type goldenOpt func(*Model)
@@ -57,7 +59,7 @@ func newGoldenModel(t *testing.T, w, h int, tb tab, opts ...goldenOpt) *Model {
 // detail pane: a golden taken from a focus no key can produce would prove
 // nothing about the dashboard.
 func withDetailFocus(m *Model) {
-	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 }
 
 // withResults fills the Search tab with the demo results and puts the cursor
@@ -69,6 +71,12 @@ func withResults(m *Model) {
 	s.input.SetValue("dune")
 	s.rebuildResults()
 	s.focusResults()
+}
+
+// withBackground is the terminal answering the background query, which is
+// what a light palette hangs off now that lipgloss has no adaptive colour.
+func withBackground(dark bool) goldenOpt {
+	return func(m *Model) { m.Update(backgroundMsg(dark)) }
 }
 
 // withRunningTimer puts a timer in the header.
@@ -91,13 +99,12 @@ func TestGoldenTabs(t *testing.T) {
 			} {
 				name := fmt.Sprintf("%s_%dx%d_%s", tb.name(), size[0], size[1], f.name)
 				t.Run(name, func(t *testing.T) {
-					setColorProfile(t, termenv.Ascii, true)
 					opts := f.opts
 					if tb == tabSearch {
 						opts = append([]goldenOpt{withResults}, opts...)
 					}
 					m := newGoldenModel(t, size[0], size[1], tb, opts...)
-					golden.RequireEqual(t, []byte(m.View()))
+					golden.RequireEqual(t, []byte(frameAt(m, layoutProfile)))
 				})
 			}
 		}
@@ -114,13 +121,12 @@ func TestGoldenSearchStates(t *testing.T) {
 	}
 	for name, opt := range cases {
 		t.Run(name, func(t *testing.T) {
-			setColorProfile(t, termenv.Ascii, true)
 			opts := []goldenOpt{opt}
 			if name != "empty" {
 				opts = append([]goldenOpt{withResults}, opts...)
 			}
 			m := newGoldenModel(t, 120, 40, tabSearch, opts...)
-			golden.RequireEqual(t, []byte(m.View()))
+			golden.RequireEqual(t, []byte(frameAt(m, layoutProfile)))
 		})
 	}
 }
@@ -136,9 +142,8 @@ func TestGoldenModals(t *testing.T) {
 	}
 	for name, opt := range cases {
 		t.Run(name, func(t *testing.T) {
-			setColorProfile(t, termenv.Ascii, true)
 			m := newGoldenModel(t, 120, 40, tabReading, opt)
-			golden.RequireEqual(t, []byte(m.View()))
+			golden.RequireEqual(t, []byte(frameAt(m, layoutProfile)))
 		})
 	}
 }
@@ -148,31 +153,27 @@ func TestGoldenModals(t *testing.T) {
 func TestGoldenHeaderStates(t *testing.T) {
 	for _, w := range []int{140, 120, 100, 80, 60} {
 		t.Run(fmt.Sprintf("timer_%d", w), func(t *testing.T) {
-			setColorProfile(t, termenv.Ascii, true)
 			m := newGoldenModel(t, w, 24, tabReading, withRunningTimer)
-			golden.RequireEqual(t, []byte(m.header(m.lay)))
+			golden.RequireEqual(t, []byte(atProfile(m.header(m.lay), layoutProfile)))
 		})
 	}
 	t.Run("never_synced", func(t *testing.T) {
-		setColorProfile(t, termenv.Ascii, true)
 		m := newGoldenModel(t, 120, 24, tabReading, func(m *Model) { m.shared.lastSyncAt = time.Time{} })
-		golden.RequireEqual(t, []byte(m.header(m.lay)))
+		golden.RequireEqual(t, []byte(atProfile(m.header(m.lay), layoutProfile)))
 	})
 	t.Run("syncing", func(t *testing.T) {
-		setColorProfile(t, termenv.Ascii, true)
 		m := newGoldenModel(t, 120, 24, tabReading, func(m *Model) { m.syncing = true })
-		golden.RequireEqual(t, []byte(m.header(m.lay)))
+		golden.RequireEqual(t, []byte(atProfile(m.header(m.lay), layoutProfile)))
 	})
 }
 
 // TestGoldenToast pins the footer with a message and an undo on offer.
 func TestGoldenToast(t *testing.T) {
-	setColorProfile(t, termenv.Ascii, true)
 	m := newGoldenModel(t, 120, 40, tabReading, func(m *Model) {
 		m.showUndoToast("Page 70", undoAction{op: opProgress, bookID: 101, title: "The Communist Manifesto",
 			toPage: 60, fromPage: 70})
 	})
-	golden.RequireEqual(t, []byte(m.View()))
+	golden.RequireEqual(t, []byte(frameAt(m, layoutProfile)))
 }
 
 // TestGoldenColour renders the same frame in colour, on a dark terminal and
@@ -180,9 +181,8 @@ func TestGoldenToast(t *testing.T) {
 func TestGoldenColour(t *testing.T) {
 	for name, dark := range map[string]bool{"dark": true, "light": false} {
 		t.Run(name, func(t *testing.T) {
-			setColorProfile(t, termenv.TrueColor, dark)
-			m := newGoldenModel(t, 120, 40, tabReading)
-			golden.RequireEqual(t, []byte(m.View()))
+			m := newGoldenModel(t, 120, 40, tabReading, withBackground(dark))
+			golden.RequireEqual(t, []byte(frameAt(m, colorprofile.TrueColor)))
 		})
 	}
 }

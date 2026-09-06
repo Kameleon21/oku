@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // TestDemoTapeKeysStillNavigate replays the recording's key sequence against
@@ -108,13 +108,13 @@ func tapeKeys(t *testing.T) []string {
 	return keys
 }
 
-func tapeKeyMsg(t *testing.T, name string) tea.KeyMsg {
+func tapeKeyMsg(t *testing.T, name string) tea.KeyPressMsg {
 	t.Helper()
 	switch name {
 	case "enter":
-		return tea.KeyMsg{Type: tea.KeyEnter}
+		return tea.KeyPressMsg{Code: tea.KeyEnter}
 	case "escape":
-		return tea.KeyMsg{Type: tea.KeyEsc}
+		return tea.KeyPressMsg{Code: tea.KeyEsc}
 	default:
 		return runeKey([]rune(name)[0])
 	}

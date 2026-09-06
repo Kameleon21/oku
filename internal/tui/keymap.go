@@ -3,8 +3,8 @@ package tui
 import (
 	"strings"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	"charm.land/lipgloss/v2"
 )
 
 // minHelpBarWidth keeps the footer hints readable on a very narrow terminal.
@@ -314,7 +314,7 @@ func (m *Model) helpBarWidth() int {
 // always marked.
 func (m *Model) renderHelpBar(bindings []key.Binding, limit int) string {
 	h := m.help
-	h.Width = 0 // The loop below owns the width.
+	h.SetWidth(0) // The loop below owns the width.
 
 	view := h.ShortHelpView(bindings)
 	if limit <= 0 || lipgloss.Width(view)+2 <= limit {

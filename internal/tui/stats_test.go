@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // statsModel is a loaded dashboard on the Stats tab, short enough that the
@@ -19,7 +19,7 @@ func statsModel(t *testing.T, w, h int) *Model {
 	m.broadcast(dataChangedMsg{dataLocal})
 	m.setTab(tabStats)
 	m.frame() // fills the viewport, which is what the keys scroll
-	if s := statsOf(m); s.vp.TotalLineCount() <= s.vp.Height {
+	if s := statsOf(m); s.vp.TotalLineCount() <= s.vp.Height() {
 		t.Fatalf("the stats page fits in %dx%d, so this test proves nothing", w, h)
 	}
 	return m
@@ -30,34 +30,34 @@ func statsModel(t *testing.T, w, h int) *Model {
 func TestStatsScrollKeys(t *testing.T) {
 	m := statsModel(t, 80, 24)
 	s := statsOf(m)
-	bottom := s.vp.TotalLineCount() - s.vp.Height
+	bottom := s.vp.TotalLineCount() - s.vp.Height()
 
 	send(t, m, runeKey('j'))
-	if s.vp.YOffset != 1 {
-		t.Fatalf("offset after j = %d, want 1", s.vp.YOffset)
+	if s.vp.YOffset() != 1 {
+		t.Fatalf("offset after j = %d, want 1", s.vp.YOffset())
 	}
 	send(t, m, runeKey('k'))
-	if s.vp.YOffset != 0 {
-		t.Fatalf("offset after k = %d, want 0", s.vp.YOffset)
+	if s.vp.YOffset() != 0 {
+		t.Fatalf("offset after k = %d, want 0", s.vp.YOffset())
 	}
 
-	send(t, m, tea.KeyMsg{Type: tea.KeyCtrlD})
-	half := s.vp.YOffset
+	send(t, m, tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 'd'})
+	half := s.vp.YOffset()
 	if half <= 1 {
 		t.Fatalf("offset after ctrl+d = %d, want half a page", half)
 	}
-	send(t, m, tea.KeyMsg{Type: tea.KeyCtrlU})
-	if s.vp.YOffset != 0 {
-		t.Fatalf("offset after ctrl+u = %d, want back to the top", s.vp.YOffset)
+	send(t, m, tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 'u'})
+	if s.vp.YOffset() != 0 {
+		t.Fatalf("offset after ctrl+u = %d, want back to the top", s.vp.YOffset())
 	}
 
 	send(t, m, runeKey('G'))
-	if s.vp.YOffset != bottom {
-		t.Fatalf("offset after G = %d, want the last page (%d)", s.vp.YOffset, bottom)
+	if s.vp.YOffset() != bottom {
+		t.Fatalf("offset after G = %d, want the last page (%d)", s.vp.YOffset(), bottom)
 	}
 	send(t, m, runeKey('g'))
-	if s.vp.YOffset != 0 {
-		t.Fatalf("offset after g = %d, want the top", s.vp.YOffset)
+	if s.vp.YOffset() != 0 {
+		t.Fatalf("offset after g = %d, want the top", s.vp.YOffset())
 	}
 }
 
@@ -67,14 +67,14 @@ func TestStatsScrollKeys(t *testing.T) {
 func TestStatsKeepsItsScrollAcrossAReload(t *testing.T) {
 	m := statsModel(t, 80, 24)
 	s := statsOf(m)
-	send(t, m, tea.KeyMsg{Type: tea.KeyCtrlD})
-	scrolled := s.vp.YOffset
+	send(t, m, tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 'd'})
+	scrolled := s.vp.YOffset()
 
 	m.broadcast(dataChangedMsg{dataLocal})
 	m.frame()
 
-	if s.vp.YOffset != scrolled {
-		t.Fatalf("offset after a reload = %d, want the reader kept at %d", s.vp.YOffset, scrolled)
+	if s.vp.YOffset() != scrolled {
+		t.Fatalf("offset after a reload = %d, want the reader kept at %d", s.vp.YOffset(), scrolled)
 	}
 }
 
@@ -104,7 +104,7 @@ func TestStatsShowsHowFarDownThePageIs(t *testing.T) {
 	rows := strings.Split(stripANSI(s.View(m.lay.ContentInner, m.lay.InnerH)), "\n")
 	last := rows[len(rows)-1]
 
-	want := fmt.Sprintf("▲ %d/%d ▼", s.vp.Height, s.vp.TotalLineCount())
+	want := fmt.Sprintf("▲ %d/%d ▼", s.vp.Height(), s.vp.TotalLineCount())
 	if !strings.HasSuffix(strings.TrimRight(last, " "), want) {
 		t.Fatalf("the last row is %q, want it to end with %q", last, want)
 	}

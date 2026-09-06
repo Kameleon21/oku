@@ -3,9 +3,9 @@ package tui
 import (
 	"time"
 
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
 	"github.com/Kameleon21/oku/internal/model"
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 // section is one tab's content pane. Sections are pointers and mutate in
@@ -41,6 +41,23 @@ type section interface {
 	Title() string
 	// Selected is what the detail pane should show; zero is the empty state.
 	Selected() selection
+}
+
+// inputSection is a section with a text input the root can put the cursor
+// in — the Search tab, today the only one. It is one named interface rather
+// than two anonymous asserts because both halves have to move together: the
+// cursor-blink command textinput.Focus answers with has to be carried back
+// to the root, so every way in returns one.
+type inputSection interface {
+	section
+	// focusInput puts the cursor in the input, at the end of what is typed.
+	focusInput() tea.Cmd
+	// focusInputIfEmpty does the same, but only when the pane has nothing to
+	// read yet.
+	focusInputIfEmpty() tea.Cmd
+	// inputCursor is where the terminal's cursor belongs while the input has
+	// the keyboard, relative to the section's own content box, or nil.
+	inputCursor() *tea.Cursor
 }
 
 type selection struct {
@@ -107,6 +124,12 @@ const (
 // dataChangedMsg is broadcast by the root after it has written to shared,
 // so a section can rebuild what it derives from the data.
 type dataChangedMsg struct{ kind dataKind }
+
+// stylesChangedMsg is broadcast when the terminal reports its background and
+// the palette is rebuilt for it. lipgloss v2 resolves a colour once rather
+// than at render time, so every style a section is holding — a list's
+// delegate, a memoised page — has to be replaced rather than re-read.
+type stylesChangedMsg struct{ st styles }
 
 // ── Requests (section → root) ──────────────────────────────────────────────
 

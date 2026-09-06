@@ -3,11 +3,11 @@ package tui
 import (
 	"fmt"
 
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/list"
+	tea "charm.land/bubbletea/v2"
 	"github.com/Kameleon21/oku/internal/format"
 	"github.com/Kameleon21/oku/internal/model"
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/list"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 // ── List item types ────────────────────────────────────────────────────────
@@ -85,8 +85,12 @@ func newLibrarySection(sh *shared, st styles, t tab) *librarySection {
 // the name and the count, so a list spends none of its rows on its own title
 // bar or on pagination dots. Filtering stays enabled (SetItems reapplies an
 // active filter) but its title-bar row is not drawn.
+// listRowSpacing is the blank rows between one item and the next: none, so a
+// short pane still holds a few books.
+const listRowSpacing = 0
+
 func newList(st styles) list.Model {
-	l := list.New(nil, newListDelegate(0, st), 40, 12)
+	l := list.New(nil, newListDelegate(listRowSpacing, st), 40, 12)
 	l.SetShowTitle(false)
 	l.SetShowFilter(false)
 	l.SetShowStatusBar(false)
@@ -107,13 +111,19 @@ func (s *librarySection) books() []model.UserBook {
 
 func (s *librarySection) Update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return s.handleKey(msg)
 	case dataChangedMsg:
 		if msg.kind == dataLibrary || msg.kind == dataDensity {
 			return s.rebuild()
 		}
 		return nil
+	case stylesChangedMsg:
+		// The delegate holds resolved colours, so it is rebuilt rather than
+		// re-read; the rows go with it.
+		s.st = msg.st
+		s.list.SetDelegate(newListDelegate(listRowSpacing, s.st))
+		return s.rebuild()
 	case list.FilterMatchesMsg:
 		// Carries no list id: only the list that is filtering asked for it.
 		if s.list.FilterState() == list.Unfiltered {
@@ -125,7 +135,7 @@ func (s *librarySection) Update(msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
-func (s *librarySection) handleKey(msg tea.KeyMsg) tea.Cmd {
+func (s *librarySection) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	k := keysFor(s)
 	switch {
 	case key.Matches(msg, k.Up, k.Down):
