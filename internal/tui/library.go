@@ -104,6 +104,11 @@ func (s *librarySection) Update(msg tea.Msg) tea.Cmd {
 			return s.rebuild()
 		}
 		return nil
+	case list.FilterMatchesMsg:
+		// Carries no list id: only the list that is filtering asked for it.
+		if s.list.FilterState() == list.Unfiltered {
+			return nil
+		}
 	}
 	var cmd tea.Cmd
 	s.list, cmd = s.list.Update(msg)

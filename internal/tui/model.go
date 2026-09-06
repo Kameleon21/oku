@@ -215,7 +215,9 @@ func (m *Model) updateCommon(msg tea.Msg) tea.Cmd {
 }
 
 // broadcast hands a message to every section and every modal. A modal that
-// reports done is dropped from the stack.
+// reports done is dropped from the stack. Bubbles' own messages are id-stamped
+// so duplicates are harmless, except list.FilterMatchesMsg, which the lists
+// themselves drop unless they are filtering.
 func (m *Model) broadcast(msg tea.Msg) tea.Cmd {
 	cmds := make([]tea.Cmd, 0, len(m.sections)+len(m.modals))
 	for _, s := range m.sections {

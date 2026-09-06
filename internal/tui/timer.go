@@ -38,9 +38,6 @@ func (s *timerSection) Update(msg tea.Msg) tea.Cmd {
 			// Same key, same meaning as in the library: t toggles.
 			return request(reqTimer{})
 		}
-		if len(s.sh.reading) == 0 {
-			return request(reqToast{toastError, "no currently reading books available — add a book to Reading first"})
-		}
 		return request(reqTimerPick{})
 	case key.Matches(keyMsg, k.TimerStop):
 		// Only enabled while a timer runs.

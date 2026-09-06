@@ -150,6 +150,11 @@ func (s *searchSection) Update(msg tea.Msg) tea.Cmd {
 		}
 		s.updateSuggestions()
 		return cmd
+	case list.FilterMatchesMsg:
+		// Carries no list id: only the list that is filtering asked for it.
+		if s.list.FilterState() == list.Unfiltered {
+			return nil
+		}
 	}
 	var cmd tea.Cmd
 	if s.sub == searchSubResults {
