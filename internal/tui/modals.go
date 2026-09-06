@@ -786,6 +786,12 @@ func (h *helpModal) View(_ layout, st styles) string {
 	if v := strings.TrimSpace(h.version); v != "" {
 		footer += "   oku " + v
 	}
+	// The palette is only named when the `theme` config key named one:
+	// "auto", "dark" and "light" are backgrounds rather than schemes, and
+	// have nothing to tell the reader here.
+	if name := ActiveThemeName(); name != "" {
+		footer += "   theme " + name
+	}
 	return renderModalPanel(
 		"Help",
 		h.rows()+"\n"+st.modalDim.Render(footer),
