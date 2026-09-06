@@ -874,6 +874,45 @@ func TestPageModalClosesOnItsOwnResult(t *testing.T) {
 	}
 }
 
+// TestPageModalFailureKeepsModalOpen pins the page prompt to the review
+// modal's rule: a save that comes back with an error leaves the prompt up,
+// with what was typed still in it and the reason on screen. The status bar
+// sits behind the overlay, so closing on the failure hid it entirely.
+func TestPageModalFailureKeepsModalOpen(t *testing.T) {
+	m := newTestModel()
+	m.shared.loaded = true
+	m.push(newPageModal(m.shared, m.st, model.UserBook{Book: model.Book{ID: 1, Title: "Dune"}}))
+	page := pageModalOf(m)
+	page.input.SetValue("120")
+
+	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if !page.submitting {
+		t.Fatal("enter should mark the prompt as saving")
+	}
+
+	m.Update(opDoneMsg{op: opProgress, seq: page.token, err: errors.New("network down")})
+
+	if pageModalOf(m) == nil {
+		t.Fatal("a failed save must not close the prompt")
+	}
+	if page.submitting {
+		t.Fatal("a failed save should clear the saving state")
+	}
+	if page.input.Value() != "120" {
+		t.Fatalf("input = %q, want the typed page kept", page.input.Value())
+	}
+	if !strings.Contains(stripANSI(page.View(m.lay, m.st)), "network down") {
+		t.Fatalf("the prompt should show the failure:\n%s", stripANSI(page.View(m.lay, m.st)))
+	}
+
+	// The corrected save closes it.
+	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m.Update(opDoneMsg{op: opProgress, seq: page.token, info: "Progress updated to page 120"})
+	if m.topModal() != nil {
+		t.Fatalf("top modal = %T, want the prompt closed by a successful save", m.topModal())
+	}
+}
+
 func TestModalStackPopsOnOwnResultOnly(t *testing.T) {
 	m := newTestModel()
 	m.shared.loaded = true

@@ -161,6 +161,12 @@ type pageModal struct {
 	total   int
 	input   textinput.Model
 	token   int
+	// submitting says a save has been asked for and not come back yet; err
+	// is what it came back with. A failed save keeps the modal open with the
+	// typed value intact, the way the review modal does: the status bar sits
+	// behind the overlay, so this is the only place the failure can be read.
+	submitting bool
+	err        string
 }
 
 func newPageModal(sh *shared, st styles, b model.UserBook) *pageModal {
@@ -198,15 +204,27 @@ func (p *pageModal) Update(msg tea.Msg) (bool, tea.Cmd) {
 			if raw == "" {
 				return false, request(reqToast{toastError, "page value cannot be empty"})
 			}
+			// Enter stays live while a save is out: the root refuses a page
+			// update started over one already in flight, and a prompt that
+			// locked itself on the refused press would have nothing left to
+			// unlock it.
+			p.submitting, p.err = true, ""
 			return false, request(reqSetPage{
 				bookID: p.bookID, title: p.title, prevPage: p.current, raw: raw, token: p.token,
 			})
 		}
 	case opDoneMsg:
-		if msg.op == opProgress && msg.seq == p.token {
-			return true, nil
+		if msg.op != opProgress || msg.seq != p.token {
+			return false, nil
 		}
-		return false, nil
+		p.submitting = false
+		if msg.err != nil {
+			// Shown in the overlay; the typed value is preserved so the page
+			// can be corrected rather than retyped.
+			p.err = msg.err.Error()
+			return false, nil
+		}
+		return true, nil
 	}
 	var cmd tea.Cmd
 	p.input, cmd = p.input.Update(msg)
@@ -221,13 +239,19 @@ func (p *pageModal) View(lay layout, st styles) string {
 	if p.total > 0 {
 		current = fmt.Sprintf("current: %d/%d", p.current, p.total)
 	}
-	content := strings.Join([]string{
+	rows := []string{
 		st.modalValue.Render(p.title),
 		st.modalDim.Render(current),
 		p.input.View(),
 		"",
-		st.modalDim.Render("Enter save · Esc cancel"),
-	}, "\n")
+	}
+	switch {
+	case p.submitting:
+		rows = append(rows, st.modalDim.Render("Saving..."))
+	case p.err != "":
+		rows = append(rows, st.modalError.Render(p.err))
+	}
+	content := strings.Join(append(rows, st.modalDim.Render("Enter save · Esc cancel")), "\n")
 	return renderModalPanel("Update page", content, max(36, min(60, lay.W-10)), st)
 }
 
