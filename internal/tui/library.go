@@ -52,135 +52,220 @@ func (i userBookItem) FilterValue() string {
 	return i.book.Book.Title + " " + i.book.Book.AuthorString()
 }
 
-func (m Model) handleLibraryKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	k := m.activeKeys()
-	switch {
-	case key.Matches(msg, k.Quit, k.ForceQuit):
-		return m, tea.Quit
-	case key.Matches(msg, k.Help):
-		m.openHelp()
-		return m, nil
-	case key.Matches(msg, k.NextSection):
-		m.nextSection()
-		return m, nil
-	case key.Matches(msg, k.PrevSection):
-		m.prevSection()
-		return m, nil
-	case key.Matches(msg, k.Up, k.Down):
-		// The focused list moves its own cursor.
-		var cmd tea.Cmd
-		if m.section == sectionReading {
-			m.readingList, cmd = m.readingList.Update(msg)
-		} else {
-			m.okuList, cmd = m.okuList.Update(msg)
+// inFlightNotice is the answer to a mutation pressed while one is running.
+const inFlightNotice = "Please wait — an update is still in flight"
+
+// ── Library section ────────────────────────────────────────────────────────
+
+// librarySection is one shelf of the library: the Reading list or the Oku
+// (want to read) list. One type, two instances.
+type librarySection struct {
+	sh   *shared
+	st   styles
+	tab  focusSection
+	list list.Model
+}
+
+func newLibrarySection(sh *shared, st styles, tab focusSection) *librarySection {
+	return &librarySection{sh: sh, st: st, tab: tab, list: newList(st)}
+}
+
+// newList is a list with only its rows: the section card already prints the
+// name and the count, and the panels are only a handful of rows tall, so a
+// list spends none of them on its own title bar or on pagination dots.
+// Filtering stays enabled (SetItems reapplies an active filter) but its
+// title-bar row is not drawn.
+func newList(st styles) list.Model {
+	l := list.New(nil, newListDelegate(0, st), 40, 12)
+	l.SetShowTitle(false)
+	l.SetShowFilter(false)
+	l.SetShowStatusBar(false)
+	l.SetShowPagination(false)
+	l.SetFilteringEnabled(true)
+	l.SetShowHelp(false)
+	l.DisableQuitKeybindings()
+	return l
+}
+
+// books is the shelf this instance shows.
+func (s *librarySection) books() []model.UserBook {
+	if s.tab == sectionOku {
+		return s.sh.oku
+	}
+	return s.sh.reading
+}
+
+func (s *librarySection) Update(msg tea.Msg) tea.Cmd {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		return s.handleKey(msg)
+	case dataChangedMsg:
+		if msg.kind == dataLibrary || msg.kind == dataDensity {
+			return s.rebuild()
 		}
-		return m, cmd
-	case key.Matches(msg, k.Search):
-		m.focusSearchInput()
-		return m, nil
+		return nil
+	case list.FilterMatchesMsg:
+		// Carries no list id: only the list that is filtering asked for it.
+		if s.list.FilterState() == list.Unfiltered {
+			return nil
+		}
+	}
+	var cmd tea.Cmd
+	s.list, cmd = s.list.Update(msg)
+	return cmd
+}
+
+func (s *librarySection) handleKey(msg tea.KeyMsg) tea.Cmd {
+	k := keysFor(s)
+	switch {
+	case key.Matches(msg, k.Up, k.Down):
+		// The list moves its own cursor.
+		var cmd tea.Cmd
+		s.list, cmd = s.list.Update(msg)
+		return cmd
 	case key.Matches(msg, k.Refresh):
-		return m.startOp(loadLibraryCmd(m.ctx, m.app, true))
-	case key.Matches(msg, k.Sync):
-		return m.startOp(syncAllAndReloadCmd(m.ctx, m.app))
-	case key.Matches(msg, k.Density):
-		cmd := m.cycleDensity()
-		return m, cmd
+		return request(reqRefresh{})
 	case key.Matches(msg, k.Details):
 		// Enter used to move the book to another shelf, so a stray keypress
 		// silently rewrote the library. It now only brings the selection into
 		// the detail pane; g/w/f/d still change the status.
-		b := m.selectedLibraryBook()
+		b := s.selected()
 		if b == nil {
-			cmd := m.showToast(toastError, "no book selected")
-			return m, cmd
+			return request(reqToast{toastError, "no book selected"})
 		}
-		cmd := m.showToast(toastInfo, b.Book.Title)
-		return m, cmd
+		return request(reqToast{toastInfo, b.Book.Title})
 	case key.Matches(msg, k.ProgressUp):
-		return m.quickProgress(+10)
+		return s.progress(+10)
 	case key.Matches(msg, k.ProgressDown):
-		return m.quickProgress(-10)
+		return s.progress(-10)
 	case key.Matches(msg, k.Update):
-		if b := m.selectedLibraryBook(); b != nil {
-			m.openPageModal(*b)
-			return m, nil
+		if b := s.selected(); b != nil {
+			return request(reqOpenModal{newPageModal(s.sh, s.st, *b)})
 		}
 	case key.Matches(msg, k.Rate):
-		if b := m.selectedLibraryBook(); b != nil {
-			m.openReviewRatingModal(*b)
-			return m, nil
+		if b := s.selected(); b != nil {
+			return request(reqOpenModal{newReviewModal(s.sh, s.st, *b)})
 		}
 	case key.Matches(msg, k.SetReading):
-		return m.changeSelectedLibraryStatus(model.StatusCurrentlyReading)
+		return s.changeStatus(model.StatusCurrentlyReading, false)
 	case key.Matches(msg, k.SetWant):
-		return m.changeSelectedLibraryStatus(model.StatusWantToRead)
+		return s.changeStatus(model.StatusWantToRead, false)
 	case key.Matches(msg, k.SetFinished):
-		return m.changeSelectedLibraryStatus(model.StatusRead)
+		return s.changeStatus(model.StatusRead, false)
 	case key.Matches(msg, k.SetDNF):
-		return m.confirmStatusChange(model.StatusDidNotFinish)
+		return s.changeStatus(model.StatusDidNotFinish, true)
 	case key.Matches(msg, k.SetIgnored):
-		return m.confirmStatusChange(model.StatusIgnored)
+		return s.changeStatus(model.StatusIgnored, true)
 	case key.Matches(msg, k.Timer):
-		return m.toggleTimerForSelection()
+		return request(reqTimerToggle{book: s.selected(), reading: s.tab == sectionReading})
 	}
-	return m, nil
+	return nil
 }
 
-// toggleTimerForSelection starts a reading timer for the highlighted book, or
-// stops the one that is running. Only the Reading list holds books a timer can
-// track, so elsewhere it says where to press it.
-func (m Model) toggleTimerForSelection() (tea.Model, tea.Cmd) {
-	if m.isLoading() {
-		// timerState only catches up when the load lands, so two quick presses
-		// would otherwise start two sessions.
-		cmd := m.showToast(toastWarn, inFlightNotice)
-		return m, cmd
-	}
-	if m.timerState != nil {
-		return m.startOp(stopTimerCmd(m.app))
-	}
-	if m.section != sectionReading {
-		cmd := m.showToast(toastWarn, "Timers track a book you are reading — press t in the Reading list")
-		return m, cmd
-	}
-	b := m.selectedLibraryBook()
+// progress asks for a relative page update on the selection.
+func (s *librarySection) progress(delta int) tea.Cmd {
+	b := s.selected()
 	if b == nil {
-		cmd := m.showToast(toastError, "no book selected")
-		return m, cmd
+		return nil
 	}
-	return m.startOp(startTimerForBookCmd(m.app, b.Book.ID))
+	return request(reqProgress{book: *b, delta: delta})
 }
 
-// inFlightNotice is the answer to a mutation pressed while one is running.
-const inFlightNotice = "Please wait — an update is still in flight"
-
-// confirmStatusChange asks first. Ignoring a book takes it out of the library
-// and a DNF closes the read; U can put the shelf back while the toast is up,
-// but neither should happen because a finger slipped one key.
-func (m Model) confirmStatusChange(status model.Status) (tea.Model, tea.Cmd) {
-	b := m.selectedLibraryBook()
+// changeStatus asks to move the selection to another shelf. Ignoring a book
+// takes it out of the library and a DNF closes the read; U can put the
+// shelf back while the toast is up, but neither should happen because a
+// finger slipped one key, so those two confirm first.
+func (s *librarySection) changeStatus(status model.Status, confirm bool) tea.Cmd {
+	b := s.selected()
 	if b == nil {
-		cmd := m.showToast(toastError, "no book selected")
-		return m, cmd
+		return request(reqToast{toastError, "no book selected"})
 	}
-	m.confirm = newConfirmState(fmt.Sprintf("Mark '%s' as %s?", b.Book.Title, status.Label()))
-	m.confirmCmd = changeStatusCmd(m.ctx, m.app, b.Book.ID, b.Book.Title, b.StatusID, status)
-	return m, nil
+	return request(reqChangeStatus{book: *b, to: status, confirm: confirm})
 }
 
-// quickProgress applies a relative page update. UpdateProgress is
-// read-modify-write, so firing a second one while the first is in flight
-// would silently lose an update.
-func (m Model) quickProgress(delta int) (tea.Model, tea.Cmd) {
-	b := m.selectedLibraryBook()
-	if b == nil {
-		return m, nil
+// rebuild refreshes the rows from shared. The returned command must be run:
+// with filtering enabled, SetItems reapplies an active filter.
+func (s *librarySection) rebuild() tea.Cmd {
+	books := s.books()
+	items := make([]list.Item, 0, len(books))
+	for _, b := range books {
+		items = append(items, userBookItem{book: b, density: s.sh.density})
 	}
-	if m.isLoading() {
-		cmd := m.showToast(toastWarn, inFlightNotice)
-		return m, cmd
+	return s.list.SetItems(items)
+}
+
+func (s *librarySection) selected() *model.UserBook {
+	item := s.list.SelectedItem()
+	if item == nil {
+		return nil
 	}
-	return m.startOp(quickProgressCmd(m.ctx, m.app, b.Book.ID, b.Book.Title, currentPage(*b), delta))
+	ub, ok := item.(userBookItem)
+	if !ok {
+		return nil
+	}
+	book := ub.book
+	return &book
+}
+
+func (s *librarySection) View(int, int) string { return s.list.View() }
+
+func (s *librarySection) Resize(w, h int) { s.list.SetSize(w, h) }
+
+func (s *librarySection) Keys(k *keyMap) {
+	sectionHint := hint("section", k.PrevSection, k.NextSection)
+	k.Up.SetHelp("k", "navigate")
+	k.Down.SetHelp("j", "navigate")
+	if s.sh.timer != nil {
+		k.Timer.SetHelp("t", "stop timer")
+	} else if s.tab != sectionReading {
+		k.Timer.SetHelp("t", "timer (Reading list)")
+	}
+	enable(&k.Quit, &k.Help, &k.Up, &k.Down, &k.NextSection, &k.PrevSection, &k.Search,
+		&k.Details, &k.ProgressUp, &k.ProgressDown, &k.Update, &k.Rate,
+		&k.SetReading, &k.SetWant, &k.SetFinished, &k.SetDNF, &k.SetIgnored,
+		&k.Timer, &k.Sync, &k.Refresh, &k.Density)
+
+	// Ordered by how often a key is reached for, with help first so it is
+	// the one hint a narrow terminal never drops. Enter is left out: the
+	// detail pane it opens is already on screen.
+	k.short = []key.Binding{
+		k.Help,
+		hint("navigate", k.Down, k.Up),
+		sectionHint,
+		hint("status", k.SetReading, k.SetWant, k.SetFinished, k.SetDNF, k.SetIgnored),
+		hint("page", k.ProgressUp, k.ProgressDown),
+		hintAs("u", "update", k.Update),
+	}
+	if s.tab == sectionReading || s.sh.timer != nil {
+		k.short = append(k.short, k.Timer)
+	}
+	// The bar has a word per key; the modal spells them out.
+	k.short = append(k.short, k.Search, hintAs("v", "rate", k.Rate), hintAs("s", "sync", k.Sync), k.Density, k.Refresh)
+}
+
+func (s *librarySection) Focus() {}
+func (s *librarySection) Blur()  {}
+
+func (s *librarySection) CapturesKeys() bool { return false }
+
+func (s *librarySection) Title() string {
+	if s.tab == sectionOku {
+		return fmt.Sprintf("Oku (%d)", len(s.books()))
+	}
+	return fmt.Sprintf("Reading (%d)", len(s.books()))
+}
+
+func (s *librarySection) Selected() selection { return selection{Book: s.selected()} }
+
+// overflowBadge reports where the cursor sits when the list shows fewer
+// books than it holds. Hiding the pagination dots took away the only sign
+// that there was anything below the last visible row.
+func (s *librarySection) overflowBadge() string {
+	total := len(s.list.VisibleItems())
+	if total == 0 || s.list.Paginator.PerPage >= total {
+		return ""
+	}
+	return fmt.Sprintf("%d/%d", s.list.Index()+1, total)
 }
 
 // currentPage is where a book stands: the open read's progress when there
@@ -190,26 +275,6 @@ func currentPage(b model.UserBook) int {
 		return b.UserBookReads[0].ProgressPages
 	}
 	return b.CurrentPage
-}
-
-// ── List helpers ───────────────────────────────────────────────────────────
-
-// refreshListItems rebuilds both library lists. The returned command must be
-// run: with filtering enabled, SetItems reapplies an active filter.
-func (m *Model) refreshListItems() tea.Cmd {
-	toItems := func(books []model.UserBook) []list.Item {
-		items := make([]list.Item, 0, len(books))
-		for _, b := range books {
-			items = append(items, userBookItem{
-				book:    b,
-				density: m.density,
-			})
-		}
-		return items
-	}
-	readingCmd := m.readingList.SetItems(toItems(m.readingBooks))
-	okuCmd := m.okuList.SetItems(toItems(m.okuBooks))
-	return tea.Batch(readingCmd, okuCmd)
 }
 
 // newListDelegate is the item renderer every list shares: title over
@@ -226,31 +291,4 @@ func newListDelegate(spacing int, st styles) list.DefaultDelegate {
 	delegate.Styles.DimmedTitle = st.listDimmedTitle
 	delegate.Styles.DimmedDesc = st.listDimmedDesc
 	return delegate
-}
-
-func (m Model) selectedLibraryBook() *model.UserBook {
-	var item list.Item
-	if m.section == sectionOku {
-		item = m.okuList.SelectedItem()
-	} else {
-		item = m.readingList.SelectedItem()
-	}
-	if item == nil {
-		return nil
-	}
-	ub, ok := item.(userBookItem)
-	if !ok {
-		return nil
-	}
-	book := ub.book
-	return &book
-}
-
-func (m Model) changeSelectedLibraryStatus(status model.Status) (tea.Model, tea.Cmd) {
-	b := m.selectedLibraryBook()
-	if b == nil {
-		cmd := m.showToast(toastError, "no book selected")
-		return m, cmd
-	}
-	return m.startOp(changeStatusCmd(m.ctx, m.app, b.Book.ID, b.Book.Title, b.StatusID, status))
 }

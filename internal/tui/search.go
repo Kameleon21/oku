@@ -9,6 +9,7 @@ import (
 	"github.com/Kameleon21/oku/internal/model"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -83,236 +84,358 @@ func (i searchResultItem) FilterValue() string {
 	return i.result.Title + " " + strings.Join(i.result.Authors, " ")
 }
 
-// focusSearchInput jumps to the search card in insert mode, keeping whatever
-// query was already typed.
-func (m *Model) focusSearchInput() {
-	m.setSection(sectionSearch)
-	m.searchSub = searchSubInput
-	m.enterSearchInsertMode()
-	m.searchInput.CursorEnd()
-	m.updateSearchSuggestions()
+// ── Search section ─────────────────────────────────────────────────────────
+
+// searchSection is the search card and its results. The input has a normal
+// and an insert mode, vim style; the results are a list of their own.
+type searchSection struct {
+	sh *shared
+	st styles
+
+	input textinput.Model
+	list  list.Model
+
+	results   []model.SearchResult
+	sub       searchSubFocus
+	mode      searchInputMode
+	queryMode model.SearchMode
+	// focused reports whether the section has the focus: results landing
+	// while it does take the cursor, results landing elsewhere do not.
+	focused bool
+
+	loading      bool
+	loadingQuery string
+	// seq stamps each search; anything but the latest result is dropped.
+	seq int
+
+	lastQuery string
+	lastMode  model.SearchMode
 }
 
-func (m Model) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	k := m.activeKeys()
-	if m.searchSub == searchSubInput {
-		if m.searchMode == searchModeNormal {
+func newSearchSection(sh *shared, st styles) *searchSection {
+	l := newList(st)
+	// The search results panel has no card label, so it prints this title as
+	// its own one-line header.
+	l.Title = model.SearchModeBook.Label() + " Results"
+
+	in := textinput.New()
+	in.Placeholder = "Search books..."
+	in.CharLimit = 120
+	in.Prompt = "/ "
+	in.PromptStyle = st.inputPrompt
+	in.TextStyle = st.inputText
+	// Suggestions are the user's own search history, loaded with the rest of
+	// the local data; there are none until they have searched for something.
+	in.ShowSuggestions = true
+
+	return &searchSection{
+		sh:        sh,
+		st:        st,
+		input:     in,
+		list:      l,
+		queryMode: model.SearchModeBook,
+	}
+}
+
+func (s *searchSection) Update(msg tea.Msg) tea.Cmd {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		return s.handleKey(msg)
+	case searchLoadedMsg:
+		return s.applyLoaded(msg)
+	case dataChangedMsg:
+		var cmd tea.Cmd
+		if msg.kind == dataDensity {
+			cmd = s.rebuildResults()
+		}
+		s.updateSuggestions()
+		return cmd
+	case list.FilterMatchesMsg:
+		// Carries no list id: only the list that is filtering asked for it.
+		if s.list.FilterState() == list.Unfiltered {
+			return nil
+		}
+	}
+	var cmd tea.Cmd
+	if s.sub == searchSubResults {
+		s.list, cmd = s.list.Update(msg)
+	} else {
+		s.input, cmd = s.input.Update(msg)
+	}
+	return cmd
+}
+
+func (s *searchSection) handleKey(msg tea.KeyMsg) tea.Cmd {
+	k := keysFor(s)
+	if s.sub == searchSubInput {
+		if s.mode == searchModeNormal {
 			switch {
-			case key.Matches(msg, k.ForceQuit):
-				return m, tea.Quit
-			case key.Matches(msg, k.Help):
-				m.openHelp()
-				return m, nil
 			case key.Matches(msg, k.SearchInsert):
-				m.enterSearchInsertMode()
-				return m, nil
+				s.enterInsertMode()
 			case key.Matches(msg, k.SearchAppend):
-				m.enterSearchInsertMode()
-				m.searchInput.CursorEnd()
-				return m, nil
+				s.enterInsertMode()
+				s.input.CursorEnd()
 			case key.Matches(msg, k.SearchMode):
-				cmd := m.setSearchQueryMode(m.searchQueryMode.Next())
-				return m, cmd
+				return s.setQueryMode(s.queryMode.Next())
 			case key.Matches(msg, k.SearchModeBook):
-				cmd := m.setSearchQueryMode(model.SearchModeBook)
-				return m, cmd
+				return s.setQueryMode(model.SearchModeBook)
 			case key.Matches(msg, k.SearchModeAuthor):
-				cmd := m.setSearchQueryMode(model.SearchModeAuthor)
-				return m, cmd
+				return s.setQueryMode(model.SearchModeAuthor)
 			case key.Matches(msg, k.SearchModeGenre):
-				cmd := m.setSearchQueryMode(model.SearchModeGenre)
-				return m, cmd
-			case key.Matches(msg, k.Density):
-				cmd := m.cycleDensity()
-				return m, cmd
+				return s.setQueryMode(model.SearchModeGenre)
 			case key.Matches(msg, k.SearchSubmit):
-				cmd := m.submitSearch()
-				return m, cmd
-			case key.Matches(msg, k.NextSection):
-				m.nextSection()
-				m.searchInput.Blur()
-				return m, nil
-			case key.Matches(msg, k.Back, k.PrevSection, k.Up):
-				m.prevSection()
-				m.searchInput.Blur()
-				return m, nil
+				return s.submit()
+			case key.Matches(msg, k.Back, k.Up):
+				return request(reqSwitchTab{step: -1})
 			case key.Matches(msg, k.Down):
-				if m.hasSearchResults() {
-					m.searchSub = searchSubResults
-				} else {
-					m.nextSection()
+				if s.hasResults() {
+					s.sub = searchSubResults
+					return nil
 				}
-				return m, nil
+				return request(reqSwitchTab{step: +1})
 			}
-			return m, nil
+			return nil
 		}
 
 		// Insert mode.
 		switch {
-		case key.Matches(msg, k.ForceQuit):
-			return m, tea.Quit
 		case key.Matches(msg, k.SearchSubmit):
-			cmd := m.submitSearch()
-			return m, cmd
+			return s.submit()
 		case key.Matches(msg, k.Back):
-			m.enterSearchNormalMode()
-			return m, nil
+			s.enterNormalMode()
+			return nil
 		}
-
 		var cmd tea.Cmd
-		m.searchInput, cmd = m.searchInput.Update(msg)
-		return m, cmd
+		s.input, cmd = s.input.Update(msg)
+		return cmd
 	}
 
 	// searchSubResults
 	switch {
-	case key.Matches(msg, k.ForceQuit):
-		return m, tea.Quit
-	case key.Matches(msg, k.Help):
-		m.openHelp()
-		return m, nil
 	case key.Matches(msg, k.SearchBack):
-		// Checked before PrevSection, which shares h and left with it.
-		m.searchSub = searchSubInput
-		m.enterSearchNormalMode()
-		return m, nil
-	case key.Matches(msg, k.NextSection):
-		m.nextSection()
-		return m, nil
-	case key.Matches(msg, k.PrevSection):
-		m.prevSection()
-		return m, nil
+		s.sub = searchSubInput
+		s.enterNormalMode()
+		return nil
 	case key.Matches(msg, k.AddReading):
-		if r := m.selectedSearchResult(); r != nil {
-			return m.startOp(addFromSearchCmd(m.ctx, m.app, r.ID, model.StatusCurrentlyReading))
+		if r := s.selected(); r != nil {
+			return request(reqAddFromSearch{result: *r, to: model.StatusCurrentlyReading})
 		}
 	case key.Matches(msg, k.SetReading):
-		return m.changeSelectedSearchStatus(model.StatusCurrentlyReading)
+		return s.addSelected(model.StatusCurrentlyReading)
 	case key.Matches(msg, k.SetWant):
-		return m.changeSelectedSearchStatus(model.StatusWantToRead)
+		return s.addSelected(model.StatusWantToRead)
 	case key.Matches(msg, k.SetFinished):
-		return m.changeSelectedSearchStatus(model.StatusRead)
+		return s.addSelected(model.StatusRead)
 	case key.Matches(msg, k.SetDNF):
-		return m.changeSelectedSearchStatus(model.StatusDidNotFinish)
-	case key.Matches(msg, k.Density):
-		cmd := m.cycleDensity()
-		return m, cmd
+		return s.addSelected(model.StatusDidNotFinish)
 	}
 
 	var cmd tea.Cmd
-	m.searchList, cmd = m.searchList.Update(msg)
-	return m, cmd
+	s.list, cmd = s.list.Update(msg)
+	return cmd
 }
 
-func (m Model) searchSectionContent(w int) string {
-	mode := m.st.dim.Render("[NORMAL]")
-	if m.searchMode == searchModeInsert {
-		mode = m.st.keyHint.Render("[INSERT]")
+// inputRow is the search card's body: the modes and the input on one line.
+func (s *searchSection) inputRow() string {
+	mode := s.st.dim.Render("[NORMAL]")
+	if s.mode == searchModeInsert {
+		mode = s.st.keyHint.Render("[INSERT]")
 	}
-	queryMode := m.st.keyHint.Render("[" + m.searchQueryMode.Label() + "]")
-	return "  " + mode + " " + queryMode + " " + m.searchInput.View()
+	queryMode := s.st.keyHint.Render("[" + s.queryMode.Label() + "]")
+	return "  " + mode + " " + queryMode + " " + s.input.View()
 }
 
-func (m Model) searchPanelView() string {
-	if m.searchLoading {
-		query := m.searchLoadingQuery
+// View is the results panel: the search in progress, the empty state, or
+// the titled list.
+func (s *searchSection) View(int, int) string {
+	if s.loading {
+		query := s.loadingQuery
 		if strings.TrimSpace(query) == "" {
-			query = m.lastQuery
+			query = s.lastQuery
 		}
 		if strings.TrimSpace(query) == "" {
 			query = "..."
 		}
-		return "\n  " + m.spin.View() + " " + strings.ToLower(m.searchQueryMode.Label()) +
-			" search (" + m.searchQueryMode.Description() + ") for " + fmt.Sprintf("%q", query)
+		return "\n  " + s.sh.spin.View() + " " + strings.ToLower(s.queryMode.Label()) +
+			" search (" + s.queryMode.Description() + ") for " + fmt.Sprintf("%q", query)
 	}
 
-	if len(m.searchList.Items()) == 0 {
-		if strings.TrimSpace(m.lastQuery) == "" {
-			return m.st.dim.Render(
+	if len(s.list.Items()) == 0 {
+		if strings.TrimSpace(s.lastQuery) == "" {
+			return s.st.dim.Render(
 				fmt.Sprintf("  %s mode (%s). Type a query and press Enter.",
-					strings.ToLower(m.searchQueryMode.Label()), m.searchQueryMode.Description(),
+					strings.ToLower(s.queryMode.Label()), s.queryMode.Description(),
 				),
 			)
 		}
-		return m.st.dim.Render(fmt.Sprintf("  No results for %q", m.lastQuery))
+		return s.st.dim.Render(fmt.Sprintf("  No results for %q", s.lastQuery))
 	}
 
-	return m.st.listHeader.Render(m.searchList.Title) + "\n" + m.searchList.View()
+	return s.st.listHeader.Render(s.list.Title) + "\n" + s.list.View()
+}
+
+// Resize sizes the results list; resizeInput the input on the card.
+func (s *searchSection) Resize(w, h int) { s.list.SetSize(w, h) }
+
+func (s *searchSection) resizeInput(w int) { s.input.Width = w }
+
+func (s *searchSection) Keys(k *keyMap) {
+	sectionHint := hint("section", k.PrevSection, k.NextSection)
+	switch {
+	case s.sub == searchSubResults:
+		k.Up.SetHelp("k", "navigate")
+		k.Down.SetHelp("j", "navigate")
+		// h and left go back to the input here, so the previous-section
+		// binding is left with the one key it really has.
+		k.PrevSection.SetKeys("shift+tab")
+		k.PrevSection.SetHelp("S-Tab", "previous section")
+		k.SearchBack.SetHelp("Esc/h", "back to input")
+		k.SetReading.SetHelp("g", "add as reading")
+		k.SetWant.SetHelp("w", "add as want to read")
+		k.SetFinished.SetHelp("f", "add as finished")
+		k.SetDNF.SetHelp("d", "add as did not finish")
+		enable(&k.Help, &k.Up, &k.Down, &k.AddReading, &k.SetReading, &k.SetWant, &k.SetFinished,
+			&k.SetDNF, &k.SearchBack, &k.NextSection, &k.PrevSection, &k.Density)
+		k.short = []key.Binding{
+			k.Help,
+			hint("navigate", k.Down, k.Up),
+			k.AddReading,
+			hint("status", k.SetReading, k.SetWant, k.SetFinished, k.SetDNF),
+			hintAs("h/l", "input/next", k.SearchBack, k.NextSection),
+			k.Density,
+			hintAs("Esc", "back", k.SearchBack),
+		}
+	case s.mode == searchModeInsert:
+		// ? is typed here, not a shortcut.
+		k.Back.SetHelp("Esc", "normal")
+		enable(&k.SearchSubmit, &k.Back)
+		k.short = []key.Binding{k.SearchSubmit, k.Back}
+	default:
+		// j goes down into the results (or on to the next section), k
+		// up to the previous one: one label that fits both.
+		k.Up.SetHelp("k", "results / section")
+		k.Down.SetHelp("j", "results / section")
+		enable(&k.Help, &k.SearchInsert, &k.SearchAppend, &k.SearchMode,
+			&k.SearchModeBook, &k.SearchModeAuthor, &k.SearchModeGenre,
+			&k.Density, &k.SearchSubmit, &k.NextSection, &k.PrevSection, &k.Back, &k.Up, &k.Down)
+		k.short = []key.Binding{
+			k.Help,
+			k.SearchSubmit,
+			hint("insert", k.SearchInsert, k.SearchAppend),
+			hintAs("m", "mode", k.SearchMode),
+			hint("book/author/genre", k.SearchModeBook, k.SearchModeAuthor, k.SearchModeGenre),
+			sectionHint,
+			k.Density,
+			k.Back,
+		}
+	}
+}
+
+func (s *searchSection) Focus() { s.focused = true }
+
+// Blur leaves the input: a section switch takes the cursor with it.
+func (s *searchSection) Blur() {
+	s.focused = false
+	s.input.Blur()
+}
+
+func (s *searchSection) CapturesKeys() bool {
+	return s.sub == searchSubInput && s.mode == searchModeInsert
+}
+
+func (s *searchSection) Title() string { return "Search" }
+
+func (s *searchSection) Selected() selection { return selection{Result: s.selected()} }
+
+// inResults reports whether j/k act on the results.
+func (s *searchSection) inResults() bool { return s.sub == searchSubResults }
+
+// focusInput jumps into the input in insert mode, keeping whatever query was
+// already typed.
+func (s *searchSection) focusInput() {
+	s.sub = searchSubInput
+	s.enterInsertMode()
+	s.input.CursorEnd()
+	s.updateSuggestions()
 }
 
 // ── Search helpers ─────────────────────────────────────────────────────────
 
-func (m Model) hasSearchResults() bool {
-	return len(m.searchList.Items()) > 0
+func (s *searchSection) hasResults() bool {
+	return len(s.list.Items()) > 0
 }
 
-// submitSearch starts a search. An in-flight search is not a reason to
-// refuse: searchSeq drops whichever result is superseded, so a typo can be
-// corrected immediately.
-func (m *Model) submitSearch() tea.Cmd {
-	query := strings.TrimSpace(m.searchInput.Value())
+// submit asks for a search. An in-flight search is not a reason to refuse:
+// seq drops whichever result is superseded, so a typo can be corrected
+// immediately.
+func (s *searchSection) submit() tea.Cmd {
+	query := strings.TrimSpace(s.input.Value())
 	if query == "" {
-		return m.showToast(toastError, "search query cannot be empty")
+		return request(reqToast{toastError, "search query cannot be empty"})
 	}
 
 	// Reuse in-memory results for the same query instead of refetching.
-	if strings.EqualFold(query, strings.TrimSpace(m.lastQuery)) &&
-		m.searchQueryMode == m.lastSearchMode && len(m.searchList.Items()) > 0 {
-		m.searchSub = searchSubResults
-		m.searchMode = searchModeNormal
-		m.searchInput.Blur()
-		return m.showToast(toastInfo, fmt.Sprintf("%s mode: showing cached results for %q",
-			strings.ToLower(m.searchQueryMode.Label()),
+	if strings.EqualFold(query, strings.TrimSpace(s.lastQuery)) &&
+		s.queryMode == s.lastMode && len(s.list.Items()) > 0 {
+		s.sub = searchSubResults
+		s.mode = searchModeNormal
+		s.input.Blur()
+		return request(reqToast{toastInfo, fmt.Sprintf("%s mode: showing cached results for %q",
+			strings.ToLower(s.queryMode.Label()),
 			query,
-		))
+		)})
 	}
 
-	m.searchLoading = true
-	m.searchLoadingQuery = query
-
-	toastCmd := m.showToast(toastInfo, fmt.Sprintf("%s mode (%s): searching for %q...",
-		strings.ToLower(m.searchQueryMode.Label()),
-		m.searchQueryMode.Description(),
-		query,
-	))
-	m.refreshSearchTitle()
-	m.searchSeq++
-	search := m.beginLoading(searchCmd(m.ctx, m.app, query, m.searchQueryMode, m.searchSeq))
-	return tea.Batch(search, toastCmd)
+	s.loading = true
+	s.loadingQuery = query
+	s.refreshTitle()
+	s.seq++
+	return request(reqSearch{query: query, mode: s.queryMode, seq: s.seq})
 }
 
-// setSearchQueryMode switches the mode the next search runs in and returns
-// the toast that says so.
-func (m *Model) setSearchQueryMode(mode model.SearchMode) tea.Cmd {
+// applyLoaded takes a search result: the latest one replaces the list and
+// takes the cursor if the section has the focus, an older one is dropped.
+func (s *searchSection) applyLoaded(msg searchLoadedMsg) tea.Cmd {
+	if msg.seq != s.seq {
+		// A newer search superseded this one.
+		return nil
+	}
+	s.loading = false
+	s.loadingQuery = ""
+	if msg.err != nil {
+		// The previous results are still on screen, so the header keeps
+		// naming them - including how many there are.
+		s.refreshTitle()
+		return request(reqToast{toastError, msg.err.Error()})
+	}
+	s.lastQuery = msg.query
+	s.lastMode = msg.mode
+	s.results = msg.results
+	cmd := s.rebuildResults()
+	s.refreshTitle()
+	if len(msg.results) > 0 && s.focused {
+		// Only take focus if the user is still in the search section.
+		s.sub = searchSubResults
+		s.enterNormalMode()
+	}
+	return tea.Batch(cmd, request(reqSearchDone{query: msg.query, mode: msg.mode, results: len(msg.results)}))
+}
+
+// setQueryMode switches the mode the next search runs in and asks for the
+// toast that says so.
+func (s *searchSection) setQueryMode(mode model.SearchMode) tea.Cmd {
 	if mode == "" {
 		mode = model.SearchModeBook
 	}
 	// Picking the mode that is already set still says so: the key did
 	// something, and the toast is the only place the mode is spelled out.
-	m.searchQueryMode = mode
+	s.queryMode = mode
 	// The results on screen were fetched in the old mode, so the header is
 	// left naming them; only the next search renames it.
-	m.refreshSearchTitle()
-	m.searchInput.Placeholder = searchPlaceholderForMode(mode)
-	m.updateSearchSuggestions()
-	return m.showToast(toastInfo, fmt.Sprintf("Search mode: %s (%s)", strings.ToLower(mode.Label()), mode.Description()))
-}
-
-// addRecentSearchQuery puts a query at the head of the history and returns the
-// command that writes it back to the store.
-func (m *Model) addRecentSearchQuery(query string) tea.Cmd {
-	query = strings.TrimSpace(query)
-	if query == "" {
-		return nil
-	}
-	m.recentSearches = dedupeQueries(append([]string{query}, m.recentSearches...))
-	return saveRecentSearchesCmd(m.app, m.recentSearches)
-}
-
-// mergeRecentSearches keeps this session's queries ahead of the ones read back
-// from the store, so a load landing mid-session cannot drop them.
-func (m *Model) mergeRecentSearches(loaded []string) {
-	m.recentSearches = dedupeQueries(append(append([]string(nil), m.recentSearches...), loaded...))
+	s.refreshTitle()
+	s.input.Placeholder = searchPlaceholderForMode(mode)
+	s.updateSuggestions()
+	return request(reqToast{toastInfo, fmt.Sprintf("Search mode: %s (%s)", strings.ToLower(mode.Label()), mode.Description())})
 }
 
 // dedupeQueries keeps the first spelling of each query, compared without case,
@@ -358,28 +481,30 @@ func decodeRecentSearches(raw string) []string {
 	return dedupeQueries(queries)
 }
 
-func (m *Model) updateSearchSuggestions() {
+// updateSuggestions feeds the input its completions: the search history,
+// plus the library's authors in author mode.
+func (s *searchSection) updateSuggestions() {
 	seen := map[string]struct{}{}
 	out := make([]string, 0, 12)
 
-	push := func(s string) {
-		s = strings.TrimSpace(s)
-		if s == "" {
+	push := func(v string) {
+		v = strings.TrimSpace(v)
+		if v == "" {
 			return
 		}
-		key := strings.ToLower(s)
+		key := strings.ToLower(v)
 		if _, ok := seen[key]; ok {
 			return
 		}
 		seen[key] = struct{}{}
-		out = append(out, s)
+		out = append(out, v)
 	}
 
-	for _, q := range m.recentSearches {
+	for _, q := range s.sh.recentSearches {
 		push(q)
 	}
-	if m.searchQueryMode == model.SearchModeAuthor {
-		for _, b := range append(append([]model.UserBook(nil), m.readingBooks...), m.okuBooks...) {
+	if s.queryMode == model.SearchModeAuthor {
+		for _, b := range append(append([]model.UserBook(nil), s.sh.reading...), s.sh.oku...) {
 			for _, a := range b.Book.Authors {
 				push(a)
 			}
@@ -389,7 +514,7 @@ func (m *Model) updateSearchSuggestions() {
 	if len(out) > 12 {
 		out = out[:12]
 	}
-	m.searchInput.SetSuggestions(out)
+	s.input.SetSuggestions(out)
 }
 
 func searchPlaceholderForMode(mode model.SearchMode) string {
@@ -403,43 +528,47 @@ func searchPlaceholderForMode(mode model.SearchMode) string {
 	}
 }
 
-// refreshSearchTitle names the results the panel is actually showing: the mode
+// refreshTitle names the results the panel is actually showing: the mode
 // they were fetched with and how many came back, not the mode the user has
 // switched to since.
-func (m *Model) refreshSearchTitle() {
-	if m.searchLoading {
-		m.searchList.Title = fmt.Sprintf("%s Results (loading...)", m.searchQueryMode.Label())
+func (s *searchSection) refreshTitle() {
+	if s.loading {
+		s.list.Title = fmt.Sprintf("%s Results (loading...)", s.queryMode.Label())
 		return
 	}
-	mode := m.lastSearchMode
+	mode := s.lastMode
 	if mode == "" {
-		mode = m.searchQueryMode
+		mode = s.queryMode
 	}
-	m.searchList.Title = fmt.Sprintf("%s Results (%d)", mode.Label(), len(m.searchBooks))
+	s.list.Title = fmt.Sprintf("%s Results (%d)", mode.Label(), len(s.results))
 }
 
-func (m *Model) enterSearchNormalMode() {
-	m.searchMode = searchModeNormal
-	m.searchInput.Blur()
+func (s *searchSection) enterNormalMode() {
+	s.mode = searchModeNormal
+	s.input.Blur()
 }
 
-func (m *Model) enterSearchInsertMode() {
-	m.searchMode = searchModeInsert
-	m.searchInput.Focus()
+func (s *searchSection) enterInsertMode() {
+	s.mode = searchModeInsert
+	s.input.Focus()
 }
 
-func (m *Model) refreshSearchResultItems() tea.Cmd {
-	m.applySearchListDensityLayout()
-
-	idx := m.searchList.Index()
-	items := make([]list.Item, 0, len(m.searchBooks))
-	for _, r := range m.searchBooks {
-		items = append(items, searchResultItem{
-			result:  r,
-			density: m.density,
-		})
+// rebuildResults refreshes the rows from results at the current density,
+// keeping the cursor. The returned command must be run: with filtering
+// enabled, SetItems reapplies an active filter.
+func (s *searchSection) rebuildResults() tea.Cmd {
+	spacing := 0
+	if s.sh.density == DensityVerbose {
+		spacing = 1
 	}
-	cmd := m.searchList.SetItems(items)
+	s.list.SetDelegate(newListDelegate(spacing, s.st))
+
+	idx := s.list.Index()
+	items := make([]list.Item, 0, len(s.results))
+	for _, r := range s.results {
+		items = append(items, searchResultItem{result: r, density: s.sh.density})
+	}
+	cmd := s.list.SetItems(items)
 	if len(items) == 0 {
 		return cmd
 	}
@@ -449,20 +578,12 @@ func (m *Model) refreshSearchResultItems() tea.Cmd {
 	if idx >= len(items) {
 		idx = len(items) - 1
 	}
-	m.searchList.Select(idx)
+	s.list.Select(idx)
 	return cmd
 }
 
-func (m *Model) applySearchListDensityLayout() {
-	spacing := 0
-	if m.density == DensityVerbose {
-		spacing = 1
-	}
-	m.searchList.SetDelegate(newListDelegate(spacing, m.st))
-}
-
-func (m Model) selectedSearchResult() *model.SearchResult {
-	item := m.searchList.SelectedItem()
+func (s *searchSection) selected() *model.SearchResult {
+	item := s.list.SelectedItem()
 	if item == nil {
 		return nil
 	}
@@ -474,11 +595,11 @@ func (m Model) selectedSearchResult() *model.SearchResult {
 	return &r
 }
 
-func (m Model) changeSelectedSearchStatus(status model.Status) (tea.Model, tea.Cmd) {
-	r := m.selectedSearchResult()
+// addSelected asks to shelve the selected result.
+func (s *searchSection) addSelected(status model.Status) tea.Cmd {
+	r := s.selected()
 	if r == nil {
-		cmd := m.showToast(toastError, "no search result selected")
-		return m, cmd
+		return request(reqToast{toastError, "no search result selected"})
 	}
-	return m.startOp(addFromSearchCmd(m.ctx, m.app, r.ID, status))
+	return request(reqAddFromSearch{result: *r, to: status})
 }

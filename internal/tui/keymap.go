@@ -258,188 +258,53 @@ func (k keyMap) helpGroups() []helpGroup {
 // activeKeys is the keymap for what has focus right now: the bindings that
 // apply are enabled, the ones whose label depends on the focus are relabelled,
 // and the help bar's order is set. Everything else stays disabled, so a
-// disabled key neither matches in a handler nor shows in the help.
-func (m Model) activeKeys() keyMap {
+// disabled key neither matches in a handler nor shows in the help. The top
+// modal answers when one is up; the active section otherwise.
+func (m *Model) activeKeys() keyMap {
 	k := newKeyMap()
 	enable(&k.ForceQuit)
-
-	switch {
-	case m.confirm.Active:
-		k.Select.SetHelp("↵", "choose")
-		enable(&k.ConfirmYes, &k.ConfirmNo, &k.ConfirmLeft, &k.ConfirmRight, &k.Select)
-		k.short = []key.Binding{k.ConfirmYes, hintAs("n/Esc", "no", k.ConfirmNo), hint("pick", k.ConfirmLeft, k.ConfirmRight)}
-		return k
-
-	case m.mode == modeUpdatePage:
-		k.Back.SetHelp("Esc", "cancel")
-		k.Select.SetHelp("↵", "save")
-		enable(&k.Back, &k.Select)
-		k.short = []key.Binding{k.Select, k.Back}
-		return k
-
-	case m.mode == modeReviewRating:
-		k.Back.SetHelp("Esc", "cancel")
-		enable(&k.Back)
-		if !m.reviewSubmitting {
-			enable(&k.ReviewSave, &k.ReviewNextField, &k.ReviewPrevField)
-		}
-		k.short = []key.Binding{hint("switch field", k.ReviewNextField, k.ReviewPrevField), k.ReviewSave, k.Back}
-		return k
-
-	case m.showHelp:
-		k.Up.SetHelp("k", "scroll")
-		k.Down.SetHelp("j", "scroll")
-		k.Back.SetHelp("Esc", "close")
-		enable(&k.Help, &k.Back, &k.Quit, &k.Up, &k.Down,
-			&k.HalfPageUp, &k.HalfPageDown, &k.ScrollTop, &k.ScrollBottom)
-		k.short = []key.Binding{hint("scroll", k.Down, k.Up), k.Back}
+	if top := m.topModal(); top != nil {
+		top.Keys(&k)
 		return k
 	}
+	m.sectionKeys(&k)
+	return k
+}
 
-	sectionHint := hint("section", k.PrevSection, k.NextSection)
-
-	// Undo lasts as long as the toast that offers it, and never takes a
-	// letter away from the search input.
-	typing := m.section == sectionSearch && m.searchSub == searchSubInput && m.searchMode == searchModeInsert
-	if m.undo != nil && !typing {
+// sectionKeys is the keymap with no modal up: the section's own keys, and
+// undo while a toast offers one. Undo lasts as long as that toast, and never
+// takes a letter away from the search input.
+func (m *Model) sectionKeys(k *keyMap) {
+	if m.undo != nil && !m.section().CapturesKeys() {
 		enable(&k.Undo)
 	}
+	m.section().Keys(k)
+}
 
-	switch m.section {
-	case sectionReading, sectionOku:
-		k.Up.SetHelp("k", "navigate")
-		k.Down.SetHelp("j", "navigate")
-		if m.timerState != nil {
-			k.Timer.SetHelp("t", "stop timer")
-		} else if m.section != sectionReading {
-			k.Timer.SetHelp("t", "timer (Reading list)")
-		}
-		enable(&k.Quit, &k.Help, &k.Up, &k.Down, &k.NextSection, &k.PrevSection, &k.Search,
-			&k.Details, &k.ProgressUp, &k.ProgressDown, &k.Update, &k.Rate,
-			&k.SetReading, &k.SetWant, &k.SetFinished, &k.SetDNF, &k.SetIgnored,
-			&k.Timer, &k.Sync, &k.Refresh, &k.Density)
-
-		// Ordered by how often a key is reached for, with help first so it is
-		// the one hint a narrow terminal never drops. Enter is left out: the
-		// detail pane it opens is already on screen.
-		k.short = []key.Binding{
-			k.Help,
-			hint("navigate", k.Down, k.Up),
-			sectionHint,
-			hint("status", k.SetReading, k.SetWant, k.SetFinished, k.SetDNF, k.SetIgnored),
-			hint("page", k.ProgressUp, k.ProgressDown),
-			hintAs("u", "update", k.Update),
-		}
-		if m.section == sectionReading || m.timerState != nil {
-			k.short = append(k.short, k.Timer)
-		}
-		// The bar has a word per key; the modal spells them out.
-		k.short = append(k.short, k.Search, hintAs("v", "rate", k.Rate), hintAs("s", "sync", k.Sync), k.Density, k.Refresh)
-
-	case sectionSearch:
-		switch {
-		case m.searchSub == searchSubResults:
-			k.Up.SetHelp("k", "navigate")
-			k.Down.SetHelp("j", "navigate")
-			// h and left go back to the input here, so the previous-section
-			// binding is left with the one key it really has.
-			k.PrevSection.SetKeys("shift+tab")
-			k.PrevSection.SetHelp("S-Tab", "previous section")
-			k.SearchBack.SetHelp("Esc/h", "back to input")
-			k.SetReading.SetHelp("g", "add as reading")
-			k.SetWant.SetHelp("w", "add as want to read")
-			k.SetFinished.SetHelp("f", "add as finished")
-			k.SetDNF.SetHelp("d", "add as did not finish")
-			enable(&k.Help, &k.Up, &k.Down, &k.AddReading, &k.SetReading, &k.SetWant, &k.SetFinished,
-				&k.SetDNF, &k.SearchBack, &k.NextSection, &k.PrevSection, &k.Density)
-			k.short = []key.Binding{
-				k.Help,
-				hint("navigate", k.Down, k.Up),
-				k.AddReading,
-				hint("status", k.SetReading, k.SetWant, k.SetFinished, k.SetDNF),
-				hintAs("h/l", "input/next", k.SearchBack, k.NextSection),
-				k.Density,
-				hintAs("Esc", "back", k.SearchBack),
-			}
-		case m.searchMode == searchModeInsert:
-			// ? is typed here, not a shortcut.
-			k.Back.SetHelp("Esc", "normal")
-			enable(&k.SearchSubmit, &k.Back)
-			k.short = []key.Binding{k.SearchSubmit, k.Back}
-		default:
-			// j goes down into the results (or on to the next section), k
-			// up to the previous one: one label that fits both.
-			k.Up.SetHelp("k", "results / section")
-			k.Down.SetHelp("j", "results / section")
-			enable(&k.Help, &k.SearchInsert, &k.SearchAppend, &k.SearchMode,
-				&k.SearchModeBook, &k.SearchModeAuthor, &k.SearchModeGenre,
-				&k.Density, &k.SearchSubmit, &k.NextSection, &k.PrevSection, &k.Back, &k.Up, &k.Down)
-			k.short = []key.Binding{
-				k.Help,
-				k.SearchSubmit,
-				hint("insert", k.SearchInsert, k.SearchAppend),
-				hintAs("m", "mode", k.SearchMode),
-				hint("book/author/genre", k.SearchModeBook, k.SearchModeAuthor, k.SearchModeGenre),
-				sectionHint,
-				k.Density,
-				k.Back,
-			}
-		}
-
-	case sectionStats:
-		k.Up.SetHelp("k", "scroll")
-		k.Down.SetHelp("j", "scroll")
-		enable(&k.Quit, &k.Help, &k.Up, &k.Down, &k.ScrollTop, &k.NextSection, &k.PrevSection,
-			&k.Sync, &k.Refresh, &k.Search)
-		k.short = []key.Binding{
-			k.Help, hint("scroll", k.Down, k.Up), k.ScrollTop, sectionHint,
-			hintAs("s", "sync", k.Sync), k.Refresh, k.Search, k.Quit,
-		}
-
-	case sectionTimer:
-		switch {
-		case m.timerSelecting && m.timerState == nil:
-			k.Up.SetHelp("k", "choose")
-			k.Down.SetHelp("j", "choose")
-			k.Select.SetHelp("↵", "start")
-			k.Back.SetHelp("Esc", "cancel")
-			enable(&k.Quit, &k.Help, &k.Up, &k.Down, &k.Select, &k.Back)
-			k.short = []key.Binding{k.Help, hint("choose", k.Down, k.Up), k.Select, k.Back, k.Quit}
-		case m.timerState != nil:
-			k.Up.SetHelp("k", "section")
-			k.Down.SetHelp("j", "section")
-			k.Timer.SetHelp("t", "stop timer")
-			enable(&k.Quit, &k.Help, &k.Up, &k.Down, &k.NextSection, &k.PrevSection, &k.Search,
-				&k.Timer, &k.TimerStop)
-			k.short = []key.Binding{k.Help, hint("stop", k.Timer, k.TimerStop), sectionHint, k.Search, k.Quit}
-		default:
-			k.Up.SetHelp("k", "section")
-			k.Down.SetHelp("j", "section")
-			k.Timer.SetHelp("t", "choose + start")
-			enable(&k.Quit, &k.Help, &k.Up, &k.Down, &k.NextSection, &k.PrevSection, &k.Search, &k.Timer)
-			k.short = []key.Binding{k.Help, k.Timer, sectionHint, k.Search, k.Quit}
-		}
-
-	default:
-		k.Up.SetHelp("k", "section")
-		k.Down.SetHelp("j", "section")
-		enable(&k.Quit, &k.Help, &k.Up, &k.Down, &k.NextSection, &k.PrevSection, &k.Search)
-		k.short = []key.Binding{k.Help, sectionHint, hintAs("Tab", "next", k.NextSection), k.Search, k.Quit}
+// keysBehind is the keymap the help modal describes: what the focus under
+// it understands.
+func (m *Model) keysBehind() keyMap {
+	k := newKeyMap()
+	enable(&k.ForceQuit)
+	if n := len(m.modals); n > 1 {
+		m.modals[n-2].Keys(&k)
+		return k
 	}
+	m.sectionKeys(&k)
 	return k
 }
 
 // helpBarWidth is the room the footer hints have. Zero means unbounded, which
 // is what a model that has not seen a window size yet should use.
-func (m Model) helpBarWidth() int {
-	if m.width <= 0 {
+func (m *Model) helpBarWidth() int {
+	if m.lay.W <= 0 {
 		return 0
 	}
-	return max(minHelpBarWidth, m.width-2)
+	return max(minHelpBarWidth, m.lay.W-2)
 }
 
 // contextHelpBar renders the hints for whatever has focus, on one line.
-func (m Model) contextHelpBar() string {
+func (m *Model) contextHelpBar() string {
 	return " " + m.renderHelpBar(m.helpBindings())
 }
 
@@ -448,7 +313,7 @@ func (m Model) contextHelpBar() string {
 // that does not fit its width check falls through and appends the hint anyway,
 // leaving a dangling separator to be cut mid-word; the bar drops whole hints
 // here instead, so the width is always honoured and the cut is always marked.
-func (m Model) renderHelpBar(bindings []key.Binding) string {
+func (m *Model) renderHelpBar(bindings []key.Binding) string {
 	h := m.help
 	h.Width = 0 // The loop below owns the width.
 
@@ -469,6 +334,6 @@ func (m Model) renderHelpBar(bindings []key.Binding) string {
 }
 
 // helpBindings returns the hints for the focused section.
-func (m Model) helpBindings() []key.Binding {
+func (m *Model) helpBindings() []key.Binding {
 	return m.activeKeys().ShortHelp()
 }

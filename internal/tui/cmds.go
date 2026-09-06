@@ -78,6 +78,7 @@ type localDataLoadedMsg struct {
 	recentSearches []string
 	timerState     *model.TimerState
 	timerBook      *model.Book
+	lastSyncAt     time.Time
 	err            error
 }
 
@@ -145,7 +146,13 @@ func reconcileLibraryCmd(ctx context.Context, a *app.App) tea.Cmd {
 	}
 }
 
-func loadLocalDataCmd(a *app.App) tea.Cmd {
+// recentSessionsLimit is how much timer history a local load brings in: the
+// Timer pane shows five, the rest is there for a per-book view.
+const recentSessionsLimit = 50
+
+// loadLocalDataCmd reads everything the dashboard shows from the local
+// store. now is the clock the demo data is built around.
+func loadLocalDataCmd(a *app.App, now func() time.Time) tea.Cmd {
 	return func() tea.Msg {
 		if a == nil {
 			return localDataLoadedMsg{err: fmt.Errorf("app not initialized")}
@@ -154,7 +161,7 @@ func loadLocalDataCmd(a *app.App) tea.Cmd {
 		if err != nil {
 			return localDataLoadedMsg{err: err}
 		}
-		sessions, err := a.TimerList(5)
+		sessions, err := a.TimerList(recentSessionsLimit)
 		if err != nil {
 			return localDataLoadedMsg{err: err}
 		}
@@ -172,7 +179,7 @@ func loadLocalDataCmd(a *app.App) tea.Cmd {
 		}
 
 		if shouldUseDemoLocalData() {
-			stats, sessions = demoLocalData()
+			stats, sessions = demoLocalData(now())
 		}
 
 		// Best effort: an unreadable history is not a reason to fail the load.
@@ -189,8 +196,8 @@ func loadLocalDataCmd(a *app.App) tea.Cmd {
 			recentSearches: recentSearches,
 			timerState:     timer,
 			timerBook:      timerBook,
+			lastSyncAt:     a.LastSyncAt(),
 		}
-
 	}
 }
 
@@ -247,10 +254,10 @@ func updateProgressCmd(ctx context.Context, a *app.App, bookID int, title string
 	}
 }
 
-func submitReviewRatingCmd(ctx context.Context, a *app.App, bookID int, rating float64, review string, seq int) tea.Cmd {
+func submitReviewRatingCmd(ctx context.Context, a *app.App, bookID int, rating float64, review string) tea.Cmd {
 	return func() tea.Msg {
 		if err := a.ReviewBook(ctx, bookID, rating, review); err != nil {
-			return opDoneMsg{op: opReview, seq: seq, err: err}
+			return opDoneMsg{op: opReview, err: err}
 		}
 		info := fmt.Sprintf("Updated review and rating (%s)", model.StarString(rating))
 		if strings.TrimSpace(review) == "" {
@@ -258,12 +265,23 @@ func submitReviewRatingCmd(ctx context.Context, a *app.App, bookID int, rating f
 		}
 		return opDoneMsg{
 			op:        opReview,
-			seq:       seq,
 			info:      info,
 			reload:    true,
 			markDirty: true,
 		}
+	}
+}
 
+// stamped marks an operation's result with the modal session that started
+// it, so the modal can tell its own result from any other.
+func stamped(cmd tea.Cmd, seq int) tea.Cmd {
+	return func() tea.Msg {
+		msg := cmd()
+		if done, ok := msg.(opDoneMsg); ok {
+			done.seq = seq
+			return done
+		}
+		return msg
 	}
 }
 

@@ -86,6 +86,22 @@ func syncStateKey(status model.Status) string {
 	return fmt.Sprintf("last_sync_status_%d", int(status))
 }
 
+// LastSyncAt is when the library was last synced with Hardcover: the newest
+// of the per-status stamps, or the zero time when it never was.
+func (a *App) LastSyncAt() time.Time {
+	var latest time.Time
+	for _, status := range model.AllStatuses {
+		raw, err := a.Store.GetState(syncStateKey(status))
+		if err != nil || raw == "" {
+			continue
+		}
+		if t, err := time.Parse(time.RFC3339, raw); err == nil && t.After(latest) {
+			latest = t
+		}
+	}
+	return latest
+}
+
 // syncStatus refreshes a single status and prunes books no status references
 // any more. Multi-status syncs use syncStatusOnly and prune once at the end.
 func (a *App) syncStatus(ctx context.Context, status model.Status) error {

@@ -3,32 +3,45 @@ package tui
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/Kameleon21/oku/internal/format"
-	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
+// layout is the geometry the frame is drawn into: the terminal size. The
+// six-card layout derives its panes from it as it draws.
+type layout struct {
+	W, H int
+}
+
+// rightPanelContentWidth mirrors renderLayout's width math for the right
+// panel's content area.
+func (l layout) rightPanelContentWidth() int {
+	totalW := max(60, l.W-2)
+	leftW := max(28, totalW*2/5)
+	rightW := max(28, l.W-leftW-4)
+	return rightW - 4
+}
+
 // fitToScreen pads the frame to the terminal and clamps it to those bounds, so
 // an unusually long book title or error can never push the layout off-screen
 // or wrap it onto a row that does not exist.
-func (m Model) fitToScreen(frame string) string {
-	if m.width <= 0 || m.height <= 0 {
+func (m *Model) fitToScreen(frame string) string {
+	if m.lay.W <= 0 || m.lay.H <= 0 {
 		return frame
 	}
 	return lipgloss.NewStyle().
-		MaxWidth(m.width).
-		Height(m.height).
-		MaxHeight(m.height).
+		MaxWidth(m.lay.W).
+		Height(m.lay.H).
+		MaxHeight(m.lay.H).
 		Render(frame)
 }
 
 // chromeRows counts the rows View draws outside the two-column layout: the
 // status bar, plus whatever footer the current mode prints under it.
-func (m Model) chromeRows() int {
-	if m.mode == modeUpdatePage {
+func (m *Model) chromeRows() int {
+	if m.pagePrompt() != nil {
 		return 1 + pagePromptRows
 	}
 	return 1 + 1 // status bar + help bar
@@ -37,28 +50,19 @@ func (m Model) chromeRows() int {
 // layoutHeight is the height of the two-column layout, borders included. It
 // takes every row the chrome does not, so the panels reach the bottom of the
 // terminal instead of leaving it blank.
-func (m Model) layoutHeight() int {
-	return max(8, m.height-m.chromeRows())
-}
-
-// rightPanelContentWidth mirrors renderLayout's width math for the right
-// panel's content area.
-func (m Model) rightPanelContentWidth() int {
-	totalW := max(60, m.width-2)
-	leftW := max(28, totalW*2/5)
-	rightW := max(28, m.width-leftW-4)
-	return rightW - 4
+func (m *Model) layoutHeight() int {
+	return max(8, m.lay.H-m.chromeRows())
 }
 
 // rightPanelContentHeight mirrors renderLayout's height math for the right
 // panel's content area.
-func (m Model) rightPanelContentHeight() int {
+func (m *Model) rightPanelContentHeight() int {
 	return max(1, m.layoutHeight()-2)
 }
 
 // renderLayout renders the 2-column layout: left sections + right context panel.
-func (m Model) renderLayout() string {
-	totalW := max(60, m.width-2)
+func (m *Model) renderLayout() string {
+	totalW := max(60, m.lay.W-2)
 	panelInnerH := m.rightPanelContentHeight()
 	leftW := max(28, totalW*2/5)
 
@@ -68,8 +72,8 @@ func (m Model) renderLayout() string {
 	leftPanel := m.st.pane.Width(leftW).Height(panelInnerH).Render(leftContent)
 
 	// Right panel: context-sensitive.
-	rightW := max(28, m.width-lipgloss.Width(leftPanel)-2)
-	rightContent := clampPanelContent(m.rightPanelView(rightW-4), rightW, panelInnerH)
+	rightW := max(28, m.lay.W-lipgloss.Width(leftPanel)-2)
+	rightContent := clampPanelContent(m.rightPanelView(rightW-4, panelInnerH), rightW, panelInnerH)
 	rightStyle := m.st.pane
 	if m.rightPaneFocused() {
 		rightStyle = m.st.paneFocused
@@ -85,12 +89,12 @@ func (m Model) renderLayout() string {
 // rightPaneFocused reports whether j/k act on the right pane: over the search
 // results, the timer's book picker or the stats page. The pane then carries
 // the focus border, and the section card keeps its marker.
-func (m Model) rightPaneFocused() bool {
-	switch m.section {
+func (m *Model) rightPaneFocused() bool {
+	switch m.tab {
 	case sectionSearch:
-		return m.searchSub == searchSubResults
+		return m.search.inResults()
 	case sectionTimer:
-		return m.timerSelecting && m.timerState == nil
+		return m.timerPicker() != nil
 	case sectionStats:
 		return true
 	}
@@ -109,7 +113,7 @@ func clampPanelContent(content string, w, h int) string {
 }
 
 // renderSections renders the left panel content: section labels + expanded section.
-func (m Model) renderSections(w, h int) string {
+func (m *Model) renderSections(w, h int) string {
 	defs := m.sectionDefinitions()
 	if len(defs) == 0 {
 		return ""
@@ -122,23 +126,23 @@ func (m Model) renderSections(w, h int) string {
 		if heights[def.id] <= 0 {
 			continue
 		}
-		parts = append(parts, m.renderSectionCard(def, w, heights[def.id], def.id == m.section))
+		parts = append(parts, m.renderSectionCard(def, w, heights[def.id], def.id == m.tab))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
-func (m Model) sectionDefinitions() []sectionDef {
+func (m *Model) sectionDefinitions() []sectionDef {
 	return []sectionDef{
 		{sectionIntro, "Intro", -1},
-		{sectionReading, "Reading", len(m.readingBooks)},
-		{sectionOku, "Oku", len(m.okuBooks)},
+		{sectionReading, "Reading", len(m.shared.reading)},
+		{sectionOku, "Oku", len(m.shared.oku)},
 		{sectionSearch, "Search Titles", -1},
 		{sectionStats, "Stats", -1},
 		{sectionTimer, "Timer", -1},
 	}
 }
 
-func (m Model) leftSectionHeights(totalH int) map[focusSection]int {
+func (m *Model) leftSectionHeights(totalH int) map[focusSection]int {
 	heights := map[focusSection]int{
 		sectionIntro:  3,
 		sectionSearch: 4,
@@ -190,12 +194,12 @@ func (m Model) leftSectionHeights(totalH int) map[focusSection]int {
 		readingH++
 	}
 
-	if m.section == sectionReading && okuH > 4 {
+	if m.tab == sectionReading && okuH > 4 {
 		shift := min(2, okuH-4)
 		okuH -= shift
 		readingH += shift
 	}
-	if m.section == sectionOku && readingH > 4 {
+	if m.tab == sectionOku && readingH > 4 {
 		shift := min(2, readingH-4)
 		readingH -= shift
 		okuH += shift
@@ -245,7 +249,7 @@ func (m Model) leftSectionHeights(totalH int) map[focusSection]int {
 	return heights
 }
 
-func (m Model) renderSectionCard(def sectionDef, w, h int, focused bool) string {
+func (m *Model) renderSectionCard(def sectionDef, w, h int, focused bool) string {
 	if h <= 0 {
 		return ""
 	}
@@ -260,7 +264,7 @@ func (m Model) renderSectionCard(def sectionDef, w, h int, focused bool) string 
 	if def.id == sectionReading || def.id == sectionOku || def.id == sectionSearch {
 		// innerH > 1 leaves at least one row under the label.
 		if innerH > 1 {
-			if body := m.sectionContent(def.id, max(8, w-4)); body != "" {
+			if body := m.sectionContent(def.id, max(8, w-4), innerH-1); body != "" {
 				content += "\n" + body
 			}
 		}
@@ -278,25 +282,13 @@ func (m Model) renderSectionCard(def sectionDef, w, h int, focused bool) string 
 	return style.Width(w).Height(innerH).Render(clipped)
 }
 
-// listOverflowBadge reports where the cursor sits in a list that shows fewer
-// books than it holds. Hiding the pagination dots took away the only sign that
-// there was anything below the last visible row.
-func (m Model) listOverflowBadge(id focusSection) string {
-	var l list.Model
-	switch id {
-	case sectionReading:
-		l = m.readingList
-	case sectionOku:
-		l = m.okuList
-	default:
-		return ""
+// listOverflowBadge is the library section's badge, or nothing for the
+// other cards.
+func (m *Model) listOverflowBadge(id focusSection) string {
+	if lib, ok := m.sections[id].(*librarySection); ok {
+		return lib.overflowBadge()
 	}
-
-	total := len(l.VisibleItems())
-	if total == 0 || l.Paginator.PerPage >= total {
-		return ""
-	}
-	return fmt.Sprintf("%d/%d", l.Index()+1, total)
+	return ""
 }
 
 // stampOverflowBadge right-aligns the badge on the card's last row, in the
@@ -322,7 +314,7 @@ func stampOverflowBadge(content, badge string, w int, st styles) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) formatSectionLabel(id focusSection, label string, count int, focused bool) string {
+func (m *Model) formatSectionLabel(id focusSection, label string, count int, focused bool) string {
 	num := fmt.Sprintf("%d", int(id)+1)
 	countStr := ""
 	if count >= 0 {
@@ -330,8 +322,8 @@ func (m Model) formatSectionLabel(id focusSection, label string, count int, focu
 	}
 
 	// Timer running indicator.
-	if id == sectionTimer && m.timerState != nil {
-		elapsed := time.Since(m.timerState.StartedAt)
+	if id == sectionTimer && m.shared.timer != nil {
+		elapsed := m.shared.now().Sub(m.shared.timer.StartedAt)
 		countStr = " " + m.st.keyHint.Render(format.Duration(elapsed))
 	}
 
@@ -341,15 +333,14 @@ func (m Model) formatSectionLabel(id focusSection, label string, count int, focu
 	return m.st.sectionLabel.Render("  "+num+"  "+label) + countStr
 }
 
-// sectionContent returns the expanded content for a focused section.
-func (m Model) sectionContent(id focusSection, w int) string {
+// sectionContent returns the expanded content for a card: the list, or the
+// search input row.
+func (m *Model) sectionContent(id focusSection, w, h int) string {
 	switch id {
-	case sectionReading:
-		return m.readingList.View()
-	case sectionOku:
-		return m.okuList.View()
+	case sectionReading, sectionOku:
+		return m.sections[id].View(w, h)
 	case sectionSearch:
-		return m.searchSectionContent(w)
+		return m.search.inputRow()
 	default:
 		// Intro, Stats, Timer use the right pane for full details.
 		return m.st.dim.Render("  See Output panel")
@@ -358,30 +349,29 @@ func (m Model) sectionContent(id focusSection, w int) string {
 
 // ── Right Panel Views ──────────────────────────────────────────────────────
 
-func (m Model) rightPanelView(w int) string {
-	switch m.section {
-	case sectionIntro:
-		return m.introView(w)
+func (m *Model) rightPanelView(w, h int) string {
+	switch m.tab {
 	case sectionReading, sectionOku:
-		return m.detailsView(w)
-	case sectionSearch:
-		return m.searchPanelView()
-	case sectionStats:
-		content, _ := clipLines(m.statsView(w), m.statsScroll, m.rightPanelContentHeight())
-		return content
+		return detailsView(m.section().Selected().Book, m.shared.density, w, m.st)
 	case sectionTimer:
-		return m.timerView(w)
+		if p := m.timerPicker(); p != nil {
+			return p.View(m.lay, m.st)
+		}
+		return m.section().View(w, h)
 	default:
-		return ""
+		return m.section().View(w, h)
 	}
 }
 
 // ── Resize ─────────────────────────────────────────────────────────────────
 
+// resize pushes the layout's sizes into the sections and the modals.
+// leftSectionHeights gives the focused list extra rows, so this follows the
+// focus and not only a window resize.
 func (m *Model) resize() {
 	m.help.Width = m.helpBarWidth()
 
-	totalW := max(60, m.width-2)
+	totalW := max(60, m.lay.W-2)
 	panelInnerH := m.rightPanelContentHeight()
 
 	leftW := max(28, totalW*2/5)
@@ -397,14 +387,18 @@ func (m *Model) resize() {
 
 	// "[NORMAL] [BOOK] / " eats the front of the search card's row; the input
 	// takes what is left instead of being cut off mid-placeholder.
-	m.searchInput.Width = max(4, leftContentW-20)
+	m.search.resizeInput(max(4, leftContentW-20))
 
-	m.readingList.SetSize(leftContentW, readingContentH)
-	m.okuList.SetSize(leftContentW, okuContentH)
-	m.searchList.SetSize(rightW-4, max(1, panelInnerH-1))
+	m.sections[sectionReading].Resize(leftContentW, readingContentH)
+	m.sections[sectionOku].Resize(leftContentW, okuContentH)
+	m.search.Resize(rightW-4, max(1, panelInnerH-1))
+	rightInner := m.lay.rightPanelContentWidth()
+	m.sections[sectionIntro].Resize(rightInner, panelInnerH)
+	m.sections[sectionStats].Resize(rightInner, panelInnerH)
+	m.sections[sectionTimer].Resize(rightInner, panelInnerH)
 
-	if m.showHelp {
-		m.syncHelpViewport()
+	for _, mod := range m.modals {
+		mod.Resize(m.lay)
 	}
 }
 
