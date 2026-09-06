@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // modal is one entry of the root's modal stack. The top modal takes every
@@ -148,10 +149,6 @@ func (c *confirmModal) Resize(layout) {}
 
 // ── Page prompt ────────────────────────────────────────────────────────────
 
-// pagePromptRows is how many rows View spends on the page-update prompt it
-// draws under the layout: the book, where it stands, and the input.
-const pagePromptRows = 3
-
 // pageModal is the page prompt for one book. The input starts empty, so an
 // accidental Enter cannot rewrite the progress, and keeps its format hint as
 // the placeholder: the title and the current page get lines of their own.
@@ -167,12 +164,16 @@ type pageModal struct {
 }
 
 func newPageModal(sh *shared, st styles, b model.UserBook) *pageModal {
+	// The input sits inside a modal, so it carries the panel's background: a
+	// style that only set a foreground would leave the row on the terminal's
+	// own colour.
 	in := textinput.New()
 	in.Placeholder = "370 or +10 or -5"
 	in.CharLimit = 32
 	in.Prompt = "› "
-	in.PromptStyle = st.inputPrompt
-	in.TextStyle = st.inputText
+	in.PromptStyle = st.modalKey
+	in.TextStyle = st.modalValue
+	in.PlaceholderStyle = st.modalDim
 	in.Focus()
 
 	return &pageModal{
@@ -212,18 +213,22 @@ func (p *pageModal) Update(msg tea.Msg) (bool, tea.Cmd) {
 	return false, cmd
 }
 
-// View renders the page-update prompt under the layout. It is always
-// pagePromptRows tall, which is what the layout height is computed against.
-func (p *pageModal) View(_ layout, st styles) string {
+// View renders the prompt as a centred panel: the book, where it stands and
+// the input. It used to be printed under the layout, which cost the panes
+// two rows whenever it was up.
+func (p *pageModal) View(lay layout, st styles) string {
 	current := fmt.Sprintf("current: page %d", p.current)
 	if p.total > 0 {
 		current = fmt.Sprintf("current: %d/%d", p.current, p.total)
 	}
-	return "\n" + strings.Join([]string{
-		" " + st.keyHint.Render("Update page") + "  " + st.value.Render(p.title),
-		" " + st.dim.Render(current),
-		" " + p.input.View() + st.dim.Render("   Enter save · Esc cancel"),
+	content := strings.Join([]string{
+		st.modalValue.Render(p.title),
+		st.modalDim.Render(current),
+		p.input.View(),
+		"",
+		st.modalDim.Render("Enter save · Esc cancel"),
 	}, "\n")
+	return renderModalPanel("Update page", content, max(36, min(60, lay.W-10)), st)
 }
 
 func (p *pageModal) Keys(k *keyMap) {
@@ -511,52 +516,42 @@ func (p *timerPickerModal) handleKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	return false, nil
 }
 
+// View renders the picker as a centred panel. Its width comes from the
+// layout, like every other modal's: the pane it used to be drawn inside is
+// not where the choice is made any more.
 func (p *timerPickerModal) View(lay layout, st styles) string {
-	w := lay.rightPanelContentWidth()
+	width := max(40, min(64, lay.W-10))
+	inner := width - 6
 
 	var sb strings.Builder
-	sb.WriteString(st.head.Render("Reading Timer"))
-	sb.WriteString("\n\n")
-	sb.WriteString(st.label.Render("  Select a book"))
-	sb.WriteString("\n")
-	sb.WriteString(st.dim.Render("  j/k move   Enter start   Esc cancel"))
+	sb.WriteString(st.modalDim.Render("Select a book, Enter starts the timer"))
 	sb.WriteString("\n\n")
 
 	if len(p.sh.reading) == 0 {
-		sb.WriteString(st.dim.Render("  No books in Reading."))
-		return sb.String()
+		sb.WriteString(st.modalDim.Render("No books in Reading."))
+		return renderModalPanel("Reading Timer", sb.String(), width, st)
 	}
 
-	maxTitle := w - 8
-	if maxTitle < 12 {
-		maxTitle = 12
-	}
 	for i, b := range p.sh.reading {
 		if i >= 9 {
 			break
 		}
-		title := b.Book.Title
-		if len(title) > maxTitle {
-			title = title[:maxTitle-3] + "..."
+		prefix, titleStyle := "  ", st.modalValue
+		if i == p.idx {
+			prefix, titleStyle = "▸ ", st.modalKey
 		}
 		author := b.Book.AuthorString()
 		if author == "" {
 			author = "Unknown author"
 		}
-
-		prefix := "  "
-		titleStyle := st.value
-		if i == p.idx {
-			prefix = "▸ "
-			titleStyle = st.keyHint
-		}
-
-		sb.WriteString(titleStyle.Render(prefix + title))
+		sb.WriteString(titleStyle.Render(ansi.Truncate(prefix+b.Book.Title, inner, "…")))
 		sb.WriteString("\n")
-		sb.WriteString(st.dim.Render("  " + author))
+		sb.WriteString(st.modalDim.Render(ansi.Truncate("  "+author, inner, "…")))
 		sb.WriteString("\n")
 	}
-	return strings.TrimRight(sb.String(), "\n")
+	sb.WriteString("\n")
+	sb.WriteString(st.modalDim.Render("j/k move · Enter start · Esc cancel"))
+	return renderModalPanel("Reading Timer", sb.String(), width, st)
 }
 
 func (p *timerPickerModal) Keys(k *keyMap) {
@@ -590,13 +585,16 @@ const (
 // read at render time so the rows follow it.
 type helpModal struct {
 	keys func() keyMap
-	st   styles
+	// version is the build the dashboard is running, which the footer names:
+	// the one place it is on screen now that the intro page is gone.
+	version string
+	st      styles
 	// vp scrolls the body, which is taller than a short terminal.
 	vp viewport.Model
 }
 
-func newHelpModal(keys func() keyMap, st styles) *helpModal {
-	return &helpModal{keys: keys, st: st}
+func newHelpModal(keys func() keyMap, version string, st styles) *helpModal {
+	return &helpModal{keys: keys, version: version, st: st}
 }
 
 func (h *helpModal) Update(msg tea.Msg) (bool, tea.Cmd) {
@@ -645,6 +643,9 @@ func (h *helpModal) View(_ layout, st styles) string {
 	footer := "? or esc close"
 	if h.vp.TotalLineCount() > h.vp.Height {
 		footer = "j/k scroll · ? or esc close"
+	}
+	if v := strings.TrimSpace(h.version); v != "" {
+		footer += "   oku " + v
 	}
 	return renderModalPanel(
 		"Help",

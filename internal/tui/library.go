@@ -12,9 +12,22 @@ import (
 
 // ── List item types ────────────────────────────────────────────────────────
 
+// miniBarRoom is the columns a row spends on everything but the bar: the
+// list's own indent, the author, the page counts and the separators. What is
+// left of the pane is the bar's.
+const miniBarRoom = 34
+
+// miniBarMin and miniBarMax keep the bar readable in a narrow pane and stop
+// it from swallowing a wide one.
+const miniBarMin, miniBarMax = 6, 16
+
 type userBookItem struct {
 	book    model.UserBook
 	density Density
+	// barW is the mini progress bar's width, which follows the pane: the
+	// delegate renders the description as it is given, so the row is sized
+	// when it is built.
+	barW int
 }
 
 func (i userBookItem) Title() string {
@@ -28,11 +41,7 @@ func (i userBookItem) Description() string {
 	}
 	progress := i.book.Progress()
 	if i.book.Book.Pages > 0 {
-		page := i.book.CurrentPage
-		if len(i.book.UserBookReads) > 0 {
-			page = i.book.UserBookReads[0].ProgressPages
-		}
-		progress += " " + miniProgressBar(page, i.book.Book.Pages, 8)
+		progress += " " + miniProgressBar(currentPage(i.book), i.book.Book.Pages, i.barW)
 	}
 
 	switch i.density {
@@ -62,19 +71,20 @@ const inFlightNotice = "Please wait — an update is still in flight"
 type librarySection struct {
 	sh   *shared
 	st   styles
-	tab  focusSection
+	tab  tab
 	list list.Model
+	// w is the pane's inner width, which the rows are drawn to.
+	w int
 }
 
-func newLibrarySection(sh *shared, st styles, tab focusSection) *librarySection {
-	return &librarySection{sh: sh, st: st, tab: tab, list: newList(st)}
+func newLibrarySection(sh *shared, st styles, t tab) *librarySection {
+	return &librarySection{sh: sh, st: st, tab: t, list: newList(st)}
 }
 
-// newList is a list with only its rows: the section card already prints the
-// name and the count, and the panels are only a handful of rows tall, so a
-// list spends none of them on its own title bar or on pagination dots.
-// Filtering stays enabled (SetItems reapplies an active filter) but its
-// title-bar row is not drawn.
+// newList is a list with only its rows: the pane's border already carries
+// the name and the count, so a list spends none of its rows on its own title
+// bar or on pagination dots. Filtering stays enabled (SetItems reapplies an
+// active filter) but its title-bar row is not drawn.
 func newList(st styles) list.Model {
 	l := list.New(nil, newListDelegate(0, st), 40, 12)
 	l.SetShowTitle(false)
@@ -89,7 +99,7 @@ func newList(st styles) list.Model {
 
 // books is the shelf this instance shows.
 func (s *librarySection) books() []model.UserBook {
-	if s.tab == sectionOku {
+	if s.tab == tabOku {
 		return s.sh.oku
 	}
 	return s.sh.reading
@@ -125,15 +135,6 @@ func (s *librarySection) handleKey(msg tea.KeyMsg) tea.Cmd {
 		return cmd
 	case key.Matches(msg, k.Refresh):
 		return request(reqRefresh{})
-	case key.Matches(msg, k.Details):
-		// Enter used to move the book to another shelf, so a stray keypress
-		// silently rewrote the library. It now only brings the selection into
-		// the detail pane; g/w/f/d still change the status.
-		b := s.selected()
-		if b == nil {
-			return request(reqToast{toastError, "no book selected"})
-		}
-		return request(reqToast{toastInfo, b.Book.Title})
 	case key.Matches(msg, k.ProgressUp):
 		return s.progress(+10)
 	case key.Matches(msg, k.ProgressDown):
@@ -157,7 +158,7 @@ func (s *librarySection) handleKey(msg tea.KeyMsg) tea.Cmd {
 	case key.Matches(msg, k.SetIgnored):
 		return s.changeStatus(model.StatusIgnored, true)
 	case key.Matches(msg, k.Timer):
-		return request(reqTimerToggle{book: s.selected(), reading: s.tab == sectionReading})
+		return request(reqTimerToggle{book: s.selected(), reading: s.tab == tabReading})
 	}
 	return nil
 }
@@ -183,15 +184,21 @@ func (s *librarySection) changeStatus(status model.Status, confirm bool) tea.Cmd
 	return request(reqChangeStatus{book: *b, to: status, confirm: confirm})
 }
 
-// rebuild refreshes the rows from shared. The returned command must be run:
-// with filtering enabled, SetItems reapplies an active filter.
+// rebuild refreshes the rows from shared, at the width the pane has now. The
+// returned command must be run: with filtering enabled, SetItems reapplies
+// an active filter.
 func (s *librarySection) rebuild() tea.Cmd {
 	books := s.books()
 	items := make([]list.Item, 0, len(books))
 	for _, b := range books {
-		items = append(items, userBookItem{book: b, density: s.sh.density})
+		items = append(items, userBookItem{book: b, density: s.sh.density, barW: s.barWidth()})
 	}
 	return s.list.SetItems(items)
+}
+
+// barWidth is the room the mini progress bar has in the current pane.
+func (s *librarySection) barWidth() int {
+	return clampInt(s.w-miniBarRoom, miniBarMin, miniBarMax)
 }
 
 func (s *librarySection) selected() *model.UserBook {
@@ -207,36 +214,49 @@ func (s *librarySection) selected() *model.UserBook {
 	return &book
 }
 
-func (s *librarySection) View(int, int) string { return s.list.View() }
+// View is the list, with the position badge stamped on its last row when
+// there is more of the shelf below it.
+func (s *librarySection) View(w, h int) string {
+	return stampOverflowBadge(fitBlock(s.list.View(), w, h), s.overflowBadge(), w, s.st)
+}
 
-func (s *librarySection) Resize(w, h int) { s.list.SetSize(w, h) }
+// Resize sizes the list and, when the pane's width has changed, redraws the
+// rows to it.
+func (s *librarySection) Resize(w, h int) tea.Cmd {
+	s.list.SetSize(w, h)
+	if w == s.w {
+		return nil
+	}
+	s.w = w
+	return s.rebuild()
+}
 
 func (s *librarySection) Keys(k *keyMap) {
-	sectionHint := hint("section", k.PrevSection, k.NextSection)
+	tabHint := hint("tab", k.PrevSection, k.NextSection)
 	k.Up.SetHelp("k", "navigate")
 	k.Down.SetHelp("j", "navigate")
 	if s.sh.timer != nil {
 		k.Timer.SetHelp("t", "stop timer")
-	} else if s.tab != sectionReading {
+	} else if s.tab != tabReading {
 		k.Timer.SetHelp("t", "timer (Reading list)")
 	}
-	enable(&k.Quit, &k.Help, &k.Up, &k.Down, &k.NextSection, &k.PrevSection, &k.Search,
+	enable(&k.Quit, &k.Help, &k.Up, &k.Down, &k.NextSection, &k.PrevSection, &k.TabJump, &k.Search,
 		&k.Details, &k.ProgressUp, &k.ProgressDown, &k.Update, &k.Rate,
 		&k.SetReading, &k.SetWant, &k.SetFinished, &k.SetDNF, &k.SetIgnored,
 		&k.Timer, &k.Sync, &k.Refresh, &k.Density)
 
 	// Ordered by how often a key is reached for, with help first so it is
-	// the one hint a narrow terminal never drops. Enter is left out: the
-	// detail pane it opens is already on screen.
+	// the one hint a narrow terminal never drops.
 	k.short = []key.Binding{
 		k.Help,
 		hint("navigate", k.Down, k.Up),
-		sectionHint,
+		k.Details,
+		tabHint,
 		hint("status", k.SetReading, k.SetWant, k.SetFinished, k.SetDNF, k.SetIgnored),
 		hint("page", k.ProgressUp, k.ProgressDown),
 		hintAs("u", "update", k.Update),
 	}
-	if s.tab == sectionReading || s.sh.timer != nil {
+	if s.tab == tabReading || s.sh.timer != nil {
 		k.short = append(k.short, k.Timer)
 	}
 	// The bar has a word per key; the modal spells them out.
@@ -249,7 +269,7 @@ func (s *librarySection) Blur()  {}
 func (s *librarySection) CapturesKeys() bool { return false }
 
 func (s *librarySection) Title() string {
-	if s.tab == sectionOku {
+	if s.tab == tabOku {
 		return fmt.Sprintf("Oku (%d)", len(s.books()))
 	}
 	return fmt.Sprintf("Reading (%d)", len(s.books()))
@@ -257,9 +277,9 @@ func (s *librarySection) Title() string {
 
 func (s *librarySection) Selected() selection { return selection{Book: s.selected()} }
 
-// overflowBadge reports where the cursor sits when the list shows fewer
-// books than it holds. Hiding the pagination dots took away the only sign
-// that there was anything below the last visible row.
+// overflowBadge reports where the cursor sits when the pane shows fewer
+// books than the shelf holds. Hiding the pagination dots took away the only
+// sign that there was anything below the last visible row.
 func (s *librarySection) overflowBadge() string {
 	total := len(s.list.VisibleItems())
 	if total == 0 || s.list.Paginator.PerPage >= total {

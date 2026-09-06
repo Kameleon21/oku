@@ -18,10 +18,27 @@ func runeKey(r rune) tea.KeyMsg {
 // newTestModel builds a dashboard with no app, so every command that would
 // touch the network or the store reports an error instead.
 func newTestModel() *Model {
-	m := New(context.Background(), nil, DensityDefault)
+	m := New(context.Background(), nil, DensityDefault, "test")
 	// Tests drive Update directly and never run Init, so nothing is in flight.
 	m.inflight = 0
 	return m
+}
+
+// The sections behind the interface, for the tests that reach into one.
+func readingSection(m *Model) *librarySection { return m.sections[tabReading].(*librarySection) }
+func okuSection(m *Model) *librarySection     { return m.sections[tabOku].(*librarySection) }
+func searchSection_(m *Model) *searchSection  { return m.sections[tabSearch].(*searchSection) }
+func statsSection_(m *Model) *statsSection    { return m.sections[tabStats].(*statsSection) }
+
+// The modals on the stack, for the tests that assert on one.
+func pageModalOf(m *Model) *pageModal {
+	p, _ := m.topModal().(*pageModal)
+	return p
+}
+
+func timerPickerOf(m *Model) *timerPickerModal {
+	p, _ := m.topModal().(*timerPickerModal)
+	return p
 }
 
 // send feeds a message to the model and delivers the request it raises, the
@@ -57,7 +74,16 @@ func deliver(t *testing.T, m *Model, cmd tea.Cmd) tea.Cmd {
 // a dark render would be the same bytes.
 func withColorProfile(t *testing.T) {
 	t.Helper()
-	lipgloss.SetColorProfile(termenv.ANSI256)
+	setColorProfile(t, termenv.ANSI256, true)
+}
+
+// setColorProfile pins the profile and the background for one test, and puts
+// both back afterwards. Goldens use it to render the same bytes wherever
+// they run.
+func setColorProfile(t *testing.T, profile termenv.Profile, dark bool) {
+	t.Helper()
+	lipgloss.SetColorProfile(profile)
+	lipgloss.SetHasDarkBackground(dark)
 	t.Cleanup(func() {
 		lipgloss.SetColorProfile(termenv.Ascii)
 		lipgloss.SetHasDarkBackground(true)

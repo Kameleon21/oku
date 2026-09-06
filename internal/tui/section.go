@@ -23,8 +23,11 @@ type section interface {
 	// the list for a library section, the results for search, the page for
 	// stats and timer. The root decides where it goes.
 	View(w, h int) string
-	// Resize is called by the root from the layout; lists SetSize here.
-	Resize(w, h int)
+	// Resize is called by the root from the layout; lists SetSize here. It
+	// returns a command because rows drawn to the pane's own width have to
+	// be rebuilt when it changes, and a rebuild's SetItems command must be
+	// run or an active filter goes blank.
+	Resize(w, h int) tea.Cmd
 	// Keys enables and relabels the bindings this focus understands, and
 	// sets k.short, the help bar order.
 	Keys(k *keyMap)
@@ -33,7 +36,8 @@ type section interface {
 	// CapturesKeys reports that a text input owns the keyboard, so the root
 	// keys (q, ?, h/l, ...) are letters here.
 	CapturesKeys() bool
-	// Title is the pane title: "Reading (3)", "Search", "Stats".
+	// Title is the pane title, drawn in the pane's top border: "Reading (3)",
+	// "Search", "Stats · 2026".
 	Title() string
 	// Selected is what the detail pane should show; zero is the empty state.
 	Selected() selection
@@ -53,8 +57,12 @@ type selection struct {
 // loop.
 type shared struct {
 	reading, oku []model.UserBook
-	stats        *model.ReadingStats
-	weekly       model.WeeklyStats
+	// shelf is every cached user book by book id, across all statuses, so
+	// the search detail can say whether the library already has a result,
+	// and what it was rated.
+	shelf  map[int]model.UserBook
+	stats  *model.ReadingStats
+	weekly model.WeeklyStats
 	// sessions is the recent timer history, newest first. The Timer pane
 	// shows five of them; the rest are for a per-book view.
 	sessions []model.ReadingSession
@@ -198,8 +206,16 @@ type reqOpenModal struct{ m modal }
 // reqHelp opens the help modal over whatever has focus.
 type reqHelp struct{}
 
-// reqSwitchTab moves the focus step sections along, wrapping.
-type reqSwitchTab struct{ step int }
+// reqSwitchTab shows another tab: to when abs is set, otherwise step tabs
+// along from the current one, wrapping.
+type reqSwitchTab struct {
+	to   tab
+	abs  bool
+	step int
+}
+
+// reqFocus moves the keyboard between the content and the detail pane.
+type reqFocus struct{ to focus }
 
 // reqToast puts a message in the status bar.
 type reqToast struct {

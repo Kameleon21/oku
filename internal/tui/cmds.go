@@ -79,7 +79,10 @@ type localDataLoadedMsg struct {
 	timerState     *model.TimerState
 	timerBook      *model.Book
 	lastSyncAt     time.Time
-	err            error
+	// shelf is every cached user book by book id: what the search detail
+	// reads to say a result is already in the library.
+	shelf map[int]model.UserBook
+	err   error
 }
 
 type timerOpDoneMsg struct {
@@ -182,7 +185,15 @@ func loadLocalDataCmd(a *app.App, now func() time.Time) tea.Cmd {
 			stats, sessions = demoLocalData(now())
 		}
 
-		// Best effort: an unreadable history is not a reason to fail the load.
+		// Best effort, both of them: neither the search history nor the
+		// shelf lookup is worth failing the whole load over.
+		shelf := map[int]model.UserBook{}
+		if all, err := a.ListAllCachedUserBooks(); err == nil {
+			for _, b := range all {
+				shelf[b.Book.ID] = b
+			}
+		}
+
 		var recentSearches []string
 		if a.Store != nil {
 			if raw, err := a.Store.GetState(recentSearchesKey); err == nil {
@@ -197,6 +208,7 @@ func loadLocalDataCmd(a *app.App, now func() time.Time) tea.Cmd {
 			timerState:     timer,
 			timerBook:      timerBook,
 			lastSyncAt:     a.LastSyncAt(),
+			shelf:          shelf,
 		}
 	}
 }

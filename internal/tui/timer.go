@@ -29,10 +29,6 @@ func (s *timerSection) Update(msg tea.Msg) tea.Cmd {
 	}
 	k := keysFor(s)
 	switch {
-	case key.Matches(keyMsg, k.Down):
-		return request(reqSwitchTab{step: +1})
-	case key.Matches(keyMsg, k.Up):
-		return request(reqSwitchTab{step: -1})
 	case key.Matches(keyMsg, k.Timer):
 		if s.sh.timer != nil {
 			// Same key, same meaning as in the library: t toggles.
@@ -47,12 +43,14 @@ func (s *timerSection) Update(msg tea.Msg) tea.Cmd {
 }
 
 // View renders the timer page.
-func (s *timerSection) View(w, _ int) string {
+func (s *timerSection) View(w, h int) string {
+	return fitBlock(s.page(w), w, h)
+}
+
+func (s *timerSection) page(w int) string {
+	// No heading: the pane's own title already names the page.
 	st := s.st
 	var sb strings.Builder
-
-	sb.WriteString(st.head.Render("Reading Timer"))
-	sb.WriteString("\n\n")
 
 	now := s.sh.now()
 	if s.sh.timer == nil {
@@ -149,22 +147,22 @@ func (s *timerSection) View(w, _ int) string {
 	return sb.String()
 }
 
-func (s *timerSection) Resize(int, int) {}
+func (s *timerSection) Resize(int, int) tea.Cmd { return nil }
 
+// Keys leaves j/k out: the tab strip moves between pages now, and this one
+// is a single screen with nothing to scroll.
 func (s *timerSection) Keys(k *keyMap) {
-	sectionHint := hint("section", k.PrevSection, k.NextSection)
-	k.Up.SetHelp("k", "section")
-	k.Down.SetHelp("j", "section")
+	tabHint := hint("tab", k.PrevSection, k.NextSection)
 	if s.sh.timer != nil {
 		k.Timer.SetHelp("t", "stop timer")
-		enable(&k.Quit, &k.Help, &k.Up, &k.Down, &k.NextSection, &k.PrevSection, &k.Search,
+		enable(&k.Quit, &k.Help, &k.NextSection, &k.PrevSection, &k.TabJump, &k.Search,
 			&k.Timer, &k.TimerStop)
-		k.short = []key.Binding{k.Help, hint("stop", k.Timer, k.TimerStop), sectionHint, k.Search, k.Quit}
+		k.short = []key.Binding{k.Help, hint("stop", k.Timer, k.TimerStop), tabHint, k.Search, k.Quit}
 		return
 	}
 	k.Timer.SetHelp("t", "choose + start")
-	enable(&k.Quit, &k.Help, &k.Up, &k.Down, &k.NextSection, &k.PrevSection, &k.Search, &k.Timer)
-	k.short = []key.Binding{k.Help, k.Timer, sectionHint, k.Search, k.Quit}
+	enable(&k.Quit, &k.Help, &k.NextSection, &k.PrevSection, &k.TabJump, &k.Search, &k.Timer)
+	k.short = []key.Binding{k.Help, k.Timer, tabHint, k.Search, k.Quit}
 }
 
 func (s *timerSection) Focus() {}

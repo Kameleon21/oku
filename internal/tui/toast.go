@@ -123,27 +123,28 @@ func (m *Model) runUndo() tea.Cmd {
 	return nil
 }
 
-// renderToast draws the toast into avail columns: a glyph for the level (so
-// a terminal without colour can tell an error from a note), the text cut to
-// what fits, and the undo hint while there is a change to undo.
+// renderToast draws the toast into avail columns of the footer: a glyph for
+// the level (so a terminal without colour can tell an error from a note),
+// the text cut to what fits, and the undo hint while there is a change to
+// undo.
 func (m *Model) renderToast(avail int) string {
 	if m.toast.text == "" {
 		return ""
 	}
-	style, glyph := m.st.statusBarInfo, ""
+	style, glyph := m.st.toastInfo, ""
 	switch m.toast.level {
 	case toastSuccess:
-		style = m.st.statusBarSuccess
+		style, glyph = m.st.toastSuccess, "✓ "
 	case toastWarn:
-		style, glyph = m.st.statusBarWarn, "! "
+		style, glyph = m.st.toastWarn, "! "
 	case toastError:
-		style, glyph = m.st.statusBarError, "✗ "
+		style, glyph = m.st.toastError, "✗ "
 	}
 	undoHint := ""
 	if m.undo != nil {
-		undoHint = m.st.statusBarFill.Render(" · ") +
-			m.st.statusBarAccent.Render("U") +
-			m.st.statusBarFill.Render(" undo")
+		undoHint = m.st.dim.Render(" · ") +
+			m.st.toastAccent.Render("U") +
+			m.st.dim.Render(" undo")
 	}
 
 	// An API error can carry newlines and runs of whitespace. Left alone they
@@ -151,9 +152,9 @@ func (m *Model) renderToast(avail int) string {
 	// help bar would be the thing clipped off the bottom of the screen.
 	text := strings.Join(strings.Fields(m.toast.text), " ")
 
-	// A message wider than the bar would wrap it onto a second line and push
-	// the layout down a row, so it is cut to the room that is left. The undo
-	// hint goes first when there is not room for both.
+	// A message wider than the footer would wrap it onto a second line and
+	// push the layout off the screen, so it is cut to the room that is left.
+	// The undo hint goes first when there is not room for both.
 	room := avail - lipgloss.Width(glyph) - lipgloss.Width(undoHint)
 	if room < minStatusMessageWidth {
 		undoHint = ""
