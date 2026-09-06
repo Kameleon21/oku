@@ -12,7 +12,7 @@ Type "oku"
 Enter
 Sleep 3s
 
-# Browse the sample reading library.
+# Browse the sample reading library. The detail pane follows the cursor.
 Type "j"
 Sleep 1s
 Type "j"
@@ -20,17 +20,23 @@ Sleep 1s
 Type "k"
 Sleep 1s
 
-# Want-to-read shelf.
+# Enter moves the keyboard into the detail pane; Escape brings it back.
+Enter
+Sleep 2s
+Escape
+Sleep 1s
+
+# Want-to-read shelf: tab 2.
 Type "l"
 Sleep 2s
 Type "j"
 Sleep 1s
 
-# Skip live search; show local demo statistics.
+# Past the Search tab (3) to the statistics (4); no live search is made.
 Type "ll"
 Sleep 4s
 
-# Open the timer's local book picker, then cancel.
+# The Timer tab (5): open its local book picker, then cancel.
 Type "l"
 Sleep 2s
 Type "t"

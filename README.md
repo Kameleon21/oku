@@ -75,19 +75,26 @@ density. Run `oku --help` or `oku <command> --help` for all commands and flags.
 
 ### Dashboard controls
 
-Launch with `oku` or `oku tui`. Navigation uses vim-style keys; arrow keys also work.
+Launch with `oku` or `oku tui`. The dashboard has five tabs — Reading, Oku,
+Search, Stats and Timer — named in the strip along the top. Navigation uses
+vim-style keys; arrow keys also work.
 
 | Key | What it does |
 | --- | --- |
-| `h` / `l` | Move between panes |
-| `j` / `k` | Navigate lists |
-| `/` | Search |
-| `Enter` | Open details |
+| `1`–`5` | Jump to a tab |
+| `h` / `l` | Previous / next tab |
+| `Tab` / `Shift+Tab` | Previous / next tab |
+| `j` / `k` | Navigate lists, scroll the detail pane and the stats page |
+| `Enter` | Open the selection in the detail pane (`Esc` goes back) |
 | `+` / `-` | Quick page update |
+| `u` | Set an exact page |
 | `U` | Undo the last change while its toast is visible |
+| `/` | Search |
 | `?` / `q` | Help / quit |
 
-Press `?` for all controls available in the focused section.
+On a terminal at least 100 columns wide the detail pane sits beside the list;
+below that `Enter` opens it in place of the list. Press `?` for every control
+the focused tab understands.
 
 ### Reading timer
 

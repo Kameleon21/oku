@@ -118,14 +118,16 @@ func (d *detailPane) Keys(k *keyMap) {
 	k.Details.SetEnabled(false)
 
 	// The scroll and the way out come first; the actions the section still
-	// answers for keep their places behind them.
+	// answers for keep their places behind them. The bar holds copies of the
+	// bindings, so the hints that no longer apply are dropped by hand rather
+	// than by disabling the originals.
+	details := k.Details.Help()
 	rest := make([]key.Binding, 0, len(k.short))
 	for _, b := range k.short {
-		switch b.Help().Key {
-		case "?", "j/k", "k/j":
-		default:
-			rest = append(rest, b)
+		if h := b.Help(); h.Key == "?" || h.Key == "j/k" || h.Key == "k/j" || h == details {
+			continue
 		}
+		rest = append(rest, b)
 	}
 	k.short = append([]key.Binding{k.Help, hint("scroll", k.Down, k.Up), k.Back}, rest...)
 }
