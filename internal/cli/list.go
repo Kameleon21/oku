@@ -73,8 +73,8 @@ func newNowCmd() *cobra.Command {
 				return err
 			}
 			if !jsonOutput && len(books) > 0 {
-				fmt.Println(statusStyle.Render("Currently Reading"))
-				fmt.Println()
+				outPrintln(statusStyle().Render("Currently Reading"))
+				outPrintln()
 			}
 			return printBooks(books)
 		},

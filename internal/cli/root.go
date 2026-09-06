@@ -34,13 +34,8 @@ func newRootCmd(version string) *cobra.Command {
 			// (or, for `config edit`, to tolerate), so only the theme value
 			// itself is checked here.
 			if cfg, err := config.Load(); err == nil {
-				if err := tui.ApplyThemeSetting(cfg.Theme); err != nil {
-					return err
-				}
+				return tui.ApplyThemeSetting(cfg.Theme)
 			}
-			// lipgloss v2 has no adaptive colour, so the CLI's own styles are
-			// built once here, for the background this run is writing to.
-			detectOutputTheme()
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {

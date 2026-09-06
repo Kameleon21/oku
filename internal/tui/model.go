@@ -850,12 +850,23 @@ func (m *Model) render() (string, *tea.Cursor) {
 
 	top := m.topModal()
 	if top == nil {
-		return dashboard, m.sectionCursor()
+		return dashboard, m.onScreen(m.sectionCursor())
 	}
 	// The panel is composed over the dashboard rather than over a blank
 	// screen: the frame behind it stays readable.
 	frame, x, y := overlayModal(m.lay, dashboard, top.View(m.lay, m.st))
-	return frame, offsetCursor(modalCursor(top), x, y)
+	return frame, m.onScreen(offsetCursor(modalCursor(top), x, y))
+}
+
+// onScreen drops a cursor the terminal has no room for. A panel taller or
+// wider than the window is clamped by the frame, so the field it belongs to
+// may not be drawn at all; asking for a cursor past the last row would put it
+// somewhere the reader is not looking.
+func (m *Model) onScreen(cur *tea.Cursor) *tea.Cursor {
+	if cur == nil || cur.X < 0 || cur.Y < 0 || cur.X >= m.lay.W || cur.Y >= m.lay.H {
+		return nil
+	}
+	return cur
 }
 
 // modalCursor is the top modal's cursor, for the modals that have a field.

@@ -242,7 +242,7 @@ func newReviewCmd() *cobra.Command {
 				return fmt.Errorf("unexpected review form result type %T", final)
 			}
 			if result.cancelled || !result.submitted {
-				fmt.Println("Cancelled.")
+				outPrintln("Cancelled.")
 				return nil
 			}
 
@@ -250,12 +250,12 @@ func newReviewCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("Updated review and rating for %s\n", titleStyle.Render(ub.Book.Title))
-			fmt.Printf("Rating: %s (%s)\n", pageStyle.Render(fmt.Sprintf("%.1f", result.rating)), model.StarString(result.rating))
+			outPrintf("Updated review and rating for %s\n", titleStyle().Render(ub.Book.Title))
+			outPrintf("Rating: %s (%s)\n", pageStyle().Render(fmt.Sprintf("%.1f", result.rating)), model.StarString(result.rating))
 			if strings.TrimSpace(result.review) == "" {
-				fmt.Println("Review cleared.")
+				outPrintln("Review cleared.")
 			} else {
-				fmt.Println("Review updated.")
+				outPrintln("Review updated.")
 			}
 			return nil
 		},

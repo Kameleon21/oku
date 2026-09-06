@@ -32,7 +32,7 @@ func newOpenCmd() *cobra.Command {
 				return err
 			}
 			if bookID == 0 {
-				fmt.Println("Cancelled.")
+				outPrintln("Cancelled.")
 				return nil
 			}
 
@@ -43,7 +43,7 @@ func newOpenCmd() *cobra.Command {
 			// Find the selected book for display.
 			for _, b := range books {
 				if b.Book.ID == bookID {
-					fmt.Printf("Added to active list: %s\n", titleStyle.Render(b.Book.Title))
+					outPrintf("Added to active list: %s\n", titleStyle().Render(b.Book.Title))
 					break
 				}
 			}

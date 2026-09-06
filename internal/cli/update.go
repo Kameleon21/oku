@@ -33,7 +33,7 @@ func newUpdateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("Progress updated to page %s\n", pageStyle.Render(fmt.Sprintf("%d", newPage)))
+			outPrintf("Progress updated to page %s\n", pageStyle().Render(fmt.Sprintf("%d", newPage)))
 			return nil
 		},
 	}

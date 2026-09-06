@@ -45,11 +45,19 @@ type cursorModal interface {
 
 // A panel's own frame, which a cursor inside one of its fields is measured
 // against: renderModalPanel draws one border column, the helpModal style's
-// padding (one row, two columns), then the title and a blank row.
+// padding (one row, modalPadW columns), then the title and a blank row.
 const (
-	modalContentX = 1 + 2
+	modalPadW     = 2
+	modalContentX = 1 + modalPadW
 	modalContentY = 1 + 1 + 2
 )
+
+// modalInnerW is the columns a panel of this width leaves its content. A row
+// wider than this is wrapped by the panel style, which would push everything
+// below it — the cursor's row included — down by a line, so the rows a field
+// is positioned against are truncated to it. The width is the panel's outer
+// width, border included, so the content loses modalContentX on each side.
+func modalInnerW(width int) int { return max(1, width-2*modalContentX) }
 
 // ── Confirm ────────────────────────────────────────────────────────────────
 
@@ -204,6 +212,10 @@ func newPageModal(sh *shared, st styles, b model.UserBook) *pageModal {
 	// The root draws the terminal's own cursor over the panel, so the input
 	// must not draw a block of its own on top of it.
 	in.SetVirtualCursor(false)
+	// Focused before the literal, not inside it: the order in which a
+	// composite literal's fields are evaluated is not specified, and Focus
+	// mutates the input the literal copies.
+	focusCmd := in.Focus()
 
 	return &pageModal{
 		bookID:   b.Book.ID,
@@ -211,7 +223,7 @@ func newPageModal(sh *shared, st styles, b model.UserBook) *pageModal {
 		current:  currentPage(b),
 		total:    b.Book.Pages,
 		input:    in,
-		focusCmd: in.Focus(),
+		focusCmd: focusCmd,
 		token:    sh.nextToken(),
 	}
 }
@@ -288,9 +300,12 @@ func (p *pageModal) View(lay layout, st styles) string {
 	if p.total > 0 {
 		current = fmt.Sprintf("current: %d/%d", p.current, p.total)
 	}
+	// The title is cut rather than wrapped: a wrapped one would move the
+	// input, and the cursor is placed on a row this panel promises.
+	inner := modalInnerW(pageModalWidth(lay))
 	rows := []string{
-		st.modalValue.Render(p.title),
-		st.modalDim.Render(current),
+		st.modalValue.Render(ansi.Truncate(p.title, inner, "…")),
+		st.modalDim.Render(ansi.Truncate(current, inner, "…")),
 		p.input.View(),
 		"",
 	}
@@ -318,7 +333,7 @@ func (p *pageModal) Keys(k *keyMap) {
 // nothing wider than its width, placeholder included, and zero is not "no
 // limit" as it was in v1: without this the hint is cut to one character.
 func (p *pageModal) Resize(lay layout) {
-	p.input.SetWidth(max(8, pageModalWidth(lay)-2*modalContentX-lipgloss.Width(p.input.Prompt)))
+	p.input.SetWidth(max(8, modalInnerW(pageModalWidth(lay))-lipgloss.Width(p.input.Prompt)))
 }
 
 // pageModalWidth is the panel's own width, which View and Resize both need.
@@ -513,10 +528,15 @@ func (r *reviewModal) View(lay layout, st styles) string {
 		ratingLabel = fmt.Sprintf("%.1f", rating)
 	}
 
+	width := reviewModalWidth(lay)
+	// Both rows are cut rather than wrapped: a wrapped one would move the
+	// fields, and the cursor is placed on rows this panel promises.
+	inner := modalInnerW(width)
+
 	var sb strings.Builder
-	sb.WriteString(st.modalValue.Render(r.book.Book.Title))
+	sb.WriteString(st.modalValue.Render(ansi.Truncate(r.book.Book.Title, inner, "…")))
 	sb.WriteString("\n")
-	sb.WriteString(st.modalDim.Render(fallback(r.book.Book.AuthorString(), "Unknown author")))
+	sb.WriteString(st.modalDim.Render(ansi.Truncate(fallback(r.book.Book.AuthorString(), "Unknown author"), inner, "…")))
 	sb.WriteString("\n\n")
 	sb.WriteString(r.rating.View())
 	sb.WriteString(st.modalBg.Render("  "))
@@ -544,11 +564,12 @@ func (r *reviewModal) View(lay layout, st styles) string {
 
 	sb.WriteString(st.modalDim.Render("Tab/Shift+Tab switch fields   Ctrl+S save   Esc cancel"))
 
-	width := max(70, lay.W-10)
-	if width > 100 {
-		width = 100
-	}
 	return renderModalPanel("Review / Rate Book", sb.String(), width, st)
+}
+
+// reviewModalWidth is the panel's own width, which View and Resize both need.
+func reviewModalWidth(lay layout) int {
+	return min(100, max(70, lay.W-10))
 }
 
 func (r *reviewModal) Keys(k *keyMap) {

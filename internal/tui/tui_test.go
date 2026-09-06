@@ -831,6 +831,67 @@ func TestPageModalPutsTheRealCursorInItsInput(t *testing.T) {
 	}
 }
 
+// TestModalCursorSurvivesALongTitle: a title wider than the panel would be
+// wrapped by the panel style and push every row below it — the field's row
+// included — down a line, leaving the cursor above what it points at. Both
+// modals cut their title instead.
+func TestModalCursorSurvivesALongTitle(t *testing.T) {
+	long := strings.Repeat("Ab", 48) // 96 columns
+	if len(long) != 96 {
+		t.Fatalf("the fixture title is %d columns, want 96", len(long))
+	}
+	book := model.UserBook{Book: model.Book{ID: 1, Title: long, Pages: 300}, CurrentPage: 100}
+
+	for _, size := range [][2]int{{80, 24}, {120, 40}} {
+		for _, open := range []struct {
+			name string
+			push func(*Model) modal
+		}{
+			{"page", func(m *Model) modal { return newPageModal(m.shared, m.st, book) }},
+			{"review", func(m *Model) modal { return newReviewModal(m.shared, m.st, book) }},
+		} {
+			t.Run(fmt.Sprintf("%s_%dx%d", open.name, size[0], size[1]), func(t *testing.T) {
+				m := renderedDashboard(size[0], size[1])
+				setLibrary(m, []model.UserBook{book}, nil)
+				m.push(open.push(m))
+
+				panel := m.topModal().View(m.lay, m.st)
+				y := (m.lay.H - lipgloss.Height(panel)) / 2
+				cur := m.View().Cursor
+				if cur == nil {
+					t.Fatal("the focused field has no cursor")
+				}
+				// The cursor's row has to be one of the panel's own, and the
+				// glyph under it has to be part of the field rather than the
+				// second half of a wrapped title.
+				row := strings.Split(stripANSI(m.View().Content), "\n")[cur.Y]
+				if !strings.Contains(row, "›") && !strings.Contains(row, "Rating:") {
+					t.Fatalf("cursor row %d (panel at %d) is %q, want the field's row", cur.Y, y, row)
+				}
+			})
+		}
+	}
+}
+
+// TestCursorIsDroppedWhenTheTerminalHasNoRoomForIt: a panel taller than the
+// window is clamped by the frame, so the field may not be drawn at all. A
+// cursor past the last row would sit somewhere the reader is not looking.
+func TestCursorIsDroppedWhenTheTerminalHasNoRoomForIt(t *testing.T) {
+	book := model.UserBook{Book: model.Book{ID: 1, Title: "Dune", Pages: 300}, CurrentPage: 100}
+	for _, size := range [][2]int{{100, 3}, {20, 5}} {
+		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
+			m := renderedDashboard(size[0], size[1])
+			setLibrary(m, []model.UserBook{book}, nil)
+			m.push(newPageModal(m.shared, m.st, book))
+
+			if cur := m.View().Cursor; cur != nil {
+				t.Fatalf("cursor = (%d,%d) on a %dx%d terminal, want none",
+					cur.X, cur.Y, size[0], size[1])
+			}
+		})
+	}
+}
+
 // TestPageModalIsReadOnlyWhileSaving is the review modal's rule for the page
 // prompt: the fields stop taking keys until the save reports back, so a
 // second Enter cannot start a second update, and Esc still cancels.
