@@ -27,8 +27,8 @@ func newTestModel() *Model {
 // The sections behind the interface, for the tests that reach into one.
 func readingSection(m *Model) *librarySection { return m.sections[tabReading].(*librarySection) }
 func okuSection(m *Model) *librarySection     { return m.sections[tabOku].(*librarySection) }
-func searchSection_(m *Model) *searchSection  { return m.sections[tabSearch].(*searchSection) }
-func statsSection_(m *Model) *statsSection    { return m.sections[tabStats].(*statsSection) }
+func searchOf(m *Model) *searchSection        { return m.sections[tabSearch].(*searchSection) }
+func statsOf(m *Model) *statsSection          { return m.sections[tabStats].(*statsSection) }
 
 // The modals on the stack, for the tests that assert on one.
 func pageModalOf(m *Model) *pageModal {

@@ -60,7 +60,7 @@ func TestDemoTapeKeysStillNavigate(t *testing.T) {
 		if m.focus != step.focus {
 			t.Fatalf("after key %d (%q) the focus is %v, want %v", i, step.key, m.focus, step.focus)
 		}
-		if got := searchSection_(m).input.Value(); got != "" {
+		if got := searchOf(m).input.Value(); got != "" {
 			t.Fatalf("after key %d (%q) the search input reads %q: the tape typed into it", i, step.key, got)
 		}
 	}

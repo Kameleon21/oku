@@ -248,7 +248,7 @@ func TestTabKeysNeverReachTheSearchInput(t *testing.T) {
 		for key, tb := range want {
 			m := renderedDashboard(120, 40)
 			m.setTab(tabSearch)
-			s := searchSection_(m)
+			s := searchOf(m)
 			s.results = []model.SearchResult{{ID: 1, Title: "Dune"}}
 			s.rebuildResults()
 			s.input.SetValue("dune")
@@ -258,7 +258,7 @@ func TestTabKeysNeverReachTheSearchInput(t *testing.T) {
 			if m.tab != tb {
 				t.Fatalf("%s: %q went to tab %v, want %v", name, key, m.tab, tb)
 			}
-			if got := searchSection_(m).input.Value(); got != "dune" {
+			if got := searchOf(m).input.Value(); got != "dune" {
 				t.Fatalf("%s: %q was typed into the search input, which now reads %q", name, key, got)
 			}
 		}
@@ -267,12 +267,12 @@ func TestTabKeysNeverReachTheSearchInput(t *testing.T) {
 	// In insert mode the input owns the keyboard, and a digit is a digit.
 	m := renderedDashboard(120, 40)
 	m.setTab(tabSearch)
-	searchSection_(m).focusInput()
+	searchOf(m).focusInput()
 	send(t, m, runeKey('1'))
 	if m.tab != tabSearch {
 		t.Fatalf("a digit typed into the input should not switch tabs, tab = %v", m.tab)
 	}
-	if got := searchSection_(m).input.Value(); got != "1" {
+	if got := searchOf(m).input.Value(); got != "1" {
 		t.Fatalf("insert mode should type the digit, input = %q", got)
 	}
 }

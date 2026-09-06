@@ -247,12 +247,12 @@ func (s *searchSection) inputRow() string {
 // and the results themselves — the search in progress, the empty state or
 // the list.
 func (s *searchSection) View(w, h int) string {
-	body := s.results_()
+	body := s.resultsView()
 	return fitBlock(s.inputRow()+"\n"+s.st.label.Render(s.list.Title)+"\n\n"+body, w, h)
 }
 
-// results_ is the pane below the input row.
-func (s *searchSection) results_() string {
+// resultsView is the pane below the input row.
+func (s *searchSection) resultsView() string {
 	if s.loading {
 		query := s.loadingQuery
 		if strings.TrimSpace(query) == "" {

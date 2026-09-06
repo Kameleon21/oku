@@ -59,7 +59,7 @@ func withDetailFocus(m *Model) { m.setFocus(focusDetail) }
 // withResults fills the Search tab with the demo results and puts the cursor
 // in them.
 func withResults(m *Model) {
-	s := searchSection_(m)
+	s := searchOf(m)
 	s.results = demoData(fixedNow).results
 	s.lastQuery, s.lastMode = "dune", "book"
 	s.input.SetValue("dune")
@@ -107,11 +107,11 @@ func TestGoldenTabs(t *testing.T) {
 func TestGoldenSearchStates(t *testing.T) {
 	cases := map[string]goldenOpt{
 		"normal": func(m *Model) {
-			s := searchSection_(m)
+			s := searchOf(m)
 			s.sub = searchSubInput
 			s.enterNormalMode()
 		},
-		"insert": func(m *Model) { searchSection_(m).focusInput() },
+		"insert": func(m *Model) { searchOf(m).focusInput() },
 		"empty":  func(*Model) {},
 	}
 	for name, opt := range cases {
