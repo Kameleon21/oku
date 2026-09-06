@@ -1824,7 +1824,8 @@ func TestEveryAdvertisedBindingIsHandled(t *testing.T) {
 			// still scroll either way.
 			m := base(80, 24)
 			m.setTab(tabStats)
-			statsOf(m).scroll = 1
+			m.frame() // fills the viewport, which is what there is to scroll
+			statsOf(m).vp.LineDown(1)
 			return m
 		}}},
 		{name: "timer, idle", variants: []func() *Model{inSection(tabTimer)}, selfKey: "5"},

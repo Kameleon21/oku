@@ -9,54 +9,125 @@ import (
 	"github.com/Kameleon21/oku/internal/format"
 	"github.com/Kameleon21/oku/internal/model"
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
 // statsSection is the reading statistics page: Hardcover library stats
 // (year summary, goal, heatmap, months, ratings, genres) plus local timer
-// stats for the current week, scrolled a line at a time.
+// stats for the current week.
+//
+// The page is drawn into a viewport, so it scrolls a line, half a page or
+// the whole way at a time instead of being clipped by hand. Building it is
+// a dozen charts' worth of work, so the result is memoised on everything
+// that would change it; a data change or a resize drops the memo.
 type statsSection struct {
-	sh     *shared
-	st     styles
-	scroll int
-	// w and h are the pane the page is drawn into, so a scroll can clamp
-	// against what is actually visible.
+	sh *shared
+	st styles
+	vp viewport.Model
+
+	// w and h are the pane the page is drawn into.
 	w, h int
+
+	// key is what the page in the viewport was built from. The zero value
+	// means nothing has been built yet.
+	key statsKey
+}
+
+// statsKey is everything the page is derived from: a change in any of it is
+// a page that has to be built again.
+type statsKey struct {
+	w       int
+	stats   *model.ReadingStats
+	weekly  model.WeeklyStats
+	density Density
+	// built marks a key as a real one, so the zero value never matches.
+	built bool
 }
 
 func newStatsSection(sh *shared, st styles) *statsSection {
-	return &statsSection{sh: sh, st: st}
+	return &statsSection{sh: sh, st: st, vp: viewport.New(1, 1)}
 }
 
 func (s *statsSection) Update(msg tea.Msg) tea.Cmd {
+	if msg, ok := msg.(dataChangedMsg); ok {
+		// The stats and the timer week come with the local data; the density
+		// is not on the page today, but the memo keys on it either way so a
+		// row that starts reading it cannot go stale.
+		if msg.kind == dataLocal || msg.kind == dataDensity {
+			s.key = statsKey{}
+		}
+		return nil
+	}
 	keyMsg, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return nil
 	}
+	// The keys move the viewport, which has to hold the page before it can
+	// be scrolled: a key pressed before the first render would otherwise
+	// scroll an empty box.
+	s.build()
 	k := keysFor(s)
 	switch {
 	case key.Matches(keyMsg, k.Down):
-		_, s.scroll = clipLines(s.render(s.w), s.scroll+1, s.h)
+		s.vp.LineDown(1)
 	case key.Matches(keyMsg, k.Up):
-		if s.scroll > 0 {
-			s.scroll--
-		}
+		s.vp.LineUp(1)
+	case key.Matches(keyMsg, k.HalfPageDown):
+		s.vp.HalfViewDown()
+	case key.Matches(keyMsg, k.HalfPageUp):
+		s.vp.HalfViewUp()
 	case key.Matches(keyMsg, k.ScrollTop):
-		s.scroll = 0
+		s.vp.GotoTop()
+	case key.Matches(keyMsg, k.ScrollBottom):
+		s.vp.GotoBottom()
 	case key.Matches(keyMsg, k.Refresh):
 		return request(reqRefresh{local: true})
 	}
 	return nil
 }
 
+// build fills the viewport, rebuilding the page only when something it is
+// drawn from has changed. A rebuild of the same page keeps the reader where
+// they were, clamped in case the page is now shorter.
+func (s *statsSection) build() {
+	k := statsKey{w: s.w, stats: s.sh.stats, weekly: s.sh.weekly, density: s.sh.density, built: true}
+	if k == s.key {
+		return
+	}
+	s.key = k
+	offset := s.vp.YOffset
+	s.vp.SetContent(s.render(s.w))
+	s.vp.SetYOffset(min(offset, max(0, s.vp.TotalLineCount()-s.vp.Height)))
+}
+
+// View draws the visible slice of the page, with a scroll indicator on the
+// pane's last row when there is more of it than fits.
 func (s *statsSection) View(w, h int) string {
-	content, _ := clipLines(s.render(w), s.scroll, h)
-	return fitBlock(content, w, h)
+	if w != s.w || h != s.h {
+		// A View at a size the section has not been resized to is the golden
+		// tests' path; the pane is the authority either way.
+		s.Resize(w, h)
+	}
+	s.build()
+	out := fitBlock(s.vp.View(), w, h)
+	if total := s.vp.TotalLineCount(); total > s.vp.Height {
+		last := min(total, s.vp.YOffset+s.vp.Height)
+		out = stampOverflowBadge(out, fmt.Sprintf("▲ %d/%d ▼", last, total), w, s.st)
+	}
+	return out
 }
 
 func (s *statsSection) Resize(w, h int) tea.Cmd {
+	if w == s.w && h == s.h {
+		return nil
+	}
 	s.w, s.h = w, h
+	s.vp.Width, s.vp.Height = max(1, w), max(1, h)
+	// The charts are drawn to the width they are given, so the page itself
+	// changes with the pane.
+	s.key = statsKey{}
 	return nil
 }
 
@@ -64,10 +135,12 @@ func (s *statsSection) Keys(k *keyMap) {
 	tabHint := hint("tab", k.PrevSection, k.NextSection)
 	k.Up.SetHelp("k", "scroll")
 	k.Down.SetHelp("j", "scroll")
-	enable(&k.Quit, &k.Help, &k.Up, &k.Down, &k.ScrollTop, &k.NextSection, &k.PrevSection,
+	enable(&k.Quit, &k.Help, &k.Up, &k.Down, &k.ScrollTop, &k.ScrollBottom,
+		&k.HalfPageUp, &k.HalfPageDown, &k.NextSection, &k.PrevSection,
 		&k.TabJump, &k.Sync, &k.Refresh, &k.Search)
 	k.short = []key.Binding{
-		k.Help, hint("scroll", k.Down, k.Up), k.ScrollTop, tabHint,
+		k.Help, hint("scroll", k.Down, k.Up), hint("half page", k.HalfPageUp, k.HalfPageDown),
+		hintAs("g/G", "top/bottom", k.ScrollTop, k.ScrollBottom), tabHint,
 		hintAs("s", "sync", k.Sync), k.Refresh, k.Search, k.Quit,
 	}
 }
@@ -75,7 +148,7 @@ func (s *statsSection) Keys(k *keyMap) {
 func (s *statsSection) Focus() {}
 
 // Blur forgets the scroll: the page starts at the top when it is next shown.
-func (s *statsSection) Blur() { s.scroll = 0 }
+func (s *statsSection) Blur() { s.vp.GotoTop() }
 
 func (s *statsSection) CapturesKeys() bool { return false }
 
@@ -142,23 +215,6 @@ func renderHeatmapTUI(activities []model.DayActivity, weeks, availWidth int, now
 	return charts.HeatmapAt(activities, charts.FitHeatmapWeeks(weeks, availWidth), now, st.heatPalette())
 }
 
-// clipLines returns at most height lines of s starting at offset, clamping the
-// offset so the last page stays full. The second return is the clamped offset.
-func clipLines(s string, offset, height int) (string, int) {
-	lines := strings.Split(s, "\n")
-	if height <= 0 || len(lines) <= height {
-		return s, 0
-	}
-	maxOffset := len(lines) - height
-	if offset > maxOffset {
-		offset = maxOffset
-	}
-	if offset < 0 {
-		offset = 0
-	}
-	return strings.Join(lines[offset:offset+height], "\n"), offset
-}
-
 // render draws the whole page at width w.
 func (s *statsSection) render(w int) string {
 	rs := s.sh.stats
@@ -190,8 +246,7 @@ func (s *statsSection) render(w int) string {
 		}
 		sb.WriteString(st.label.Render("  " + goalLabel))
 		sb.WriteString("\n")
-		barW := clampInt(w-14, 10, 30)
-		sb.WriteString("  " + progressBar(int(g.Progress), g.Target, barW, st))
+		sb.WriteString("  " + progressBar(int(g.Progress), g.Target, chartBarW(w, 8), st))
 		sb.WriteString(st.dim.Render(fmt.Sprintf("  %d/%d", int(g.Progress), g.Target)))
 		sb.WriteString("\n\n")
 	}
@@ -204,20 +259,41 @@ func (s *statsSection) render(w int) string {
 		sb.WriteString("\n\n")
 	}
 
-	// Books per month next to ratings distribution when width allows.
-	monthChart := s.monthsChart(rs)
-	ratingChart := s.ratingsChart(rs)
-	sb.WriteString(joinChartsResponsive(w, monthChart, ratingChart, st))
-
-	// Books per year next to top genres.
-	yearChart := s.yearsChart(rs)
-	genreChart := s.genresChart(rs)
-	sb.WriteString(joinChartsResponsive(w, yearChart, genreChart, st))
+	// Books per month next to ratings distribution when width allows, and
+	// the same for years and genres. A paired block is built at half the
+	// pane rather than being built wide and then stacked.
+	cw := w
+	if paired := pairedChartWidth(w); paired > 0 {
+		cw = paired
+	}
+	sb.WriteString(joinChartsResponsive(w, s.monthsChart(rs, cw), s.ratingsChart(rs, cw), st))
+	sb.WriteString(joinChartsResponsive(w, s.yearsChart(rs, cw), s.genresChart(rs, cw), st))
 
 	// Timer week.
 	sb.WriteString(s.weeklyTimerBlock(w))
 
 	return strings.TrimRight(sb.String(), "\n")
+}
+
+// chartBarW is the track width a bar chart gets in w columns: what is left
+// once the label column and the row's own furniture (two of indent, a space
+// either side of the bar and the count) have had theirs. The bars used to be
+// a fixed ten wide whatever the terminal was.
+func chartBarW(w, labelW int) int {
+	return clampInt(w-labelW-6, 10, 40)
+}
+
+// minPairedChartWidth is the narrowest a chart can be drawn and still say
+// something: a label column, a ten-cell bar and the count.
+const minPairedChartWidth = 26
+
+// pairedChartWidth is the width each of two side-by-side blocks gets, or 0
+// when the pane cannot carry them side by side.
+func pairedChartWidth(w int) int {
+	if half := (w - 4) / 2; half >= minPairedChartWidth {
+		return half
+	}
+	return 0
 }
 
 // chartBlock is a titled chart fragment used by the stats layout.
@@ -249,7 +325,7 @@ func joinChartsResponsive(w int, left, right chartBlock, st styles) string {
 	return render(left) + "\n\n" + render(right) + "\n\n"
 }
 
-func (s *statsSection) monthsChart(rs *model.ReadingStats) chartBlock {
+func (s *statsSection) monthsChart(rs *model.ReadingStats, w int) chartBlock {
 	now := s.sh.now()
 	upto := 12
 	if rs.Year.Year == now.Year() {
@@ -262,10 +338,10 @@ func (s *statsSection) monthsChart(rs *model.ReadingStats) chartBlock {
 			Count: rs.Months[i],
 		})
 	}
-	return chartBlock{"Books per month", charts.BarChartH(rows, 3, 10, s.st.barPalette(s.st.statsBarFilled))}
+	return chartBlock{"Books per month", charts.BarChartH(rows, 3, chartBarW(w, 3), s.st.barPalette(s.st.statsBarFilled))}
 }
 
-func (s *statsSection) ratingsChart(rs *model.ReadingStats) chartBlock {
+func (s *statsSection) ratingsChart(rs *model.ReadingStats, w int) chartBlock {
 	rows := make([]model.LabelCount, 0, 10)
 	for i := 9; i >= 0; i-- {
 		if rs.Ratings[i] == 0 {
@@ -279,10 +355,10 @@ func (s *statsSection) ratingsChart(rs *model.ReadingStats) chartBlock {
 	if len(rows) == 0 {
 		return chartBlock{}
 	}
-	return chartBlock{"Ratings", charts.BarChartH(rows, 4, 10, s.st.barPalette(s.st.goldBar))}
+	return chartBlock{"Ratings", charts.BarChartH(rows, 4, chartBarW(w, 4), s.st.barPalette(s.st.goldBar))}
 }
 
-func (s *statsSection) yearsChart(rs *model.ReadingStats) chartBlock {
+func (s *statsSection) yearsChart(rs *model.ReadingStats, w int) chartBlock {
 	if len(rs.Years) < 2 {
 		return chartBlock{}
 	}
@@ -290,10 +366,10 @@ func (s *statsSection) yearsChart(rs *model.ReadingStats) chartBlock {
 	if len(rows) > 6 {
 		rows = rows[len(rows)-6:]
 	}
-	return chartBlock{"Books per year", charts.BarChartH(rows, 4, 10, s.st.barPalette(s.st.statsBarFilled))}
+	return chartBlock{"Books per year", charts.BarChartH(rows, 4, chartBarW(w, 4), s.st.barPalette(s.st.statsBarFilled))}
 }
 
-func (s *statsSection) genresChart(rs *model.ReadingStats) chartBlock {
+func (s *statsSection) genresChart(rs *model.ReadingStats, w int) chartBlock {
 	if len(rs.Genres) == 0 {
 		return chartBlock{}
 	}
@@ -309,7 +385,7 @@ func (s *statsSection) genresChart(rs *model.ReadingStats) chartBlock {
 		}
 		rows = append(rows, model.LabelCount{Label: label, Count: g.Count})
 	}
-	return chartBlock{"Top genres", charts.BarChartH(rows, labelW, 10, s.st.barPalette(s.st.oliveBar))}
+	return chartBlock{"Top genres", charts.BarChartH(rows, labelW, chartBarW(w, labelW), s.st.barPalette(s.st.oliveBar))}
 }
 
 // weeklyTimerBlock renders this week's timer minutes as day bars.
@@ -331,7 +407,7 @@ func (s *statsSection) weeklyTimerBlock(w int) string {
 			maxMin = mins
 		}
 	}
-	barWidth := clampInt(w-16, 10, 30)
+	barWidth := chartBarW(w, 9)
 
 	for i, mins := range weekly.Days {
 		filled := mins * barWidth / maxMin

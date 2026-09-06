@@ -3,7 +3,7 @@
 ┃   12 books   3,748 pages   ★ 3.9 avg                                         ┃
 ┃                                                                              ┃
 ┃   Goal · 20 books by Dec 31                                                  ┃
-┃   ██████████████████░░░░░░░░░░░░  60%  12/20                                 ┃
+┃   ████████████████████████░░░░░░░░░░░░░░░░  60%  12/20                       ┃
 ┃                                                                              ┃
 ┃   Activity                                                                   ┃
 ┃       Mar   Apr     May       Jun     Jul     Aug       Sep                  ┃
@@ -17,8 +17,8 @@
 ┃                                                                              ┃
 ┃   Less · ░ ▒ ▓ █ More                                                        ┃
 ┃                                                                              ┃
-┃   Books per month       Ratings                                              ┃
-┃   Jan ███████░░░ 3      ★5.0 ███░░░░░░░ 2                                    ┃
-┃   Feb █████░░░░░ 2      ★4.5 ███░░░░░░░ 2                                    ┃
+┃   Books per month                        Ratings                             ┃
+┃   Jan ████████████████████░░░░░░░ 3      ★5.0 ████████░░░░░░░░░░░░░░░░░░ 2   ┃
+┃   Feb █████████████░░░░░░░░░░░░░░ 2      ★4.5 ████████░░░░░░░░░░░░▲ 20/45 ▼  ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
- ? help · j/k scroll · g top · s sync · r refresh · / search · q quit           
+ ? help · j/k scroll · C-u/C-d half page · g/G top/bottom · s sync …            
