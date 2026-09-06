@@ -13,36 +13,77 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-func (m Model) handleStatsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	k := m.activeKeys()
-	switch {
-	case key.Matches(msg, k.Down):
-		content := m.statsView(m.rightPanelContentWidth())
-		_, m.statsScroll = clipLines(content, m.statsScroll+1, m.rightPanelContentHeight())
-		return m, nil
-	case key.Matches(msg, k.Up):
-		if m.statsScroll > 0 {
-			m.statsScroll--
-		}
-		return m, nil
-	case key.Matches(msg, k.ScrollTop):
-		m.statsScroll = 0
-		return m, nil
-	case key.Matches(msg, k.Refresh):
-		return m.startOp(loadLocalDataCmd(m.app))
-	case key.Matches(msg, k.Sync):
-		return m.startOp(syncAllAndReloadCmd(m.ctx, m.app))
-	case key.Matches(msg, k.NextSection):
-		m.statsScroll = 0
-		m.nextSection()
-		return m, nil
-	case key.Matches(msg, k.PrevSection):
-		m.statsScroll = 0
-		m.prevSection()
-		return m, nil
-	}
-	return m.handleGenericKeys(msg)
+// statsSection is the reading statistics page: Hardcover library stats
+// (year summary, goal, heatmap, months, ratings, genres) plus local timer
+// stats for the current week, scrolled a line at a time.
+type statsSection struct {
+	sh     *shared
+	st     styles
+	scroll int
+	// w and h are the pane the page is drawn into, so a scroll can clamp
+	// against what is actually visible.
+	w, h int
 }
+
+func newStatsSection(sh *shared, st styles) *statsSection {
+	return &statsSection{sh: sh, st: st}
+}
+
+func (s *statsSection) Update(msg tea.Msg) tea.Cmd {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return nil
+	}
+	k := keysFor(s)
+	switch {
+	case key.Matches(keyMsg, k.Down):
+		_, s.scroll = clipLines(s.render(s.w), s.scroll+1, s.h)
+	case key.Matches(keyMsg, k.Up):
+		if s.scroll > 0 {
+			s.scroll--
+		}
+	case key.Matches(keyMsg, k.ScrollTop):
+		s.scroll = 0
+	case key.Matches(keyMsg, k.Refresh):
+		return request(reqRefresh{local: true})
+	}
+	return nil
+}
+
+func (s *statsSection) View(w, h int) string {
+	content, _ := clipLines(s.render(w), s.scroll, h)
+	return content
+}
+
+func (s *statsSection) Resize(w, h int) { s.w, s.h = w, h }
+
+func (s *statsSection) Keys(k *keyMap) {
+	sectionHint := hint("section", k.PrevSection, k.NextSection)
+	k.Up.SetHelp("k", "scroll")
+	k.Down.SetHelp("j", "scroll")
+	enable(&k.Quit, &k.Help, &k.Up, &k.Down, &k.ScrollTop, &k.NextSection, &k.PrevSection,
+		&k.Sync, &k.Refresh, &k.Search)
+	k.short = []key.Binding{
+		k.Help, hint("scroll", k.Down, k.Up), k.ScrollTop, sectionHint,
+		hintAs("s", "sync", k.Sync), k.Refresh, k.Search, k.Quit,
+	}
+}
+
+func (s *statsSection) Focus() {}
+
+// Blur forgets the scroll: the page starts at the top when it is next shown.
+func (s *statsSection) Blur() { s.scroll = 0 }
+
+func (s *statsSection) CapturesKeys() bool { return false }
+
+func (s *statsSection) Title() string {
+	if s.sh.stats != nil {
+		return fmt.Sprintf("Stats · %d", s.sh.stats.Year.Year)
+	}
+	return "Stats"
+}
+
+func (s *statsSection) Selected() selection { return selection{} }
 
 // ── Chart decoration ───────────────────────────────────────────────────────
 
@@ -94,8 +135,8 @@ func (st styles) heatCell(level int) string {
 
 // renderHeatmapTUI returns a heatmap string for the TUI (no printing to
 // stdout), narrowed to the weeks the pane can actually draw.
-func renderHeatmapTUI(activities []model.DayActivity, weeks, availWidth int, st styles) string {
-	return charts.Heatmap(activities, charts.FitHeatmapWeeks(weeks, availWidth), st.heatPalette())
+func renderHeatmapTUI(activities []model.DayActivity, weeks, availWidth int, now time.Time, st styles) string {
+	return charts.HeatmapAt(activities, charts.FitHeatmapWeeks(weeks, availWidth), now, st.heatPalette())
 }
 
 // clipLines returns at most height lines of s starting at offset, clamping the
@@ -115,22 +156,21 @@ func clipLines(s string, offset, height int) (string, int) {
 	return strings.Join(lines[offset:offset+height], "\n"), offset
 }
 
-// statsView renders the unified reading statistics right panel: Hardcover
-// library stats (year summary, goal, heatmap, months, ratings, genres) plus
-// local timer stats for the current week.
-func (m Model) statsView(w int) string {
-	rs := m.readingStats
+// render draws the whole page at width w.
+func (s *statsSection) render(w int) string {
+	rs := s.sh.stats
+	st := s.st
 
 	var sb strings.Builder
 	title := "Reading Stats"
 	if rs != nil {
 		title = fmt.Sprintf("Reading Stats · %d", rs.Year.Year)
 	}
-	sb.WriteString(m.st.head.Render(title))
+	sb.WriteString(st.head.Render(title))
 	sb.WriteString("\n\n")
 
 	if rs == nil {
-		sb.WriteString(m.st.dim.Render("  No stats yet. Press s to sync with Hardcover."))
+		sb.WriteString(st.dim.Render("  No stats yet. Press s to sync with Hardcover."))
 		return sb.String()
 	}
 
@@ -142,7 +182,7 @@ func (m Model) statsView(w int) string {
 	if rs.Year.AvgRating > 0 {
 		pairs = append(pairs, [2]string{fmt.Sprintf("★ %.1f", rs.Year.AvgRating), "avg"})
 	}
-	sb.WriteString(renderStatLine(pairs, m.st))
+	sb.WriteString(renderStatLine(pairs, st))
 	sb.WriteString("\n\n")
 
 	// Reading goal.
@@ -151,34 +191,34 @@ func (m Model) statsView(w int) string {
 		if !g.EndDate.IsZero() {
 			goalLabel += " by " + g.EndDate.Format("Jan 2")
 		}
-		sb.WriteString(m.st.label.Render("  " + goalLabel))
+		sb.WriteString(st.label.Render("  " + goalLabel))
 		sb.WriteString("\n")
 		barW := clampInt(w-14, 10, 30)
-		sb.WriteString("  " + progressBar(int(g.Progress), g.Target, barW, m.st))
-		sb.WriteString(m.st.dim.Render(fmt.Sprintf("  %d/%d", int(g.Progress), g.Target)))
+		sb.WriteString("  " + progressBar(int(g.Progress), g.Target, barW, st))
+		sb.WriteString(st.dim.Render(fmt.Sprintf("  %d/%d", int(g.Progress), g.Target)))
 		sb.WriteString("\n\n")
 	}
 
 	// Activity heatmap.
 	if len(rs.Heatmap) > 0 {
-		sb.WriteString(m.st.label.Render("  Activity"))
+		sb.WriteString(st.label.Render("  Activity"))
 		sb.WriteString("\n")
-		sb.WriteString(renderHeatmapTUI(rs.Heatmap, 26, w, m.st))
+		sb.WriteString(renderHeatmapTUI(rs.Heatmap, 26, w, s.sh.now(), st))
 		sb.WriteString("\n\n")
 	}
 
 	// Books per month next to ratings distribution when width allows.
-	monthChart := m.monthsChart(rs)
-	ratingChart := m.ratingsChart(rs)
-	sb.WriteString(joinChartsResponsive(w, monthChart, ratingChart, m.st))
+	monthChart := s.monthsChart(rs)
+	ratingChart := s.ratingsChart(rs)
+	sb.WriteString(joinChartsResponsive(w, monthChart, ratingChart, st))
 
 	// Books per year next to top genres.
-	yearChart := m.yearsChart(rs)
-	genreChart := m.genresChart(rs)
-	sb.WriteString(joinChartsResponsive(w, yearChart, genreChart, m.st))
+	yearChart := s.yearsChart(rs)
+	genreChart := s.genresChart(rs)
+	sb.WriteString(joinChartsResponsive(w, yearChart, genreChart, st))
 
 	// Timer week.
-	sb.WriteString(m.weeklyTimerBlock(w))
+	sb.WriteString(s.weeklyTimerBlock(w))
 
 	return strings.TrimRight(sb.String(), "\n")
 }
@@ -212,10 +252,11 @@ func joinChartsResponsive(w int, left, right chartBlock, st styles) string {
 	return render(left) + "\n\n" + render(right) + "\n\n"
 }
 
-func (m Model) monthsChart(rs *model.ReadingStats) chartBlock {
+func (s *statsSection) monthsChart(rs *model.ReadingStats) chartBlock {
+	now := s.sh.now()
 	upto := 12
-	if rs.Year.Year == time.Now().Year() {
-		upto = int(time.Now().Month())
+	if rs.Year.Year == now.Year() {
+		upto = int(now.Month())
 	}
 	rows := make([]model.LabelCount, 0, upto)
 	for i := 0; i < upto; i++ {
@@ -224,10 +265,10 @@ func (m Model) monthsChart(rs *model.ReadingStats) chartBlock {
 			Count: rs.Months[i],
 		})
 	}
-	return chartBlock{"Books per month", charts.BarChartH(rows, 3, 10, m.st.barPalette(m.st.statsBarFilled))}
+	return chartBlock{"Books per month", charts.BarChartH(rows, 3, 10, s.st.barPalette(s.st.statsBarFilled))}
 }
 
-func (m Model) ratingsChart(rs *model.ReadingStats) chartBlock {
+func (s *statsSection) ratingsChart(rs *model.ReadingStats) chartBlock {
 	rows := make([]model.LabelCount, 0, 10)
 	for i := 9; i >= 0; i-- {
 		if rs.Ratings[i] == 0 {
@@ -241,10 +282,10 @@ func (m Model) ratingsChart(rs *model.ReadingStats) chartBlock {
 	if len(rows) == 0 {
 		return chartBlock{}
 	}
-	return chartBlock{"Ratings", charts.BarChartH(rows, 4, 10, m.st.barPalette(m.st.goldBar))}
+	return chartBlock{"Ratings", charts.BarChartH(rows, 4, 10, s.st.barPalette(s.st.goldBar))}
 }
 
-func (m Model) yearsChart(rs *model.ReadingStats) chartBlock {
+func (s *statsSection) yearsChart(rs *model.ReadingStats) chartBlock {
 	if len(rs.Years) < 2 {
 		return chartBlock{}
 	}
@@ -252,10 +293,10 @@ func (m Model) yearsChart(rs *model.ReadingStats) chartBlock {
 	if len(rows) > 6 {
 		rows = rows[len(rows)-6:]
 	}
-	return chartBlock{"Books per year", charts.BarChartH(rows, 4, 10, m.st.barPalette(m.st.statsBarFilled))}
+	return chartBlock{"Books per year", charts.BarChartH(rows, 4, 10, s.st.barPalette(s.st.statsBarFilled))}
 }
 
-func (m Model) genresChart(rs *model.ReadingStats) chartBlock {
+func (s *statsSection) genresChart(rs *model.ReadingStats) chartBlock {
 	if len(rs.Genres) == 0 {
 		return chartBlock{}
 	}
@@ -271,47 +312,49 @@ func (m Model) genresChart(rs *model.ReadingStats) chartBlock {
 		}
 		rows = append(rows, model.LabelCount{Label: label, Count: g.Count})
 	}
-	return chartBlock{"Top genres", charts.BarChartH(rows, labelW, 10, m.st.barPalette(m.st.oliveBar))}
+	return chartBlock{"Top genres", charts.BarChartH(rows, labelW, 10, s.st.barPalette(s.st.oliveBar))}
 }
 
 // weeklyTimerBlock renders this week's timer minutes as day bars.
-func (m Model) weeklyTimerBlock(w int) string {
-	if m.weeklyStats.Sessions == 0 {
-		return m.st.dim.Render("  No timer sessions this week — press t in Timer to track time.")
+func (s *statsSection) weeklyTimerBlock(w int) string {
+	weekly := s.sh.weekly
+	st := s.st
+	if weekly.Sessions == 0 {
+		return st.dim.Render("  No timer sessions this week — press t in Timer to track time.")
 	}
 
 	var sb strings.Builder
-	sb.WriteString(m.st.label.Render("  This week"))
+	sb.WriteString(st.label.Render("  This week"))
 	sb.WriteString("\n")
 
 	dayNames := [7]string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
 	maxMin := 1
-	for _, mins := range m.weeklyStats.Days {
+	for _, mins := range weekly.Days {
 		if mins > maxMin {
 			maxMin = mins
 		}
 	}
 	barWidth := clampInt(w-16, 10, 30)
 
-	for i, mins := range m.weeklyStats.Days {
+	for i, mins := range weekly.Days {
 		filled := mins * barWidth / maxMin
 		if mins > 0 && filled == 0 {
 			filled = 1
 		}
-		bar := m.st.statsBarFilled.Render(strings.Repeat("█", filled)) +
-			m.st.statsBarEmpty.Render(strings.Repeat("░", barWidth-filled))
+		bar := st.statsBarFilled.Render(strings.Repeat("█", filled)) +
+			st.statsBarEmpty.Render(strings.Repeat("░", barWidth-filled))
 		timeStr := "    —"
 		if mins > 0 {
 			timeStr = fmt.Sprintf("%5s", format.Duration(time.Duration(mins)*time.Minute))
 		}
-		sb.WriteString(fmt.Sprintf("  %s  %s %s\n", dayNames[i], bar, m.st.dim.Render(timeStr)))
+		sb.WriteString(fmt.Sprintf("  %s  %s %s\n", dayNames[i], bar, st.dim.Render(timeStr)))
 	}
 
-	avg := m.weeklyStats.Total / max(1, m.weeklyStats.Sessions)
+	avg := weekly.Total / max(1, weekly.Sessions)
 	sb.WriteString(fmt.Sprintf("\n  Total: %s    Avg: %s    Sessions: %d",
-		format.Duration(time.Duration(m.weeklyStats.Total)*time.Minute),
+		format.Duration(time.Duration(weekly.Total)*time.Minute),
 		format.Duration(time.Duration(avg)*time.Minute),
-		m.weeklyStats.Sessions,
+		weekly.Sessions,
 	))
 	return sb.String()
 }

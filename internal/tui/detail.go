@@ -5,26 +5,28 @@ import (
 	"strings"
 
 	"github.com/Kameleon21/oku/internal/format"
+	"github.com/Kameleon21/oku/internal/model"
 	"github.com/charmbracelet/lipgloss"
 )
 
-func (m Model) detailsView(w int) string {
-	b := m.selectedLibraryBook()
+// detailsView renders the selected library book into the right pane, at
+// the row detail density asks for.
+func detailsView(b *model.UserBook, density Density, w int, st styles) string {
 	if b == nil {
-		return m.st.dim.Render("  No book selected")
+		return st.dim.Render("  No book selected")
 	}
 
 	var sb strings.Builder
 
-	sb.WriteString(m.st.head.Render(b.Book.Title))
+	sb.WriteString(st.head.Render(b.Book.Title))
 	sb.WriteString("\n")
 	author := fallback(b.Book.AuthorString(), "Unknown author")
-	sb.WriteString(m.st.dim.Render(author))
+	sb.WriteString(st.dim.Render(author))
 	sb.WriteString("\n\n")
 
 	writeField := func(label, value string) {
-		sb.WriteString(m.st.label.Render(fmt.Sprintf("  %-10s ", label)))
-		sb.WriteString(m.st.value.Render(value))
+		sb.WriteString(st.label.Render(fmt.Sprintf("  %-10s ", label)))
+		sb.WriteString(st.value.Render(value))
 		sb.WriteString("\n")
 	}
 
@@ -39,11 +41,11 @@ func (m Model) detailsView(w int) string {
 		// The field is 13 columns of label, then the text, two spaces, the bar
 		// and " 100%". Size the bar to what is left so the row is never cut.
 		barW := clampInt(w-20-lipgloss.Width(progressText), 8, 20)
-		progressText += "  " + progressBar(page, b.Book.Pages, barW, m.st)
+		progressText += "  " + progressBar(page, b.Book.Pages, barW, st)
 	}
 	writeField("Progress", progressText)
 
-	if m.density != DensityCompact {
+	if density != DensityCompact {
 		writeField("Book ID", fmt.Sprintf("%d", b.Book.ID))
 		if b.Book.Pages > 0 {
 			writeField("Pages", fmt.Sprintf("%d", b.Book.Pages))
@@ -83,7 +85,7 @@ func (m Model) detailsView(w int) string {
 		}
 	}
 
-	if m.density == DensityVerbose {
+	if density == DensityVerbose {
 		if b.Book.Slug != "" {
 			writeField("Slug", b.Book.Slug)
 		}

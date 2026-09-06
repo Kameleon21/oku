@@ -108,25 +108,25 @@ func (m *Model) toastFor(msg opDoneMsg) tea.Cmd {
 }
 
 // runUndo reverses the change the current toast reports, if there is one.
-func (m Model) runUndo() (tea.Model, tea.Cmd) {
+func (m *Model) runUndo() tea.Cmd {
 	u := m.undo
 	if u == nil {
-		return m, nil
+		return nil
 	}
 	m.undo = nil
 	switch u.op {
 	case opStatus:
-		return m.startOp(changeStatusCmd(m.ctx, m.app, u.bookID, u.title, u.fromStatus, u.toStatus))
+		return m.beginLoading(changeStatusCmd(m.ctx, m.app, u.bookID, u.title, u.fromStatus, u.toStatus))
 	case opProgress:
-		return m.startOp(updateProgressCmd(m.ctx, m.app, u.bookID, u.title, u.fromPage, strconv.Itoa(u.toPage)))
+		return m.beginLoading(updateProgressCmd(m.ctx, m.app, u.bookID, u.title, u.fromPage, strconv.Itoa(u.toPage)))
 	}
-	return m, nil
+	return nil
 }
 
 // renderToast draws the toast into avail columns: a glyph for the level (so
 // a terminal without colour can tell an error from a note), the text cut to
 // what fits, and the undo hint while there is a change to undo.
-func (m Model) renderToast(avail int) string {
+func (m *Model) renderToast(avail int) string {
 	if m.toast.text == "" {
 		return ""
 	}

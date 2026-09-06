@@ -14,41 +14,47 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/muesli/termenv"
 )
 
-func runeKey(r rune) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
+// setLibrary puts books on the shelves the way a load would and rebuilds the
+// lists from them.
+func setLibrary(m *Model, reading, oku []model.UserBook) {
+	m.shared.reading, m.shared.oku = reading, oku
+	m.broadcast(dataChangedMsg{dataLibrary})
 }
 
-// newTestModel builds a dashboard with no app, so every command that would
-// touch the network or the store reports an error instead.
-func newTestModel() Model {
-	m := New(context.Background(), nil, DensityDefault)
-	// Tests drive Update directly and never run Init, so nothing is in flight.
-	m.inflight = 0
-	return m
+func readingSection(m *Model) *librarySection {
+	return m.sections[sectionReading].(*librarySection)
+}
+
+func okuSection(m *Model) *librarySection {
+	return m.sections[sectionOku].(*librarySection)
+}
+
+// openReview puts the review modal up for book and returns it.
+func openReview(m *Model, book model.UserBook) *reviewModal {
+	m.push(newReviewModal(m.shared, m.st, book))
+	return m.topModal().(*reviewModal)
 }
 
 func TestSearchInputNormalModeNavigation(t *testing.T) {
 	m := newTestModel()
-	m.section = sectionSearch
-	m.searchSub = searchSubInput
-	m.searchMode = searchModeNormal
-	m.searchInput.SetValue("dune")
+	m.setSection(sectionSearch)
+	m.search.sub = searchSubInput
+	m.search.mode = searchModeNormal
+	m.search.input.SetValue("dune")
 
 	// Press 'k' (up) → should go to previous section (sectionOku).
-	updated, _ := m.updateLibraryMode(runeKey('k'))
-	got := updated.(Model)
+	send(t, m, runeKey('k'))
 
-	if got.section != sectionOku {
-		t.Fatalf("section after k = %v, want %v", got.section, sectionOku)
+	if m.tab != sectionOku {
+		t.Fatalf("section after k = %v, want %v", m.tab, sectionOku)
 	}
-	if got.searchInput.Value() != "dune" {
-		t.Fatalf("search input changed in normal mode, got %q", got.searchInput.Value())
+	if m.search.input.Value() != "dune" {
+		t.Fatalf("search input changed in normal mode, got %q", m.search.input.Value())
 	}
-	if got.searchMode != searchModeNormal {
-		t.Fatalf("search mode = %v, want normal", got.searchMode)
+	if m.search.mode != searchModeNormal {
+		t.Fatalf("search mode = %v, want normal", m.search.mode)
 	}
 }
 
@@ -86,20 +92,19 @@ func TestLoadCachedLibraryCmdWithNilAppReturnsError(t *testing.T) {
 
 func TestStaleCachedLibraryRendersBeforeRefresh(t *testing.T) {
 	m := newTestModel()
-	updated, cmd := m.Update(libraryLoadedMsg{
+	_, cmd := m.Update(libraryLoadedMsg{
 		reading:      []model.UserBook{{Book: model.Book{ID: 1, Title: "Dune"}}},
 		needsRefresh: true,
 	})
-	got := updated.(Model)
 
-	if !got.loaded {
+	if !m.shared.loaded {
 		t.Fatal("cached library should mark dashboard loaded")
 	}
-	if !got.isLoading() {
+	if !m.isLoading() {
 		t.Fatal("stale cache should start a background refresh")
 	}
-	if len(got.readingBooks) != 1 || got.readingBooks[0].Book.Title != "Dune" {
-		t.Fatalf("cached reading books = %#v, want Dune", got.readingBooks)
+	if len(m.shared.reading) != 1 || m.shared.reading[0].Book.Title != "Dune" {
+		t.Fatalf("cached reading books = %#v, want Dune", m.shared.reading)
 	}
 	if cmd == nil {
 		t.Fatal("stale cache should return a refresh command")
@@ -108,81 +113,77 @@ func TestStaleCachedLibraryRendersBeforeRefresh(t *testing.T) {
 
 func TestSearchInputInsertModeTypingAndEsc(t *testing.T) {
 	m := newTestModel()
-	m.section = sectionSearch
-	m.searchSub = searchSubInput
-	m.enterSearchInsertMode()
+	m.setSection(sectionSearch)
+	m.search.sub = searchSubInput
+	m.search.enterInsertMode()
 
-	updated, _ := m.updateLibraryMode(runeKey('h'))
-	got := updated.(Model)
+	m.Update(runeKey('h'))
 
-	if got.section != sectionSearch {
-		t.Fatalf("section after typing in insert mode = %v, want %v", got.section, sectionSearch)
+	if m.tab != sectionSearch {
+		t.Fatalf("section after typing in insert mode = %v, want %v", m.tab, sectionSearch)
 	}
-	if got.searchInput.Value() != "h" {
-		t.Fatalf("search input value = %q, want %q", got.searchInput.Value(), "h")
+	if m.search.input.Value() != "h" {
+		t.Fatalf("search input value = %q, want %q", m.search.input.Value(), "h")
 	}
-	if got.searchMode != searchModeInsert {
-		t.Fatalf("search mode after typing = %v, want insert", got.searchMode)
+	if m.search.mode != searchModeInsert {
+		t.Fatalf("search mode after typing = %v, want insert", m.search.mode)
 	}
 
-	updated, _ = got.updateLibraryMode(tea.KeyMsg{Type: tea.KeyEsc})
-	got = updated.(Model)
-	if got.searchMode != searchModeNormal {
-		t.Fatalf("search mode after esc = %v, want normal", got.searchMode)
+	m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.search.mode != searchModeNormal {
+		t.Fatalf("search mode after esc = %v, want normal", m.search.mode)
 	}
-	if got.section != sectionSearch {
-		t.Fatalf("section after esc = %v, want %v", got.section, sectionSearch)
+	if m.tab != sectionSearch {
+		t.Fatalf("section after esc = %v, want %v", m.tab, sectionSearch)
 	}
 }
 
 func TestLibrarySectionVimNavigation(t *testing.T) {
 	m := newTestModel()
-	m.section = sectionReading
+	m.setSection(sectionReading)
 
-	updated, _ := m.updateLibraryMode(runeKey('l'))
-	got := updated.(Model)
-	if got.section != sectionOku {
-		t.Fatalf("section after l = %v, want %v", got.section, sectionOku)
+	m.Update(runeKey('l'))
+	if m.tab != sectionOku {
+		t.Fatalf("section after l = %v, want %v", m.tab, sectionOku)
 	}
 
-	updated, _ = got.updateLibraryMode(runeKey('h'))
-	got = updated.(Model)
-	if got.section != sectionReading {
-		t.Fatalf("section after h = %v, want %v", got.section, sectionReading)
+	m.Update(runeKey('h'))
+	if m.tab != sectionReading {
+		t.Fatalf("section after h = %v, want %v", m.tab, sectionReading)
 	}
 }
 
 func TestSearchInputNormalModeEscGoesBack(t *testing.T) {
 	m := newTestModel()
-	m.section = sectionSearch
-	m.searchSub = searchSubInput
-	m.searchMode = searchModeNormal
+	m.setSection(sectionSearch)
+	m.search.sub = searchSubInput
+	m.search.mode = searchModeNormal
 
-	updated, _ := m.updateLibraryMode(tea.KeyMsg{Type: tea.KeyEsc})
-	got := updated.(Model)
-	if got.section != sectionOku {
-		t.Fatalf("section after Esc = %v, want %v", got.section, sectionOku)
+	send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.tab != sectionOku {
+		t.Fatalf("section after Esc = %v, want %v", m.tab, sectionOku)
 	}
 }
 
 func TestSubmitSearchSetsLoadingState(t *testing.T) {
 	m := newTestModel()
-	m.searchInput.SetValue("dune")
-	m.searchQueryMode = model.SearchModeAuthor
+	m.setSection(sectionSearch)
+	m.search.input.SetValue("dune")
+	m.search.queryMode = model.SearchModeAuthor
 
-	cmd := m.submitSearch()
+	cmd := send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
-		t.Fatal("submitSearch() returned nil cmd for non-empty query")
+		t.Fatal("submitting a non-empty query should start a search")
 	}
-	if !m.isLoading() || !m.searchLoading {
-		t.Fatalf("loading flags = loading:%v searchLoading:%v, want true/true", m.isLoading(), m.searchLoading)
+	if !m.isLoading() || !m.search.loading {
+		t.Fatalf("loading flags = loading:%v searchLoading:%v, want true/true", m.isLoading(), m.search.loading)
 	}
 
-	if m.searchLoadingQuery != "dune" {
-		t.Fatalf("searchLoadingQuery = %q, want dune", m.searchLoadingQuery)
+	if m.search.loadingQuery != "dune" {
+		t.Fatalf("loadingQuery = %q, want dune", m.search.loadingQuery)
 	}
-	if !strings.Contains(m.searchList.Title, "loading") {
-		t.Fatalf("search list title %q does not include loading state", m.searchList.Title)
+	if !strings.Contains(m.search.list.Title, "loading") {
+		t.Fatalf("search list title %q does not include loading state", m.search.list.Title)
 	}
 	if !strings.Contains(strings.ToLower(m.toast.text), "searching for") {
 		t.Fatalf("toast %q does not include searching feedback", m.toast.text)
@@ -191,19 +192,20 @@ func TestSubmitSearchSetsLoadingState(t *testing.T) {
 
 func TestSubmitSearchGuardAndEmptyValidation(t *testing.T) {
 	m := newTestModel()
-	m.searchLoading = true
-	m.searchInput.SetValue("dune")
-	if cmd := m.submitSearch(); cmd == nil {
+	m.setSection(sectionSearch)
+	m.search.loading = true
+	m.search.input.SetValue("dune")
+	if cmd := send(t, m, tea.KeyMsg{Type: tea.KeyEnter}); cmd == nil {
 		t.Fatal("a query typed over an in-flight search should be searchable")
 	}
 
-	m.searchInput.SetValue("   ")
+	m.search.input.SetValue("   ")
 	m.inflight = 0
-	m.searchLoading = false
+	m.search.loading = false
 
-	m.submitSearch()
-	if m.isLoading() || m.searchLoading {
-		t.Fatal("submitSearch() should not search for an empty query")
+	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.isLoading() || m.search.loading {
+		t.Fatal("an empty query should not be searched for")
 	}
 	if m.toast.level != toastError || m.toast.text == "" {
 		t.Fatalf("toast = %+v, want a validation error for the empty query", m.toast)
@@ -213,111 +215,107 @@ func TestSubmitSearchGuardAndEmptyValidation(t *testing.T) {
 func TestSearchLoadedMsgTransitionsToResults(t *testing.T) {
 	m := newTestModel()
 	m.inflight = 1
-	m.searchLoading = true
-	m.section = sectionSearch
-	m.searchSub = searchSubInput
-	m.searchQueryMode = model.SearchModeAuthor
+	m.setSection(sectionSearch)
+	m.search.loading = true
+	m.search.sub = searchSubInput
+	m.search.queryMode = model.SearchModeAuthor
 
-	updated, _ := m.Update(searchLoadedMsg{
+	send(t, m, searchLoadedMsg{
 		results: []model.SearchResult{{ID: 1, Title: "Dune"}},
 		query:   "dune",
 		mode:    model.SearchModeAuthor,
 	})
-	got := updated.(Model)
 
-	if got.isLoading() || got.searchLoading {
-		t.Fatalf("loading flags after response = loading:%v searchLoading:%v, want false/false", got.isLoading(), got.searchLoading)
-	}
-
-	if got.searchSub != searchSubResults {
-		t.Fatalf("searchSub = %v, want %v", got.searchSub, searchSubResults)
-	}
-	if got.lastQuery != "dune" {
-		t.Fatalf("lastQuery = %q, want dune", got.lastQuery)
-	}
-	if got.lastSearchMode != model.SearchModeAuthor {
-		t.Fatalf("lastSearchMode = %q, want %q", got.lastSearchMode, model.SearchModeAuthor)
+	if m.isLoading() || m.search.loading {
+		t.Fatalf("loading flags after response = loading:%v searchLoading:%v, want false/false", m.isLoading(), m.search.loading)
 	}
 
-	if got.searchList.Title != "AUTHOR Results (1)" {
-		t.Fatalf("searchList title = %q, want %q", got.searchList.Title, "AUTHOR Results (1)")
+	if m.search.sub != searchSubResults {
+		t.Fatalf("searchSub = %v, want %v", m.search.sub, searchSubResults)
 	}
-	if !strings.Contains(got.toast.text, "loaded 1 results") {
-		t.Fatalf("toast = %q, expected loaded-count feedback", got.toast.text)
+	if m.search.lastQuery != "dune" {
+		t.Fatalf("lastQuery = %q, want dune", m.search.lastQuery)
+	}
+	if m.search.lastMode != model.SearchModeAuthor {
+		t.Fatalf("lastMode = %q, want %q", m.search.lastMode, model.SearchModeAuthor)
+	}
+
+	if m.search.list.Title != "AUTHOR Results (1)" {
+		t.Fatalf("searchList title = %q, want %q", m.search.list.Title, "AUTHOR Results (1)")
+	}
+	if !strings.Contains(m.toast.text, "loaded 1 results") {
+		t.Fatalf("toast = %q, expected loaded-count feedback", m.toast.text)
 	}
 }
 
 func TestSlashSearchPreservesExistingQuery(t *testing.T) {
 	m := newTestModel()
-	m.section = sectionReading
-	m.searchInput.SetValue("dune")
+	m.setSection(sectionReading)
+	m.search.input.SetValue("dune")
 
-	updated, _ := m.updateLibraryMode(runeKey('/'))
-	got := updated.(Model)
+	m.Update(runeKey('/'))
 
-	if got.section != sectionSearch {
-		t.Fatalf("section after / = %v, want %v", got.section, sectionSearch)
+	if m.tab != sectionSearch {
+		t.Fatalf("section after / = %v, want %v", m.tab, sectionSearch)
 	}
-	if got.searchSub != searchSubInput {
-		t.Fatalf("searchSub after / = %v, want %v", got.searchSub, searchSubInput)
+	if m.search.sub != searchSubInput {
+		t.Fatalf("searchSub after / = %v, want %v", m.search.sub, searchSubInput)
 	}
-	if got.searchInput.Value() != "dune" {
-		t.Fatalf("search query after / = %q, want %q", got.searchInput.Value(), "dune")
+	if m.search.input.Value() != "dune" {
+		t.Fatalf("search query after / = %q, want %q", m.search.input.Value(), "dune")
 	}
 }
 
 func TestTimerStartOpensBookSelectionFirst(t *testing.T) {
 	m := newTestModel()
-	m.section = sectionTimer
-	m.readingBooks = []model.UserBook{
+	m.setSection(sectionTimer)
+	setLibrary(m, []model.UserBook{
 		{Book: model.Book{ID: 1, Title: "Dune"}},
 		{Book: model.Book{ID: 2, Title: "Foundation"}},
-	}
+	}, nil)
 
-	updated, _ := m.updateLibraryMode(runeKey('t'))
-	got := updated.(Model)
+	send(t, m, runeKey('t'))
 
-	if got.isLoading() {
+	if m.isLoading() {
 		t.Fatal("timer start should open selection first, got an immediate operation")
 	}
-	if !got.timerSelecting {
-		t.Fatal("timerSelecting = false, want true after pressing t")
+	if m.timerPicker() == nil {
+		t.Fatal("the picker should be up after pressing t")
 	}
 }
 
 func TestSearchResultsKStaysInResults(t *testing.T) {
 	m := newTestModel()
-	m.section = sectionSearch
-	m.searchSub = searchSubResults
-	m.searchMode = searchModeNormal
-	m.searchList.SetItems([]list.Item{
+	m.setSection(sectionSearch)
+	m.search.sub = searchSubResults
+	m.search.mode = searchModeNormal
+	m.search.list.SetItems([]list.Item{
 		searchResultItem{result: model.SearchResult{ID: 1, Title: "Dune"}},
 		searchResultItem{result: model.SearchResult{ID: 2, Title: "Dune Messiah"}},
 	})
-	m.searchList.Select(1)
+	m.search.list.Select(1)
 
-	updated, _ := m.updateLibraryMode(runeKey('k'))
-	got := updated.(Model)
+	m.Update(runeKey('k'))
 
-	if got.searchSub != searchSubResults {
-		t.Fatalf("searchSub after k = %v, want %v", got.searchSub, searchSubResults)
+	if m.search.sub != searchSubResults {
+		t.Fatalf("searchSub after k = %v, want %v", m.search.sub, searchSubResults)
 	}
-	if got.section != sectionSearch {
-		t.Fatalf("section after k = %v, want %v", got.section, sectionSearch)
+	if m.tab != sectionSearch {
+		t.Fatalf("section after k = %v, want %v", m.tab, sectionSearch)
 	}
 }
 
 func TestCycleDensityRefreshesSearchResultItems(t *testing.T) {
 	m := newTestModel()
-	m.density = DensityDefault
-	m.searchBooks = []model.SearchResult{
+	m.shared.density = DensityDefault
+	m.search.results = []model.SearchResult{
 		{ID: 1, Title: "Dune", Authors: []string{"Frank Herbert"}, Slug: "dune"},
 	}
-	m.refreshSearchResultItems()
+	m.search.rebuildResults()
 
-	m.cycleDensity()
+	send(t, m, runeKey('z'))
 
-	items := m.searchList.Items()
+	items := m.search.list.Items()
 	if len(items) != 1 {
 		t.Fatalf("search items len = %d, want 1", len(items))
 	}
@@ -368,53 +366,44 @@ func TestParseReviewRatingInput(t *testing.T) {
 
 func TestReviewSaveKeepsModalOpenWhileSaving(t *testing.T) {
 	m := newTestModel()
-	m.loaded = true
-	m.openReviewRatingModal(model.UserBook{
-		Book: model.Book{ID: 42, Title: "Dune"},
-	})
-	m.reviewRatingInput.SetValue("3")
-	m.reviewTextInput.SetValue("Strong first half.")
+	m.shared.loaded = true
+	review := openReview(m, model.UserBook{Book: model.Book{ID: 42, Title: "Dune"}})
+	review.rating.SetValue("3")
+	review.text.SetValue("Strong first half.")
 
-	updated, cmd := m.updateReviewRatingMode(tea.KeyMsg{Type: tea.KeyCtrlS})
-	got := updated.(Model)
+	cmd := send(t, m, tea.KeyMsg{Type: tea.KeyCtrlS})
 
 	if cmd == nil {
 		t.Fatal("expected save command")
 	}
-	if got.mode != modeReviewRating {
-		t.Fatalf("mode while saving = %v, want review/rating", got.mode)
-	}
-	if !got.reviewSubmitting {
-		t.Fatal("reviewSubmitting should be true while the save is in flight")
-	}
-	if got.reviewBook == nil {
+	if m.topModal() != review {
 		t.Fatal("review modal should stay open until the save succeeds")
 	}
-	if !got.isLoading() {
+	if !review.submitting {
+		t.Fatal("submitting should be true while the save is in flight")
+	}
+	if !m.isLoading() {
 		t.Fatal("loading should be true while save is in flight")
 	}
-	if got.toast.text != "Saving review..." {
-		t.Fatalf("toast = %q, want Saving review...", got.toast.text)
+	if m.toast.text != "Saving review..." {
+		t.Fatalf("toast = %q, want Saving review...", m.toast.text)
 	}
 }
 
 func TestTimerSelectEnterClampsStaleIndex(t *testing.T) {
 	m := newTestModel()
-	m.section = sectionTimer
-	m.timerSelecting = true
-	m.timerSelectIdx = 5 // stale: list shrank while the picker was open
-	m.readingBooks = []model.UserBook{
-		{Book: model.Book{ID: 1, Title: "Dune"}},
-	}
+	m.setSection(sectionTimer)
+	setLibrary(m, []model.UserBook{{Book: model.Book{ID: 1, Title: "Dune"}}}, nil)
+	// Stale: the list shrank while the picker was open.
+	m.push(newTimerPickerModal(m.shared, 5))
 
-	updated, cmd := m.handleTimerKeys(tea.KeyMsg{Type: tea.KeyEnter})
-	got := updated.(Model)
+	cmd := send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	if cmd == nil {
 		t.Fatal("enter on a valid list should start the timer")
 	}
-	if got.timerSelecting {
-		t.Fatal("timerSelecting should be false after enter")
+	if m.timerPicker() != nil {
+		t.Fatal("the picker should close after enter")
 	}
 }
 
@@ -429,61 +418,63 @@ func TestShouldUseDemoLocalDataIsOptInOnly(t *testing.T) {
 		t.Fatal("OKU_TUI_DEMO_DATA=1 should enable demo data")
 	}
 }
+
 func TestAsyncResultsAreAppliedInEveryMode(t *testing.T) {
+	book := model.UserBook{Book: model.Book{ID: 7, Title: "Dune"}}
 	tests := []struct {
 		name string
-		mode viewMode
+		open func(m *Model)
 	}{
-		{name: "library", mode: modeLibrary},
-		{name: "page modal", mode: modeUpdatePage},
-		{name: "review modal", mode: modeReviewRating},
+		{name: "library", open: func(*Model) {}},
+		{name: "page modal", open: func(m *Model) {
+			m.push(newPageModal(m.shared, m.st, book))
+			m.pagePrompt().input.SetValue("120")
+		}},
+		{name: "review modal", open: func(m *Model) { openReview(m, book) }},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := newTestModel()
-			m.loaded = true
-			m.section = sectionSearch
-			m.searchSub = searchSubInput
-			m.enterSearchInsertMode()
-			m.searchInput.SetValue("dune")
-			if cmd := m.submitSearch(); cmd == nil {
-				t.Fatal("submitSearch() returned nil cmd")
+			m.shared.loaded = true
+			m.setSection(sectionSearch)
+			m.search.sub = searchSubInput
+			m.search.enterInsertMode()
+			m.search.input.SetValue("dune")
+			if cmd := send(t, m, tea.KeyMsg{Type: tea.KeyEnter}); cmd == nil {
+				t.Fatal("submitting the query should start a search")
 			}
 
-			m.mode = tt.mode
-			m.pageInput.SetValue("120")
-			m.openReviewRatingModal(model.UserBook{Book: model.Book{ID: 7, Title: "Dune"}})
-			m.mode = tt.mode
+			tt.open(m)
+			top := m.topModal()
 
-			updated, _ := m.Update(searchLoadedMsg{
+			send(t, m, searchLoadedMsg{
 				results: []model.SearchResult{{ID: 1, Title: "Dune"}},
 				query:   "dune",
 				mode:    model.SearchModeBook,
-				seq:     m.searchSeq,
+				seq:     m.search.seq,
 			})
-			got := updated.(Model)
 
-			if got.searchLoading {
+			if m.search.loading {
 				t.Fatal("searchLoading should be cleared by the result, whatever the mode")
 			}
-			if got.isLoading() {
+			if m.isLoading() {
 				t.Fatal("loading should be cleared by the result, whatever the mode")
 			}
-			if len(got.searchBooks) != 1 {
-				t.Fatalf("searchBooks = %d, want 1", len(got.searchBooks))
+			if len(m.search.results) != 1 {
+				t.Fatalf("results = %d, want 1", len(m.search.results))
 			}
-			if got.mode != tt.mode {
-				t.Fatalf("mode = %v, want %v: an async result must not close a modal", got.mode, tt.mode)
+			if m.topModal() != top {
+				t.Fatalf("top modal = %T, want %T: an async result must not close a modal", m.topModal(), top)
 			}
-			if got.searchSub != searchSubResults {
-				t.Fatalf("searchSub = %v, want %v", got.searchSub, searchSubResults)
+			if m.search.sub != searchSubResults {
+				t.Fatalf("searchSub = %v, want %v", m.search.sub, searchSubResults)
 			}
-			if got.searchMode != searchModeNormal {
+			if m.search.mode != searchModeNormal {
 				t.Fatal("results should leave search insert mode so j/k scroll them")
 			}
-			if tt.mode == modeUpdatePage && got.pageInput.Value() != "120" {
-				t.Fatalf("page input = %q, want it untouched", got.pageInput.Value())
+			if page := m.pagePrompt(); page != nil && page.input.Value() != "120" {
+				t.Fatalf("page input = %q, want it untouched", page.input.Value())
 			}
 		})
 	}
@@ -491,100 +482,96 @@ func TestAsyncResultsAreAppliedInEveryMode(t *testing.T) {
 
 func TestStaleSearchResultIsIgnored(t *testing.T) {
 	m := newTestModel()
-	m.section = sectionSearch
-	m.searchInput.SetValue("dune")
-	if cmd := m.submitSearch(); cmd == nil {
-		t.Fatal("submitSearch() returned nil cmd for the first query")
+	m.setSection(sectionSearch)
+	m.search.input.SetValue("dune")
+	if cmd := send(t, m, tea.KeyMsg{Type: tea.KeyEnter}); cmd == nil {
+		t.Fatal("the first query should start a search")
 	}
-	staleSeq := m.searchSeq
+	staleSeq := m.search.seq
 
 	// The user retypes before the first response lands.
-	m.searchLoading = false
-	m.searchInput.SetValue("foundation")
-	if cmd := m.submitSearch(); cmd == nil {
-		t.Fatal("submitSearch() returned nil cmd for the second query")
+	m.search.loading = false
+	m.search.input.SetValue("foundation")
+	if cmd := send(t, m, tea.KeyMsg{Type: tea.KeyEnter}); cmd == nil {
+		t.Fatal("the second query should start a search")
 	}
 
-	updated, cmd := m.Update(searchLoadedMsg{
+	_, cmd := m.Update(searchLoadedMsg{
 		results: []model.SearchResult{{ID: 1, Title: "Dune"}},
 		query:   "dune",
 		mode:    model.SearchModeBook,
 		seq:     staleSeq,
 	})
-	got := updated.(Model)
 
 	if cmd != nil {
 		t.Fatal("a superseded search result should produce no command")
 	}
-	if !got.searchLoading {
+	if !m.search.loading {
 		t.Fatal("a superseded result must not clear the in-flight search")
 	}
-	if len(got.searchBooks) != 0 {
-		t.Fatalf("searchBooks = %d, want 0 for a superseded result", len(got.searchBooks))
+	if len(m.search.results) != 0 {
+		t.Fatalf("results = %d, want 0 for a superseded result", len(m.search.results))
 	}
 
-	updated, _ = got.Update(searchLoadedMsg{
+	send(t, m, searchLoadedMsg{
 		results: []model.SearchResult{{ID: 2, Title: "Foundation"}},
 		query:   "foundation",
 		mode:    model.SearchModeBook,
-		seq:     got.searchSeq,
+		seq:     m.search.seq,
 	})
-	got = updated.(Model)
 
-	if got.searchLoading {
+	if m.search.loading {
 		t.Fatal("the latest result should clear searchLoading")
 	}
-	if got.lastQuery != "foundation" {
-		t.Fatalf("lastQuery = %q, want foundation", got.lastQuery)
+	if m.search.lastQuery != "foundation" {
+		t.Fatalf("lastQuery = %q, want foundation", m.search.lastQuery)
 	}
 }
 
 func TestSearchResultKeepsUserSelectedMode(t *testing.T) {
 	m := newTestModel()
-	m.section = sectionSearch
-	m.searchQueryMode = model.SearchModeGenre
+	m.setSection(sectionSearch)
+	m.search.queryMode = model.SearchModeGenre
 
-	updated, _ := m.Update(searchLoadedMsg{
+	send(t, m, searchLoadedMsg{
 		results: []model.SearchResult{{ID: 1, Title: "Dune"}},
 		query:   "dune",
 		mode:    model.SearchModeBook,
-		seq:     m.searchSeq,
+		seq:     m.search.seq,
 	})
-	got := updated.(Model)
 
-	if got.searchQueryMode != model.SearchModeGenre {
-		t.Fatalf("searchQueryMode = %q, want the mode the user picked (%q)", got.searchQueryMode, model.SearchModeGenre)
+	if m.search.queryMode != model.SearchModeGenre {
+		t.Fatalf("queryMode = %q, want the mode the user picked (%q)", m.search.queryMode, model.SearchModeGenre)
 	}
-	if got.searchList.Title != "BOOK Results (1)" {
-		t.Fatalf("searchList title = %q, want the mode the results came from", got.searchList.Title)
+	if m.search.list.Title != "BOOK Results (1)" {
+		t.Fatalf("searchList title = %q, want the mode the results came from", m.search.list.Title)
 	}
 }
 
 func TestTimerOpDoneReleasesItsSlot(t *testing.T) {
 	m := newTestModel()
 	m.inflight = 1
-	m.timerSelecting = true
+	m.push(newTimerPickerModal(m.shared, 0))
 
-	updated, cmd := m.Update(timerOpDoneMsg{info: "Timer started — Dune"})
-	got := updated.(Model)
+	_, cmd := m.Update(timerOpDoneMsg{info: "Timer started — Dune"})
 
 	// The timer operation's slot is released; only the local-data reload it
 	// starts is left in flight.
-	if got.inflight != 1 {
-		t.Fatalf("inflight = %d, want 1 (the reload): the timer op must release its slot", got.inflight)
+	if m.inflight != 1 {
+		t.Fatalf("inflight = %d, want 1 (the reload): the timer op must release its slot", m.inflight)
 	}
-	if got.timerSelecting {
+	if m.timerPicker() != nil {
 		t.Fatal("timerOpDoneMsg should close the timer picker")
 	}
-	if got.toast.text != "Timer started — Dune" {
-		t.Fatalf("toast = %q, want the timer info", got.toast.text)
+	if m.toast.text != "Timer started — Dune" {
+		t.Fatalf("toast = %q, want the timer info", m.toast.text)
 	}
 	if cmd == nil {
 		t.Fatal("timer operations should reload local data")
 	}
 
-	updated, _ = got.Update(localDataLoadedMsg{})
-	if updated.(Model).isLoading() {
+	m.Update(localDataLoadedMsg{})
+	if m.isLoading() {
 		t.Fatal("loading should clear once the reload lands")
 	}
 }
@@ -595,210 +582,190 @@ func TestLocalDataClearsLoadingAndArmsTimerTick(t *testing.T) {
 	m.timerTicking = true
 
 	// With no timer running the one-second tick loop stops.
-	updated, cmd := m.Update(timerTickMsg(time.Now()))
-	got := updated.(Model)
+	_, cmd := m.Update(timerTickMsg(time.Now()))
 	if cmd != nil {
 		t.Fatal("the timer tick should not re-arm while no timer runs")
 	}
-	if got.timerTicking {
+	if m.timerTicking {
 		t.Fatal("timerTicking should be cleared when no timer runs")
 	}
 
-	updated, cmd = got.Update(localDataLoadedMsg{
+	_, cmd = m.Update(localDataLoadedMsg{
 		timerState: &model.TimerState{BookID: 1, StartedAt: time.Now()},
 		timerBook:  &model.Book{ID: 1, Title: "Dune"},
 	})
-	got = updated.(Model)
 
-	if got.isLoading() {
+	if m.isLoading() {
 		t.Fatal("localDataLoadedMsg should clear loading")
 	}
-	if cmd == nil || !got.timerTicking {
+	if cmd == nil || !m.timerTicking {
 		t.Fatal("a running timer should arm the one-second tick")
 	}
-	if got.timerBook == nil || got.timerBook.Title != "Dune" {
-		t.Fatal("the running timer's book should be resolved into model state")
+	if m.shared.timerBook == nil || m.shared.timerBook.Title != "Dune" {
+		t.Fatal("the running timer's book should be resolved into shared state")
 	}
 }
 
 func TestSpinnerStopsWhenNothingIsInFlight(t *testing.T) {
 	m := newTestModel()
 	m.spinning = true
-	m.searchLoading = false
 
-	updated, cmd := m.Update(spinner.TickMsg{})
-	got := updated.(Model)
+	_, cmd := m.Update(spinner.TickMsg{})
 
 	if cmd != nil {
 		t.Fatal("an idle dashboard should stop re-arming the spinner")
 	}
-	if got.spinning {
+	if m.spinning {
 		t.Fatal("spinning should be cleared once nothing is in flight")
 	}
-	if got.beginLoading(loadLocalDataCmd(got.app)) == nil {
+	if m.beginLoading(loadLocalDataCmd(m.app, m.shared.now)) == nil {
 		t.Fatal("starting new work should re-arm the spinner")
 	}
-	if cmd := got.beginLoading(loadLocalDataCmd(got.app)); cmd == nil {
+	if cmd := m.beginLoading(loadLocalDataCmd(m.app, m.shared.now)); cmd == nil {
 		t.Fatal("the second operation should still be batched")
-	} else if !got.spinning || got.inflight != 2 {
-		t.Fatalf("inflight = %d, spinning = %v: a second operation must be counted without a second tick loop", got.inflight, got.spinning)
+	} else if !m.spinning || m.inflight != 2 {
+		t.Fatalf("inflight = %d, spinning = %v: a second operation must be counted without a second tick loop", m.inflight, m.spinning)
 	}
 }
 
 func TestOverlappingLoadsKeepLoadingUntilBothFinish(t *testing.T) {
 	m := newTestModel()
-	if cmd := m.beginLoading(loadLocalDataCmd(m.app), loadLibraryCmd(m.ctx, m.app, false)); cmd == nil {
+	if cmd := m.beginLoading(loadLocalDataCmd(m.app, m.shared.now), loadLibraryCmd(m.ctx, m.app, false)); cmd == nil {
 		t.Fatal("beginLoading() returned no command")
 	}
 	if !m.isLoading() {
 		t.Fatal("two commands are in flight")
 	}
 
-	updated, _ := m.Update(localDataLoadedMsg{})
-	got := updated.(Model)
-	if !got.isLoading() {
+	m.Update(localDataLoadedMsg{})
+	if !m.isLoading() {
 		t.Fatal("the first result must not clear loading while the second load runs")
 	}
 
-	updated, _ = got.Update(libraryLoadedMsg{})
-	got = updated.(Model)
-	if got.isLoading() {
+	m.Update(libraryLoadedMsg{})
+	if m.isLoading() {
 		t.Fatal("loading should clear once every command has reported")
 	}
 }
 
 func TestQuickProgressIsGuardedWhileInFlight(t *testing.T) {
 	m := newTestModel()
-	m.loaded = true
-	m.inflight = 0
-	m.section = sectionReading
-	m.readingBooks = []model.UserBook{{Book: model.Book{ID: 1, Title: "Dune"}}}
-	m.refreshListItems()
+	m.shared.loaded = true
+	m.setSection(sectionReading)
+	setLibrary(m, []model.UserBook{{Book: model.Book{ID: 1, Title: "Dune"}}}, nil)
 
-	updated, cmd := m.Update(runeKey('+'))
-	got := updated.(Model)
+	cmd := send(t, m, runeKey('+'))
 	if cmd == nil {
 		t.Fatal("the first + should start a progress update")
 	}
-	if !got.isLoading() {
+	if !m.isLoading() {
 		t.Fatal("the first + should mark the update in flight")
 	}
 
-	updated, _ = got.Update(runeKey('+'))
-	got = updated.(Model)
-	if got.inflight != 1 {
-		t.Fatalf("inflight = %d: a second + while an update is in flight must not fire, it would lose one", got.inflight)
+	send(t, m, runeKey('+'))
+	if m.inflight != 1 {
+		t.Fatalf("inflight = %d: a second + while an update is in flight must not fire, it would lose one", m.inflight)
 	}
-	if got.toast.text == "" || got.toast.level != toastWarn {
-		t.Fatalf("toast = %+v, want the refused update to say why", got.toast)
+	if m.toast.text == "" || m.toast.level != toastWarn {
+		t.Fatalf("toast = %+v, want the refused update to say why", m.toast)
 	}
 }
 
 func TestReviewSaveFailureKeepsModalOpen(t *testing.T) {
 	m := newTestModel()
-	m.loaded = true
-	m.openReviewRatingModal(model.UserBook{Book: model.Book{ID: 42, Title: "Dune"}})
-	m.reviewRatingInput.SetValue("3")
-	m.reviewTextInput.SetValue("Strong first half.")
+	m.shared.loaded = true
+	review := openReview(m, model.UserBook{Book: model.Book{ID: 42, Title: "Dune"}})
+	review.rating.SetValue("3")
+	review.text.SetValue("Strong first half.")
 
-	updated, _ := m.updateReviewRatingMode(tea.KeyMsg{Type: tea.KeyCtrlS})
-	got := updated.(Model)
+	send(t, m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	m.Update(opDoneMsg{op: opReview, seq: review.token, err: errors.New("save failed")})
 
-	updated, cmd := got.Update(opDoneMsg{op: opReview, seq: got.reviewSeq, err: errors.New("save failed")})
-
-	got = updated.(Model)
-
-	if cmd != nil {
-		t.Fatal("a failed save should not trigger a reload")
+	if m.isLoading() {
+		t.Fatal("a failed save should neither stay in flight nor trigger a reload")
 	}
-	if got.mode != modeReviewRating || got.reviewBook == nil {
+	if m.topModal() != review {
 		t.Fatal("a failed save must keep the modal open")
 	}
-	if got.reviewSubmitting {
-		t.Fatal("reviewSubmitting should be cleared once the save failed")
+	if review.submitting {
+		t.Fatal("submitting should be cleared once the save failed")
 	}
-	if got.isLoading() {
-		t.Fatal("loading should be cleared once the save failed")
+	if review.text.Value() != "Strong first half." {
+		t.Fatalf("review text = %q, want the draft to survive", review.text.Value())
 	}
-	if got.reviewTextInput.Value() != "Strong first half." {
-		t.Fatalf("review text = %q, want the draft to survive", got.reviewTextInput.Value())
-	}
-	if got.reviewErr != "save failed" {
-		t.Fatalf("reviewErr = %q, want save failed", got.reviewErr)
+	if review.err != "save failed" {
+		t.Fatalf("err = %q, want save failed", review.err)
 	}
 
-	if !strings.Contains(got.reviewRatingOverlay(), "save failed") {
+	if !strings.Contains(review.View(m.lay, m.st), "save failed") {
 		t.Fatal("the failure should be visible inside the overlay, not behind it")
 	}
 }
 
 func TestUnrelatedOpDoesNotDisturbReviewModal(t *testing.T) {
 	m := newTestModel()
-	m.loaded = true
-	m.openReviewRatingModal(model.UserBook{Book: model.Book{ID: 42, Title: "Dune"}})
-	m.reviewTextInput.SetValue("half written")
+	m.shared.loaded = true
+	review := openReview(m, model.UserBook{Book: model.Book{ID: 42, Title: "Dune"}})
+	review.text.SetValue("half written")
 
-	updated, _ := m.Update(opDoneMsg{
+	m.Update(opDoneMsg{
 		op:        opProgress,
 		info:      "Progress +10 → page 40",
 		reload:    true,
 		markDirty: true,
 	})
-	got := updated.(Model)
 
-	if got.mode != modeReviewRating || got.reviewBook == nil {
+	if m.topModal() != review {
 		t.Fatal("another operation's result must not close the review modal")
 	}
-	if got.reviewTextInput.Value() != "half written" {
-		t.Fatalf("review text = %q, want the draft untouched", got.reviewTextInput.Value())
+	if review.text.Value() != "half written" {
+		t.Fatalf("review text = %q, want the draft untouched", review.text.Value())
 	}
-	if !got.dirty {
+	if !m.dirty {
 		t.Fatal("the unrelated mutation should still mark the library dirty")
 	}
-	if got.toast.text != "Progress +10 → page 40" {
-		t.Fatalf("toast = %q, want the unrelated result reported", got.toast.text)
+	if m.toast.text != "Progress +10 → page 40" {
+		t.Fatalf("toast = %q, want the unrelated result reported", m.toast.text)
 	}
 }
 
 func TestReviewSaveSuccessClosesModal(t *testing.T) {
 	m := newTestModel()
-	m.loaded = true
-	m.openReviewRatingModal(model.UserBook{Book: model.Book{ID: 42, Title: "Dune"}})
-	m.reviewRatingInput.SetValue("3")
+	m.shared.loaded = true
+	review := openReview(m, model.UserBook{Book: model.Book{ID: 42, Title: "Dune"}})
+	review.rating.SetValue("3")
 
-	updated, _ := m.updateReviewRatingMode(tea.KeyMsg{Type: tea.KeyCtrlS})
-	got := updated.(Model)
-
-	updated, cmd := got.Update(opDoneMsg{
+	send(t, m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	_, cmd := m.Update(opDoneMsg{
 		op:        opReview,
-		seq:       got.reviewSeq,
+		seq:       review.token,
 		info:      "Updated rating (★★★)",
 		reload:    true,
 		markDirty: true,
 	})
 
-	got = updated.(Model)
-
-	if got.mode != modeLibrary || got.reviewBook != nil {
+	if m.topModal() != nil {
 		t.Fatal("a successful save should close the modal")
 	}
 	if cmd == nil {
 		t.Fatal("a successful save should reload the library")
 	}
-	if !got.dirty {
+	if !m.dirty {
 		t.Fatal("a successful save should mark the library dirty")
 	}
 }
 
 func TestBackgroundReconcileClearsDirtyOnlyOnSuccess(t *testing.T) {
-	m := newTestModel()
-	m.loaded = true
-	m.inflight = 0
-	m.dirty = true
-	m.lastMutationAt = time.Now().Add(-2 * backgroundSyncWindow)
+	overdue := func() *Model {
+		m := newTestModel()
+		m.shared.loaded = true
+		m.dirty = true
+		m.lastMutationAt = time.Now().Add(-2 * backgroundSyncWindow)
+		return m
+	}
 
-	updated, cmd := m.Update(backgroundCheckMsg{})
-	started := updated.(Model)
+	started := overdue()
+	_, cmd := started.Update(backgroundCheckMsg{})
 	if cmd == nil {
 		t.Fatal("an overdue reconcile should start a refresh")
 	}
@@ -809,8 +776,9 @@ func TestBackgroundReconcileClearsDirtyOnlyOnSuccess(t *testing.T) {
 		t.Fatal("reconciling should mark the in-flight reconcile")
 	}
 
-	updated, _ = started.Update(libraryLoadedMsg{reconcile: true, err: errors.New("offline")})
-	failed := updated.(Model)
+	failed := overdue()
+	failed.Update(backgroundCheckMsg{})
+	failed.Update(libraryLoadedMsg{reconcile: true, err: errors.New("offline")})
 	if !failed.dirty {
 		t.Fatal("a failed reconcile must leave the library dirty")
 	}
@@ -818,254 +786,297 @@ func TestBackgroundReconcileClearsDirtyOnlyOnSuccess(t *testing.T) {
 		t.Fatal("a failed reconcile should release the reconcile slot so it can retry")
 	}
 
-	updated, _ = started.Update(libraryLoadedMsg{reconcile: true})
-	succeeded := updated.(Model)
-	if succeeded.dirty {
+	started.Update(libraryLoadedMsg{reconcile: true})
+	if started.dirty {
 		t.Fatal("a successful reconcile should clear dirty")
 	}
 }
 
 func TestUnrelatedLibraryLoadDoesNotClearDirty(t *testing.T) {
 	m := newTestModel()
-	m.loaded = true
+	m.shared.loaded = true
 	m.dirty = true
 	m.lastMutationAt = time.Now().Add(-2 * backgroundSyncWindow)
 
-	updated, _ := m.Update(backgroundCheckMsg{})
-	got := updated.(Model)
-	if !got.reconciling {
+	m.Update(backgroundCheckMsg{})
+	if !m.reconciling {
 		t.Fatal("the reconcile should be in flight")
 	}
 
 	// A status change lands while the reconcile is still running and triggers
 	// its own cache reload, whose result arrives first.
-	updated, _ = got.Update(opDoneMsg{op: opStatus, info: "Status changed", reload: true, markDirty: true})
-	got = updated.(Model)
-	updated, _ = got.Update(libraryLoadedMsg{})
-	got = updated.(Model)
+	m.Update(opDoneMsg{op: opStatus, info: "Status changed", reload: true, markDirty: true})
+	m.Update(libraryLoadedMsg{})
 
-	if !got.dirty {
+	if !m.dirty {
 		t.Fatal("an unrelated library load must not clear dirty")
 	}
-	if !got.reconciling {
+	if !m.reconciling {
 		t.Fatal("the reconcile is still in flight")
 	}
 
-	updated, _ = got.Update(libraryLoadedMsg{reconcile: true})
-	got = updated.(Model)
-	if got.dirty || got.reconciling {
-		t.Fatalf("the reconcile result should clear dirty: dirty=%v reconciling=%v", got.dirty, got.reconciling)
+	m.Update(libraryLoadedMsg{reconcile: true})
+	if m.dirty || m.reconciling {
+		t.Fatalf("the reconcile result should clear dirty: dirty=%v reconciling=%v", m.dirty, m.reconciling)
 	}
 }
 
 func TestPendingProgressResultDoesNotClosePageModal(t *testing.T) {
 	m := newTestModel()
-	m.loaded = true
-	m.section = sectionReading
-	m.readingBooks = []model.UserBook{{Book: model.Book{ID: 1, Title: "Dune"}}}
-	m.refreshListItems()
+	m.shared.loaded = true
+	m.setSection(sectionReading)
+	setLibrary(m, []model.UserBook{{Book: model.Book{ID: 1, Title: "Dune"}}}, nil)
 
-	updated, _ := m.Update(runeKey('+')) // progress update in flight
-	got := updated.(Model)
-	updated, _ = got.Update(runeKey('u')) // user opens the page modal
-	got = updated.(Model)
-	if got.mode != modeUpdatePage {
-		t.Fatalf("mode = %v, want the page modal open", got.mode)
+	send(t, m, runeKey('+')) // progress update in flight
+	send(t, m, runeKey('u')) // user opens the page modal
+	if m.pagePrompt() == nil {
+		t.Fatalf("top modal = %T, want the page prompt open", m.topModal())
 	}
 
-	updated, _ = got.Update(opDoneMsg{op: opProgress, info: "Progress +10 → page 40", markDirty: true})
-	got = updated.(Model)
+	m.Update(opDoneMsg{op: opProgress, info: "Progress +10 → page 40", markDirty: true})
 
-	if got.mode != modeUpdatePage {
+	if m.pagePrompt() == nil {
 		t.Fatal("a progress result started before the modal opened must not close it")
-	}
-	if got.pageSubmitting {
-		t.Fatal("the modal has not submitted anything yet")
 	}
 }
 
 func TestPageModalEnterIsGuardedWhileInFlight(t *testing.T) {
 	m := newTestModel()
-	m.loaded = true
-	m.section = sectionReading
-	m.readingBooks = []model.UserBook{{Book: model.Book{ID: 1, Title: "Dune"}}}
-	m.refreshListItems()
+	m.shared.loaded = true
+	m.setSection(sectionReading)
+	setLibrary(m, []model.UserBook{{Book: model.Book{ID: 1, Title: "Dune"}}}, nil)
 
-	updated, _ := m.Update(runeKey('+'))
-	got := updated.(Model)
-	updated, _ = got.Update(runeKey('u'))
-	got = updated.(Model)
-	got.pageInput.SetValue("120")
+	send(t, m, runeKey('+'))
+	send(t, m, runeKey('u'))
+	m.pagePrompt().input.SetValue("120")
 
-	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	got = updated.(Model)
+	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
-	if got.inflight != 1 {
-		t.Fatalf("inflight = %d: enter must not submit a page update while one is in flight", got.inflight)
+	if m.inflight != 1 {
+		t.Fatalf("inflight = %d: enter must not submit a page update while one is in flight", m.inflight)
 	}
-	if got.pageSubmitting {
-		t.Fatal("the refused submission must not mark the modal as submitting")
-	}
-	if got.mode != modeUpdatePage {
+	if m.pagePrompt() == nil {
 		t.Fatal("the modal should stay open after a refused submission")
 	}
-	if got.toast.text == "" {
+	if m.toast.text == "" {
 		t.Fatal("the refused submission should say why")
 	}
 }
 
 func TestPageModalClosesOnItsOwnResult(t *testing.T) {
 	m := newTestModel()
-	m.loaded = true
-	m.mode = modeUpdatePage
-	m.pendingBookID = 1
-	m.pageInput.SetValue("120")
+	m.shared.loaded = true
+	m.push(newPageModal(m.shared, m.st, model.UserBook{Book: model.Book{ID: 1, Title: "Dune"}}))
+	page := m.pagePrompt()
+	page.input.SetValue("120")
 
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	got := updated.(Model)
-	if cmd == nil || !got.pageSubmitting {
+	cmd := send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil || !m.isLoading() {
 		t.Fatal("enter should submit the page update")
 	}
 
-	updated, _ = got.Update(opDoneMsg{op: opProgress, info: "Progress updated to page 120", markDirty: true})
-	got = updated.(Model)
+	m.Update(opDoneMsg{op: opProgress, seq: page.token, info: "Progress updated to page 120", markDirty: true})
 
-	if got.mode != modeLibrary || got.pageSubmitting {
+	if m.pagePrompt() != nil {
 		t.Fatal("the modal's own result should close it")
+	}
+}
+
+func TestModalStackPopsOnOwnResultOnly(t *testing.T) {
+	m := newTestModel()
+	m.shared.loaded = true
+	m.push(newPageModal(m.shared, m.st, model.UserBook{Book: model.Book{ID: 1, Title: "Dune"}}))
+	page := m.pagePrompt()
+
+	// A progress result from elsewhere, and another operation stamped with
+	// the same token, are not the prompt's own.
+	m.Update(opDoneMsg{op: opProgress, seq: page.token + 1, info: "Progress +10 → page 40"})
+	if m.pagePrompt() == nil {
+		t.Fatal("another session's progress result must not close the prompt")
+	}
+	m.Update(opDoneMsg{op: opReview, seq: page.token, info: "Updated rating"})
+	if m.pagePrompt() == nil {
+		t.Fatal("a different operation with the same token must not close the prompt")
+	}
+
+	m.Update(opDoneMsg{op: opProgress, seq: page.token, info: "Progress updated to page 120"})
+	if m.topModal() != nil {
+		t.Fatalf("top modal = %T, want the prompt closed by its own result", m.topModal())
+	}
+
+	// A modal under the top sees its result too: the picker under help
+	// closes when the timer starts, and help stays.
+	m.push(newTimerPickerModal(m.shared, 0))
+	m.openHelp()
+	m.Update(timerOpDoneMsg{info: "Timer started"})
+	if len(m.modals) != 1 {
+		t.Fatalf("modals = %d, want the picker gone and help kept", len(m.modals))
+	}
+	if _, ok := m.topModal().(*helpModal); !ok {
+		t.Fatalf("top modal = %T, want help", m.topModal())
+	}
+}
+
+func TestLibraryReloadRunsTheSetItemsCmd(t *testing.T) {
+	m := renderedDashboard(120, 40)
+	reading := readingSection(m)
+	// An active filter: SetItems must re-run it, or the list goes blank.
+	reading.list.SetFilterText("dune")
+	if got := reading.list.VisibleItems(); len(got) != 1 {
+		t.Fatalf("filtered list shows %d items, want 1", len(got))
+	}
+
+	_, cmd := m.Update(libraryLoadedMsg{reading: []model.UserBook{
+		{Book: model.Book{ID: 1, Title: "Dune", Pages: 412}, CurrentPage: 130},
+		{Book: model.Book{ID: 9, Title: "Ubik"}},
+	}})
+
+	var matches *list.FilterMatchesMsg
+	var walk func(cmd tea.Cmd)
+	walk = func(cmd tea.Cmd) {
+		if cmd == nil {
+			return
+		}
+		switch msg := cmd().(type) {
+		case tea.BatchMsg:
+			for _, c := range msg {
+				walk(c)
+			}
+		case list.FilterMatchesMsg:
+			matches = &msg
+		}
+	}
+	walk(cmd)
+	if matches == nil {
+		t.Fatal("the reload must return the list's filter command, or an active filter goes blank")
+	}
+
+	m.Update(*matches)
+	got := reading.list.VisibleItems()
+	if len(got) != 1 || got[0].(userBookItem).book.Book.Title != "Dune" {
+		t.Fatalf("filtered list after the reload = %#v, want Dune", got)
 	}
 }
 
 func TestSearchInsertModeTypesQuestionMark(t *testing.T) {
 	m := newTestModel()
-	m.section = sectionSearch
-	m.searchSub = searchSubInput
-	m.enterSearchInsertMode()
+	m.setSection(sectionSearch)
+	m.search.sub = searchSubInput
+	m.search.enterInsertMode()
 
-	updated, _ := m.Update(runeKey('?'))
-	got := updated.(Model)
+	m.Update(runeKey('?'))
 
-	if got.showHelp {
+	if m.topModal() != nil {
 		t.Fatal("? should be typed in insert mode, not open help")
 	}
-	if got.searchInput.Value() != "?" {
-		t.Fatalf("search input = %q, want ?", got.searchInput.Value())
+	if m.search.input.Value() != "?" {
+		t.Fatalf("search input = %q, want ?", m.search.input.Value())
 	}
 }
 
 func TestSectionFocusResizesLists(t *testing.T) {
 	m := newTestModel()
-	m.width, m.height = 100, 44
+	m.lay = layout{W: 100, H: 44}
 	m.setSection(sectionReading)
 
-	readingFocused := m.readingList.Height()
+	readingFocused := readingSection(m).list.Height()
 
-	m.nextSection() // Oku takes the focus, and with it the extra rows.
-	if m.section != sectionOku {
-		t.Fatalf("section = %v, want %v", m.section, sectionOku)
+	m.Update(runeKey('l')) // Oku takes the focus, and with it the extra rows.
+	if m.tab != sectionOku {
+		t.Fatalf("section = %v, want %v", m.tab, sectionOku)
 	}
-	if m.readingList.Height() >= readingFocused {
-		t.Fatalf("reading list height = %d, want less than the focused %d", m.readingList.Height(), readingFocused)
+	if readingSection(m).list.Height() >= readingFocused {
+		t.Fatalf("reading list height = %d, want less than the focused %d", readingSection(m).list.Height(), readingFocused)
 	}
 
 	heights := m.leftSectionHeights(m.rightPanelContentHeight())
-	if want := max(1, heights[sectionReading]-3); m.readingList.Height() != want {
-		t.Fatalf("reading list height = %d, want %d", m.readingList.Height(), want)
+	if want := max(1, heights[sectionReading]-3); readingSection(m).list.Height() != want {
+		t.Fatalf("reading list height = %d, want %d", readingSection(m).list.Height(), want)
 	}
-	if want := max(1, heights[sectionOku]-3); m.okuList.Height() != want {
-		t.Fatalf("oku list height = %d, want %d", m.okuList.Height(), want)
+	if want := max(1, heights[sectionOku]-3); okuSection(m).list.Height() != want {
+		t.Fatalf("oku list height = %d, want %d", okuSection(m).list.Height(), want)
 	}
 }
 
 func TestSlashFocusResizesLists(t *testing.T) {
 	m := newTestModel()
-	m.width, m.height = 100, 44
+	m.lay = layout{W: 100, H: 44}
 	m.setSection(sectionReading)
 
-	updated, _ := m.Update(runeKey('/'))
-	got := updated.(Model)
+	m.Update(runeKey('/'))
 
-	heights := got.leftSectionHeights(got.rightPanelContentHeight())
-	if want := max(1, heights[sectionReading]-3); got.readingList.Height() != want {
-		t.Fatalf("reading list height after / = %d, want %d", got.readingList.Height(), want)
+	heights := m.leftSectionHeights(m.rightPanelContentHeight())
+	if want := max(1, heights[sectionReading]-3); readingSection(m).list.Height() != want {
+		t.Fatalf("reading list height after / = %d, want %d", readingSection(m).list.Height(), want)
 	}
 }
 
 func TestReviewModalIsReadOnlyWhileSaving(t *testing.T) {
 	m := newTestModel()
-	m.loaded = true
-	m.openReviewRatingModal(model.UserBook{Book: model.Book{ID: 42, Title: "Dune"}})
-	m.reviewRatingInput.SetValue("3")
-	m.reviewTextInput.SetValue("Strong first half.")
+	m.shared.loaded = true
+	review := openReview(m, model.UserBook{Book: model.Book{ID: 42, Title: "Dune"}})
+	review.rating.SetValue("3")
+	review.text.SetValue("Strong first half.")
 
-	updated, _ := m.updateReviewRatingMode(tea.KeyMsg{Type: tea.KeyCtrlS})
-	saving := updated.(Model)
-	pendingSeq := saving.reviewSeq
+	send(t, m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	pendingSeq := review.token
 
-	updated, _ = saving.Update(runeKey('x'))
-	typed := updated.(Model)
-	if typed.reviewTextInput.Value() != "Strong first half." {
-		t.Fatalf("review text = %q, want it read-only while saving", typed.reviewTextInput.Value())
+	m.Update(runeKey('x'))
+	if review.text.Value() != "Strong first half." {
+		t.Fatalf("review text = %q, want it read-only while saving", review.text.Value())
 	}
 
 	// Cancelling drops the pending result instead of reopening the modal.
-	updated, _ = typed.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	cancelled := updated.(Model)
-	if cancelled.mode != modeLibrary || cancelled.reviewBook != nil {
+	send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.topModal() != nil {
 		t.Fatal("esc should close the modal even while saving")
 	}
 
-	updated, _ = cancelled.Update(opDoneMsg{op: opReview, seq: pendingSeq, err: errors.New("save failed")})
-	late := updated.(Model)
-	if late.mode != modeLibrary {
+	m.Update(opDoneMsg{op: opReview, seq: pendingSeq, err: errors.New("save failed")})
+	if m.topModal() != nil {
 		t.Fatal("a result for a cancelled modal must not reopen it")
 	}
-	if late.reviewErr != "" {
-		t.Fatalf("reviewErr = %q, want the cancelled save reported through the status bar", late.reviewErr)
-	}
-	if late.toast.text != "save failed" || late.toast.level != toastError {
-		t.Fatalf("toast = %+v, want the failure reported in the status bar", late.toast)
+	if m.toast.text != "save failed" || m.toast.level != toastError {
+		t.Fatalf("toast = %+v, want the failure reported in the status bar", m.toast)
 	}
 }
 
 func TestSearchErrorClearsLoadingTitle(t *testing.T) {
 	m := newTestModel()
-	m.section = sectionSearch
-	m.searchInput.SetValue("dune")
-	if cmd := m.submitSearch(); cmd == nil {
-		t.Fatal("submitSearch() returned nil cmd")
+	m.setSection(sectionSearch)
+	m.search.input.SetValue("dune")
+	if cmd := send(t, m, tea.KeyMsg{Type: tea.KeyEnter}); cmd == nil {
+		t.Fatal("submitting the query should start a search")
 	}
 
-	updated, _ := m.Update(searchLoadedMsg{
+	send(t, m, searchLoadedMsg{
 		query: "dune",
 		mode:  model.SearchModeBook,
-		seq:   m.searchSeq,
+		seq:   m.search.seq,
 		err:   errors.New("network down"),
 	})
-	got := updated.(Model)
 
-	if strings.Contains(got.searchList.Title, "loading") {
-		t.Fatalf("searchList title = %q, want the loading state cleared", got.searchList.Title)
+	if strings.Contains(m.search.list.Title, "loading") {
+		t.Fatalf("searchList title = %q, want the loading state cleared", m.search.list.Title)
 	}
-	if got.searchLoading {
+	if m.search.loading {
 		t.Fatal("a failed search should clear searchLoading")
 	}
 }
 
 // renderedDashboard builds a loaded dashboard of the given size with a couple
 // of books on each shelf, ready to render.
-func renderedDashboard(w, h int) Model {
+func renderedDashboard(w, h int) *Model {
 	m := newTestModel()
-	m.loaded = true
-	m.readingBooks = []model.UserBook{
+	m.shared.loaded = true
+	setLibrary(m, []model.UserBook{
 		{Book: model.Book{ID: 1, Title: "Dune", Pages: 412}, CurrentPage: 120},
 		{Book: model.Book{ID: 2, Title: "Foundation", Pages: 255}},
-	}
-	m.okuBooks = []model.UserBook{
+	}, []model.UserBook{
 		{Book: model.Book{ID: 3, Title: "Meditations"}},
-	}
-	m.refreshListItems()
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: h})
-	return updated.(Model)
+	})
+	m.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	return m
 }
 
 func TestViewFillsTerminalExactly(t *testing.T) {
@@ -1147,7 +1158,7 @@ func TestHelpHintIsNeverTheHintThatGetsDropped(t *testing.T) {
 func TestSearchInsertModeDoesNotAdvertiseHelp(t *testing.T) {
 	m := renderedDashboard(120, 40)
 	m.setSection(sectionSearch)
-	m.enterSearchInsertMode()
+	m.search.enterInsertMode()
 
 	if got := stripANSI(m.contextHelpBar()); strings.Contains(got, "? help") {
 		t.Fatalf("help bar = %q, but ? types a literal in insert mode", got)
@@ -1195,7 +1206,7 @@ func TestRecentSearchesRoundTrip(t *testing.T) {
 
 func TestSearchSuggestionsComeFromHistoryOnly(t *testing.T) {
 	m := newTestModel()
-	if got := m.searchInput.AvailableSuggestions(); len(got) != 0 {
+	if got := m.search.input.AvailableSuggestions(); len(got) != 0 {
 		t.Fatalf("a fresh dashboard suggests %#v, want nothing until the user searches", got)
 	}
 
@@ -1203,9 +1214,9 @@ func TestSearchSuggestionsComeFromHistoryOnly(t *testing.T) {
 	if cmd := m.addRecentSearchQuery("east of eden"); cmd != nil {
 		t.Fatal("addRecentSearchQuery() should not try to save without a store")
 	}
-	m.updateSearchSuggestions()
+	m.search.updateSuggestions()
 
-	got := m.searchInput.AvailableSuggestions()
+	got := m.search.input.AvailableSuggestions()
 	if len(got) != 1 || got[0] != "east of eden" {
 		t.Fatalf("suggestions = %#v, want the query just searched for", got)
 	}
@@ -1216,16 +1227,15 @@ func TestLocalDataMergesStoredRecentSearches(t *testing.T) {
 	m.inflight = 1
 	m.addRecentSearchQuery("dune")
 
-	updated, _ := m.Update(localDataLoadedMsg{recentSearches: []string{"dune", "clean code"}})
-	got := updated.(Model)
+	m.Update(localDataLoadedMsg{recentSearches: []string{"dune", "clean code"}})
 
 	want := []string{"dune", "clean code"}
-	if len(got.recentSearches) != len(want) {
-		t.Fatalf("recentSearches = %#v, want %#v", got.recentSearches, want)
+	if len(m.shared.recentSearches) != len(want) {
+		t.Fatalf("recentSearches = %#v, want %#v", m.shared.recentSearches, want)
 	}
 	for i := range want {
-		if got.recentSearches[i] != want[i] {
-			t.Fatalf("recentSearches[%d] = %q, want %q", i, got.recentSearches[i], want[i])
+		if m.shared.recentSearches[i] != want[i] {
+			t.Fatalf("recentSearches[%d] = %q, want %q", i, m.shared.recentSearches[i], want[i])
 		}
 	}
 }
@@ -1234,28 +1244,26 @@ func TestTimerStartsAndStopsFromReadingList(t *testing.T) {
 	m := renderedDashboard(100, 40)
 	m.setSection(sectionReading)
 
-	updated, cmd := m.updateLibraryMode(runeKey('t'))
-	started := updated.(Model)
+	cmd := send(t, m, runeKey('t'))
 	if cmd == nil {
 		t.Fatal("t in the Reading list should start a timer for the selection")
 	}
-	if !started.isLoading() {
+	if !m.isLoading() {
 		t.Fatal("starting a timer should be counted as in flight")
 	}
-	if started.timerSelecting {
+	if m.timerPicker() != nil {
 		t.Fatal("the Reading list already has a selection: no picker")
 	}
 
 	// With a timer running, t stops it.
 	running := renderedDashboard(100, 40)
 	running.setSection(sectionReading)
-	running.timerState = &model.TimerState{BookID: 1, StartedAt: time.Now()}
+	running.shared.timer = &model.TimerState{BookID: 1, StartedAt: time.Now()}
 
-	updated, cmd = running.updateLibraryMode(runeKey('t'))
-	if cmd == nil {
+	if cmd := send(t, running, runeKey('t')); cmd == nil {
 		t.Fatal("t should stop the running timer")
 	}
-	if updated.(Model).timerSelecting {
+	if running.timerPicker() != nil {
 		t.Fatal("stopping a timer must not open the picker")
 	}
 }
@@ -1264,13 +1272,12 @@ func TestTimerKeyOutsideReadingExplainsItself(t *testing.T) {
 	m := renderedDashboard(100, 40)
 	m.setSection(sectionOku)
 
-	updated, _ := m.updateLibraryMode(runeKey('t'))
-	got := updated.(Model)
-	if got.isLoading() {
+	send(t, m, runeKey('t'))
+	if m.isLoading() {
 		t.Fatal("t in the Oku list has no book to track, so it should start nothing")
 	}
-	if !strings.Contains(got.toast.text, "Reading list") {
-		t.Fatalf("toast = %q, want it to point at the Reading list", got.toast.text)
+	if !strings.Contains(m.toast.text, "Reading list") {
+		t.Fatalf("toast = %q, want it to point at the Reading list", m.toast.text)
 	}
 }
 
@@ -1279,15 +1286,14 @@ func TestEnterDoesNotChangeStatus(t *testing.T) {
 		m := renderedDashboard(100, 40)
 		m.setSection(section)
 
-		updated, _ := m.updateLibraryMode(tea.KeyMsg{Type: tea.KeyEnter})
-		got := updated.(Model)
-		if got.isLoading() {
+		send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+		if m.isLoading() {
 			t.Fatalf("section %v: Enter started an operation", section)
 		}
-		if got.toast.level != toastInfo {
-			t.Fatalf("section %v: toast = %+v, want no error", section, got.toast)
+		if m.toast.level != toastInfo {
+			t.Fatalf("section %v: toast = %+v, want no error", section, m.toast)
 		}
-		if got.toast.text == "" {
+		if m.toast.text == "" {
 			t.Fatalf("section %v: Enter should name the book it brought into the detail pane", section)
 		}
 	}
@@ -1297,20 +1303,20 @@ func TestPageModalShowsTitleAndKeepsFormatHint(t *testing.T) {
 	m := renderedDashboard(100, 40)
 	m.setSection(sectionReading)
 
-	updated, _ := m.updateLibraryMode(runeKey('u'))
-	got := updated.(Model)
+	send(t, m, runeKey('u'))
 
-	if got.mode != modeUpdatePage {
-		t.Fatalf("mode after u = %v, want %v", got.mode, modeUpdatePage)
+	page := m.pagePrompt()
+	if page == nil {
+		t.Fatalf("top modal after u = %T, want the page prompt", m.topModal())
 	}
-	if got.pageInput.Value() != "" {
-		t.Fatalf("page input pre-filled with %q, want it empty", got.pageInput.Value())
+	if page.input.Value() != "" {
+		t.Fatalf("page input pre-filled with %q, want it empty", page.input.Value())
 	}
-	if got.pageInput.Placeholder != "370 or +10 or -5" {
-		t.Fatalf("placeholder = %q, want the format hint", got.pageInput.Placeholder)
+	if page.input.Placeholder != "370 or +10 or -5" {
+		t.Fatalf("placeholder = %q, want the format hint", page.input.Placeholder)
 	}
 
-	prompt := got.pagePrompt()
+	prompt := page.View(m.lay, m.st)
 	if !strings.Contains(prompt, "Dune") {
 		t.Fatalf("prompt %q does not name the book", prompt)
 	}
@@ -1320,7 +1326,7 @@ func TestPageModalShowsTitleAndKeepsFormatHint(t *testing.T) {
 
 	// The prompt is two rows taller than the help bar it replaces, and the
 	// layout has to give those rows back.
-	if lines := strings.Split(got.frame(), "\n"); len(lines) != 40 {
+	if lines := strings.Split(m.frame(), "\n"); len(lines) != 40 {
 		t.Fatalf("page prompt frame has %d lines, want 40", len(lines))
 	}
 }
@@ -1329,70 +1335,71 @@ func TestHelpModalFitsTheTerminalAndScrolls(t *testing.T) {
 	for _, h := range []int{24, 40} {
 		m := renderedDashboard(80, h)
 
-		updated, _ := m.Update(runeKey('?'))
-		opened := updated.(Model)
-		if !opened.showHelp {
-			t.Fatalf("height %d: ? should open the help modal", h)
+		m.Update(runeKey('?'))
+		help, ok := m.topModal().(*helpModal)
+		if !ok {
+			t.Fatalf("height %d: ? should open the help modal, top is %T", h, m.topModal())
 		}
-		if lines := strings.Split(opened.frame(), "\n"); len(lines) != h {
+		if lines := strings.Split(m.frame(), "\n"); len(lines) != h {
 			t.Fatalf("height %d: help frame has %d lines, want %d", h, len(lines), h)
 		}
-		if opened.helpViewport.TotalLineCount() <= opened.helpViewport.Height {
+		if help.vp.TotalLineCount() <= help.vp.Height {
 			t.Fatalf("height %d: the help body should be taller than the window", h)
 		}
-		if !strings.Contains(opened.renderHelpModal(), "j/k scroll") {
+		if !strings.Contains(help.View(m.lay, m.st), "j/k scroll") {
 			t.Fatalf("height %d: an overflowing help modal should say it scrolls", h)
 		}
 
-		updated, _ = opened.Update(runeKey('j'))
-		scrolled := updated.(Model)
-		if scrolled.helpViewport.YOffset != 1 {
-			t.Fatalf("height %d: j should scroll the body, YOffset = %d", h, scrolled.helpViewport.YOffset)
+		m.Update(runeKey('j'))
+		if help.vp.YOffset != 1 {
+			t.Fatalf("height %d: j should scroll the body, YOffset = %d", h, help.vp.YOffset)
 		}
 
-		updated, _ = scrolled.Update(runeKey('k'))
-		if got := updated.(Model).helpViewport.YOffset; got != 0 {
+		m.Update(runeKey('k'))
+		if got := help.vp.YOffset; got != 0 {
 			t.Fatalf("height %d: k should scroll back, YOffset = %d", h, got)
 		}
 
-		updated, _ = scrolled.Update(runeKey('?'))
-		if updated.(Model).showHelp {
+		m.Update(runeKey('?'))
+		if m.topModal() != nil {
 			t.Fatalf("height %d: ? should close the help modal", h)
 		}
 	}
 }
 
 func TestIgnoreAsksBeforeItChangesTheStatus(t *testing.T) {
-	m := renderedDashboard(100, 40)
-	m.setSection(sectionReading)
-
-	updated, cmd := m.Update(runeKey('x'))
-	asked := updated.(Model)
-	if cmd != nil {
-		t.Fatal("x should ask before it changes the status")
-	}
-	if !asked.confirm.Active {
-		t.Fatal("x should open the confirmation")
-	}
-	if !strings.Contains(asked.confirm.Message, "Dune") {
-		t.Fatalf("confirm message = %q, want it to name the book", asked.confirm.Message)
-	}
-	if !strings.Contains(asked.confirm.Message, model.StatusIgnored.Label()) {
-		t.Fatalf("confirm message = %q, want it to name the new status", asked.confirm.Message)
+	asked := func() *Model {
+		m := renderedDashboard(100, 40)
+		m.setSection(sectionReading)
+		if cmd := send(t, m, runeKey('x')); cmd != nil {
+			t.Fatal("x should ask before it changes the status")
+		}
+		return m
 	}
 
-	updated, _ = asked.Update(runeKey('n'))
-	cancelled := updated.(Model)
-	if cancelled.confirm.Active || cancelled.isLoading() {
+	m := asked()
+	confirm, ok := m.topModal().(*confirmModal)
+	if !ok {
+		t.Fatalf("top modal = %T, want the confirmation", m.topModal())
+	}
+	if !strings.Contains(confirm.c.Message, "Dune") {
+		t.Fatalf("confirm message = %q, want it to name the book", confirm.c.Message)
+	}
+	if !strings.Contains(confirm.c.Message, model.StatusIgnored.Label()) {
+		t.Fatalf("confirm message = %q, want it to name the new status", confirm.c.Message)
+	}
+
+	cancelled := asked()
+	send(t, cancelled, runeKey('n'))
+	if cancelled.topModal() != nil || cancelled.isLoading() {
 		t.Fatal("n should drop the change without running anything")
 	}
 
-	updated, cmd = asked.Update(runeKey('y'))
-	confirmed := updated.(Model)
-	if cmd == nil {
+	confirmed := asked()
+	if cmd := send(t, confirmed, runeKey('y')); cmd == nil {
 		t.Fatal("y should run the status change")
 	}
-	if confirmed.confirm.Active {
+	if confirmed.topModal() != nil {
 		t.Fatal("the confirmation should close once it is answered")
 	}
 	if !confirmed.isLoading() {
@@ -1400,8 +1407,9 @@ func TestIgnoreAsksBeforeItChangesTheStatus(t *testing.T) {
 	}
 
 	// Esc is the same answer as n.
-	updated, _ = asked.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	if got := updated.(Model); got.confirm.Active || got.isLoading() {
+	escaped := asked()
+	send(t, escaped, tea.KeyMsg{Type: tea.KeyEsc})
+	if escaped.topModal() != nil || escaped.isLoading() {
 		t.Fatal("esc should drop the change")
 	}
 }
@@ -1410,13 +1418,13 @@ func TestDidNotFinishAsksToo(t *testing.T) {
 	m := renderedDashboard(100, 40)
 	m.setSection(sectionReading)
 
-	updated, cmd := m.Update(runeKey('d'))
-	got := updated.(Model)
-	if cmd != nil || !got.confirm.Active {
+	cmd := send(t, m, runeKey('d'))
+	confirm, ok := m.topModal().(*confirmModal)
+	if cmd != nil || !ok {
 		t.Fatal("d should ask before closing the read")
 	}
-	if !strings.Contains(got.confirm.Message, model.StatusDidNotFinish.Label()) {
-		t.Fatalf("confirm message = %q, want it to name the new status", got.confirm.Message)
+	if !strings.Contains(confirm.c.Message, model.StatusDidNotFinish.Label()) {
+		t.Fatalf("confirm message = %q, want it to name the new status", confirm.c.Message)
 	}
 }
 
@@ -1424,41 +1432,22 @@ func TestConfirmationDoesNotSwallowAsyncResults(t *testing.T) {
 	m := renderedDashboard(100, 40)
 	m.setSection(sectionReading)
 
-	updated, _ := m.Update(runeKey('x'))
-	asked := updated.(Model)
-	asked.inflight = 1
+	send(t, m, runeKey('x'))
+	m.inflight = 1
 
-	updated, _ = asked.Update(libraryLoadedMsg{
+	m.Update(libraryLoadedMsg{
 		reading: []model.UserBook{{Book: model.Book{ID: 9, Title: "Ubik"}}},
 	})
-	got := updated.(Model)
 
-	if !got.confirm.Active {
+	if _, ok := m.topModal().(*confirmModal); !ok {
 		t.Fatal("an async result must not close the confirmation")
 	}
-	if len(got.readingBooks) != 1 || got.readingBooks[0].Book.Title != "Ubik" {
-		t.Fatalf("readingBooks = %#v, want the load applied behind the confirmation", got.readingBooks)
+	if len(m.shared.reading) != 1 || m.shared.reading[0].Book.Title != "Ubik" {
+		t.Fatalf("reading = %#v, want the load applied behind the confirmation", m.shared.reading)
 	}
-	if got.isLoading() {
+	if m.isLoading() {
 		t.Fatal("the finished load should have released its slot")
 	}
-}
-
-// stripANSI removes the escape sequences so a test can look at the glyphs.
-func stripANSI(s string) string {
-	var b strings.Builder
-	for i := 0; i < len(s); {
-		if s[i] == 0x1b {
-			for i < len(s) && s[i] != 'm' {
-				i++
-			}
-			i++
-			continue
-		}
-		b.WriteByte(s[i])
-		i++
-	}
-	return b.String()
 }
 
 func TestLongOrMultilineMessagesKeepTheFrameIntact(t *testing.T) {
@@ -1500,11 +1489,10 @@ func TestListCardShowsHowFarDownTheListIs(t *testing.T) {
 	for i := 0; i < 30; i++ {
 		books = append(books, model.UserBook{Book: model.Book{ID: 100 + i, Title: fmt.Sprintf("Book %d", i)}})
 	}
-	m.okuBooks = books
-	m.refreshListItems()
+	setLibrary(m, m.shared.reading, books)
 	m.setSection(sectionOku)
 
-	badge := m.listOverflowBadge(sectionOku)
+	badge := okuSection(m).overflowBadge()
 	if badge != "1/30" {
 		t.Fatalf("overflow badge = %q, want 1/30", badge)
 	}
@@ -1513,19 +1501,17 @@ func TestListCardShowsHowFarDownTheListIs(t *testing.T) {
 	}
 
 	// A list that fits says nothing.
-	m.okuBooks = books[:1]
-	m.refreshListItems()
-	if got := m.listOverflowBadge(sectionOku); got != "" {
+	setLibrary(m, m.shared.reading, books[:1])
+	if got := okuSection(m).overflowBadge(); got != "" {
 		t.Fatalf("overflow badge = %q, want none when the list fits", got)
 	}
 
 	// The focused card's rows are padded out to its full width, so the badge
 	// has to overwrite the tail rather than be appended to it.
 	small := renderedDashboard(80, 24)
-	small.readingBooks = books[:5]
-	small.refreshListItems()
+	setLibrary(small, books[:5], small.shared.oku)
 	small.setSection(sectionReading)
-	if got := small.listOverflowBadge(sectionReading); got != "1/5" {
+	if got := readingSection(small).overflowBadge(); got != "1/5" {
 		t.Fatalf("focused overflow badge = %q, want 1/5", got)
 	}
 	if !strings.Contains(stripANSI(small.frame()), "1/5") {
@@ -1538,8 +1524,9 @@ func TestProgressRowFitsTheDetailPane(t *testing.T) {
 		m := renderedDashboard(size[0], size[1])
 		m.setSection(sectionReading)
 
-		w := m.rightPanelContentWidth()
-		for _, line := range strings.Split(stripANSI(m.detailsView(w)), "\n") {
+		w := m.lay.rightPanelContentWidth()
+		detail := detailsView(m.section().Selected().Book, m.shared.density, w, m.st)
+		for _, line := range strings.Split(stripANSI(detail), "\n") {
 			if got := lipgloss.Width(line); got > w {
 				t.Fatalf("%dx%d: detail line %q is %d wide, want <= %d", size[0], size[1], line, got, w)
 			}
@@ -1553,13 +1540,12 @@ func TestProgressRowFitsTheDetailPane(t *testing.T) {
 func TestTimerSectionStopsWithT(t *testing.T) {
 	m := renderedDashboard(120, 40)
 	m.setSection(sectionTimer)
-	m.timerState = &model.TimerState{BookID: 1, StartedAt: time.Now()}
+	m.shared.timer = &model.TimerState{BookID: 1, StartedAt: time.Now()}
 
-	updated, cmd := m.updateLibraryMode(runeKey('t'))
-	if cmd == nil {
+	if cmd := send(t, m, runeKey('t')); cmd == nil {
 		t.Fatal("t should stop the running timer in the Timer section too")
 	}
-	if updated.(Model).timerSelecting {
+	if m.timerPicker() != nil {
 		t.Fatal("stopping must not open the book picker")
 	}
 }
@@ -1568,69 +1554,54 @@ func TestSecondTimerPressIsGuardedWhileInFlight(t *testing.T) {
 	m := renderedDashboard(120, 40)
 	m.setSection(sectionReading)
 
-	updated, cmd := m.updateLibraryMode(runeKey('t'))
-	started := updated.(Model)
-	if cmd == nil {
+	if cmd := send(t, m, runeKey('t')); cmd == nil {
 		t.Fatal("t should start a timer")
 	}
+	before := m.inflight
 
-	updated, _ = started.updateLibraryMode(runeKey('t'))
-	if updated.(Model).inflight != started.inflight {
+	send(t, m, runeKey('t'))
+	if m.inflight != before {
 		t.Fatal("a second t before the first result returns must not start another session")
 	}
-	if !strings.Contains(updated.(Model).toast.text, "in flight") {
-		t.Fatalf("toast = %q, want the in-flight notice", updated.(Model).toast.text)
+	if !strings.Contains(m.toast.text, "in flight") {
+		t.Fatalf("toast = %q, want the in-flight notice", m.toast.text)
 	}
 }
 
 func TestSearchHeaderNamesTheResultsOnScreen(t *testing.T) {
 	m := newTestModel()
-	m.section = sectionSearch
-	m.searchInput.SetValue("dune")
+	m.setSection(sectionSearch)
+	m.search.input.SetValue("dune")
 	m.inflight = 1
 
-	updated, _ := m.Update(searchLoadedMsg{
+	send(t, m, searchLoadedMsg{
 		results: []model.SearchResult{{ID: 1, Title: "Dune"}, {ID: 2, Title: "Dune Messiah"}},
 		query:   "dune",
 		mode:    model.SearchModeBook,
-		seq:     m.searchSeq,
+		seq:     m.search.seq,
 	})
-	got := updated.(Model)
-	if got.searchList.Title != "BOOK Results (2)" {
-		t.Fatalf("title = %q, want BOOK Results (2)", got.searchList.Title)
+	if m.search.list.Title != "BOOK Results (2)" {
+		t.Fatalf("title = %q, want BOOK Results (2)", m.search.list.Title)
 	}
 
 	// Switching the mode does not rename results fetched in the old one.
-	got.setSearchQueryMode(model.SearchModeAuthor)
-	if got.searchList.Title != "BOOK Results (2)" {
-		t.Fatalf("title after switching mode = %q, want the results' own mode", got.searchList.Title)
+	send(t, m, m.search.setQueryMode(model.SearchModeAuthor))
+	if m.search.list.Title != "BOOK Results (2)" {
+		t.Fatalf("title after switching mode = %q, want the results' own mode", m.search.list.Title)
 	}
 
 	// A failed search leaves the previous results, and their count, named.
-	got.inflight = 1
-	got.searchLoading = true
-	updated, _ = got.Update(searchLoadedMsg{
+	m.inflight = 1
+	m.search.loading = true
+	send(t, m, searchLoadedMsg{
 		query: "dune",
 		mode:  model.SearchModeAuthor,
-		seq:   got.searchSeq,
+		seq:   m.search.seq,
 		err:   errors.New("network down"),
 	})
-	failed := updated.(Model)
-	if failed.searchList.Title != "BOOK Results (2)" {
-		t.Fatalf("title after a failed search = %q, want the results still on screen", failed.searchList.Title)
+	if m.search.list.Title != "BOOK Results (2)" {
+		t.Fatalf("title after a failed search = %q, want the results still on screen", m.search.list.Title)
 	}
-}
-
-// withColorProfile renders in colour for the duration of a test. Tests have
-// no terminal, so lipgloss would otherwise strip every colour and a light and
-// a dark render would be the same bytes.
-func withColorProfile(t *testing.T) {
-	t.Helper()
-	lipgloss.SetColorProfile(termenv.ANSI256)
-	t.Cleanup(func() {
-		lipgloss.SetColorProfile(termenv.Ascii)
-		lipgloss.SetHasDarkBackground(true)
-	})
 }
 
 func TestThemeResolvesDistinctColoursForLightAndDark(t *testing.T) {
@@ -1728,7 +1699,7 @@ func keyMsgFor(t *testing.T, name string) tea.KeyMsg {
 
 // TestEveryAdvertisedBindingIsHandled walks every focus the dashboard can
 // have, takes the bindings its help advertises, and presses each of their
-// keys: every one has to change the screen or return a command. A binding
+// keys: every one has to change the screen or start something. A binding
 // that is listed but not dispatched fails here.
 func TestEveryAdvertisedBindingIsHandled(t *testing.T) {
 	books := func(ids ...int) []model.UserBook {
@@ -1740,36 +1711,33 @@ func TestEveryAdvertisedBindingIsHandled(t *testing.T) {
 	}
 	// Three books on each shelf and a cursor in the middle, so both up and
 	// down move; the demo stats so the stats page is tall enough to scroll.
-	base := func(w, h int) Model {
+	base := func(w, h int) *Model {
 		m := renderedDashboard(w, h)
-		m.readingBooks = books(1, 2, 3)
-		m.okuBooks = books(4, 5, 6)
-		m.refreshListItems()
-		m.readingList.Select(1)
-		m.okuList.Select(1)
-		m.readingStats, _ = demoLocalData()
+		setLibrary(m, books(1, 2, 3), books(4, 5, 6))
+		readingSection(m).list.Select(1)
+		okuSection(m).list.Select(1)
+		m.shared.stats, _ = demoLocalData(time.Now())
 		return m
 	}
-	withResults := func(m Model) Model {
-		m.searchBooks = []model.SearchResult{{ID: 7, Title: "Dune"}, {ID: 8, Title: "Dune Messiah"}, {ID: 9, Title: "Children of Dune"}}
-		m.refreshSearchResultItems()
-		m.searchList.Select(1)
-		m.searchInput.SetValue("dune")
+	withResults := func(m *Model) *Model {
+		m.search.results = []model.SearchResult{{ID: 7, Title: "Dune"}, {ID: 8, Title: "Dune Messiah"}, {ID: 9, Title: "Children of Dune"}}
+		m.search.rebuildResults()
+		m.search.list.Select(1)
+		m.search.input.SetValue("dune")
 		return m
 	}
-	inSection := func(s focusSection) func() Model {
-		return func() Model {
+	inSection := func(s focusSection) func() *Model {
+		return func() *Model {
 			m := base(120, 40)
 			m.setSection(s)
 			return m
 		}
 	}
-	confirmWithCursor := func(cursor int) func() Model {
-		return func() Model {
+	confirmWithCursor := func(cursor int) func() *Model {
+		return func() *Model {
 			m := inSection(sectionReading)()
-			updated, _ := m.Update(runeKey('x'))
-			m = updated.(Model)
-			m.confirm.Cursor = cursor
+			send(t, m, runeKey('x'))
+			m.topModal().(*confirmModal).c.Cursor = cursor
 			return m
 		}
 	}
@@ -1779,69 +1747,67 @@ func TestEveryAdvertisedBindingIsHandled(t *testing.T) {
 		// variants are arrangements of the same focus; a key passes when it
 		// does something in any of them (a two-button dialog cannot move
 		// left and right from one cursor).
-		variants []func() Model
+		variants []func() *Model
 	}{
-		{"intro", []func() Model{inSection(sectionIntro)}},
-		{"reading", []func() Model{inSection(sectionReading)}},
-		{"oku", []func() Model{inSection(sectionOku)}},
-		{"search input, normal mode", []func() Model{func() Model {
+		{"intro", []func() *Model{inSection(sectionIntro)}},
+		{"reading", []func() *Model{inSection(sectionReading)}},
+		{"oku", []func() *Model{inSection(sectionOku)}},
+		{"search input, normal mode", []func() *Model{func() *Model {
 			m := withResults(inSection(sectionSearch)())
-			m.searchSub = searchSubInput
-			m.enterSearchNormalMode()
+			m.search.sub = searchSubInput
+			m.search.enterNormalMode()
 			return m
 		}}},
-		{"search input, insert mode", []func() Model{func() Model {
+		{"search input, insert mode", []func() *Model{func() *Model {
 			m := withResults(inSection(sectionSearch)())
-			m.searchSub = searchSubInput
-			m.enterSearchInsertMode()
+			m.search.sub = searchSubInput
+			m.search.enterInsertMode()
 			return m
 		}}},
-		{"search results", []func() Model{func() Model {
+		{"search results", []func() *Model{func() *Model {
 			m := withResults(inSection(sectionSearch)())
-			m.searchSub = searchSubResults
-			m.enterSearchNormalMode()
+			m.search.sub = searchSubResults
+			m.search.enterNormalMode()
 			return m
 		}}},
-		{"stats", []func() Model{func() Model {
+		{"stats", []func() *Model{func() *Model {
 			// One row down: the page can still scroll either way.
 			m := inSection(sectionStats)()
-			m.statsScroll = 1
+			m.sections[sectionStats].(*statsSection).scroll = 1
 			return m
 		}}},
-		{"timer, idle", []func() Model{inSection(sectionTimer)}},
-		{"timer, picking a book", []func() Model{func() Model {
+		{"timer, idle", []func() *Model{inSection(sectionTimer)}},
+		{"timer, picking a book", []func() *Model{func() *Model {
 			m := inSection(sectionTimer)()
-			m.timerSelecting = true
-			m.timerSelectIdx = 1
+			m.push(newTimerPickerModal(m.shared, 1))
 			return m
 		}}},
-		{"timer, running", []func() Model{func() Model {
+		{"timer, running", []func() *Model{func() *Model {
 			m := inSection(sectionTimer)()
-			m.timerState = &model.TimerState{BookID: 1, StartedAt: time.Now()}
+			m.shared.timer = &model.TimerState{BookID: 1, StartedAt: time.Now()}
 			return m
 		}}},
-		{"help modal", []func() Model{func() Model {
+		{"help modal", []func() *Model{func() *Model {
 			// Short enough that the body scrolls, scrolled one row so every
 			// direction has somewhere to go.
 			m := base(80, 24)
 			m.setSection(sectionReading)
 			m.openHelp()
-			m.helpViewport.SetYOffset(1)
+			m.topModal().(*helpModal).vp.SetYOffset(1)
 			return m
 		}}},
-		{"confirm", []func() Model{confirmWithCursor(1), confirmWithCursor(0)}},
-		{"page prompt", []func() Model{func() Model {
+		{"confirm", []func() *Model{confirmWithCursor(1), confirmWithCursor(0)}},
+		{"page prompt", []func() *Model{func() *Model {
 			m := inSection(sectionReading)()
-			m.openPageModal(m.readingBooks[1])
+			m.push(newPageModal(m.shared, m.st, m.shared.reading[1]))
 			return m
 		}}},
-		{"review modal", []func() Model{func() Model {
+		{"review modal", []func() *Model{func() *Model {
 			m := inSection(sectionReading)()
-			m.openReviewRatingModal(m.readingBooks[1])
-			m.reviewRatingInput.SetValue("3")
+			openReview(m, m.shared.reading[1]).rating.SetValue("3")
 			return m
 		}}},
-		{"undo on offer", []func() Model{func() Model {
+		{"undo on offer", []func() *Model{func() *Model {
 			m := inSection(sectionOku)()
 			m.showUndoToast("Moved 'Book 5' to Read", undoAction{op: opStatus, bookID: 5,
 				fromStatus: model.StatusRead, toStatus: model.StatusWantToRead})
@@ -1862,8 +1828,8 @@ func TestEveryAdvertisedBindingIsHandled(t *testing.T) {
 					for _, arrange := range state.variants {
 						m := arrange()
 						before := stripANSI(m.frame())
-						updated, cmd := m.Update(msg)
-						if cmd != nil || stripANSI(updated.(Model).frame()) != before {
+						cmd := send(t, m, msg)
+						if cmd != nil || stripANSI(m.frame()) != before {
 							handled = true
 							break
 						}
@@ -1877,13 +1843,18 @@ func TestEveryAdvertisedBindingIsHandled(t *testing.T) {
 	}
 }
 
+// helpBody is the help modal's rows for the focus m has now.
+func helpBody(m *Model) string {
+	return newHelpModal(m.keysBehind, m.st).body()
+}
+
 // TestHelpModalListsEveryGroupWithTheActiveOnesFirst checks the modal still
 // teaches the other sections' keys: from Reading it names the search keys,
 // dimmed, after the groups that apply.
 func TestHelpModalListsEveryGroupWithTheActiveOnesFirst(t *testing.T) {
 	m := renderedDashboard(120, 40)
 	m.setSection(sectionReading)
-	body := stripANSI(m.helpModalBody())
+	body := stripANSI(helpBody(m))
 
 	for _, want := range []string{"Actions", "Navigation", "General", "Confirm", "Review", "Timer", "Data",
 		"insert", "cycle mode", "book / author / genre", "undo the last change", "stop timer"} {
@@ -1898,7 +1869,7 @@ func TestHelpModalListsEveryGroupWithTheActiveOnesFirst(t *testing.T) {
 	}
 	// Dimming is the only difference, so the raw render of a live key and a
 	// dead one must differ.
-	raw := m.helpModalBody()
+	raw := helpBody(m)
 	live := m.st.modalKey.Width(12).Render("u")
 	if !strings.Contains(raw, live) {
 		t.Fatal("a live key should be drawn in the key style")
@@ -1911,54 +1882,63 @@ func TestHelpModalListsEveryGroupWithTheActiveOnesFirst(t *testing.T) {
 // TestOverloadedKeysMatchTheirHelp pins the help-modal labels of keys that
 // mean different things in different places to what the handler does there.
 func TestOverloadedKeysMatchTheirHelp(t *testing.T) {
-	modalRows := func(m Model) string { return stripANSI(m.helpModalBody()) }
+	overResults := func() *Model {
+		m := renderedDashboard(120, 40)
+		m.setSection(sectionSearch)
+		m.search.results = []model.SearchResult{{ID: 1, Title: "Dune"}}
+		m.search.rebuildResults()
+		m.search.sub = searchSubResults
+		m.search.enterNormalMode()
+		return m
+	}
 
 	// Over the search results h goes back to the input, so the section hint
 	// must not claim it.
-	m := renderedDashboard(120, 40)
-	m.setSection(sectionSearch)
-	m.searchBooks = []model.SearchResult{{ID: 1, Title: "Dune"}}
-	m.refreshSearchResultItems()
-	m.searchSub = searchSubResults
-	m.enterSearchNormalMode()
-
-	updated, _ := m.Update(runeKey('h'))
-	if got := updated.(Model); got.searchSub != searchSubInput || got.section != sectionSearch {
-		t.Fatalf("h over the results: searchSub=%v section=%v, want back to the input", got.searchSub, got.section)
-	}
+	m := overResults()
 	k := m.activeKeys()
+	rows := stripANSI(helpBody(m))
+	send(t, m, runeKey('h'))
+	if m.search.sub != searchSubInput || m.tab != sectionSearch {
+		t.Fatalf("h over the results: searchSub=%v section=%v, want back to the input", m.search.sub, m.tab)
+	}
 	for _, key := range k.PrevSection.Keys() {
 		if key == "h" || key == "left" {
 			t.Fatalf("PrevSection still claims %q over the results", key)
 		}
 	}
-	rows := modalRows(m)
 	// The Confirm group (dimmed) still lists "h/l pick a button"; it is the
 	// section row that must not claim h here.
 	if !strings.Contains(rows, "Esc/h") || !strings.Contains(rows, "S-Tab/l") || strings.Contains(rows, "h/l           section") {
 		t.Fatalf("results help should say Esc/h goes back and S-Tab goes to the previous section:\n%s", rows)
 	}
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
-	if got := updated.(Model); got.section != sectionOku {
-		t.Fatalf("shift+tab over the results: section=%v, want the previous section", got.section)
+	m = overResults()
+	m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if m.tab != sectionOku {
+		t.Fatalf("shift+tab over the results: section=%v, want the previous section", m.tab)
 	}
 
 	// In Intro k goes to the previous section, so j/k cannot be labelled
 	// "next section".
-	intro := renderedDashboard(120, 40)
-	intro.setSection(sectionIntro)
-	updated, _ = intro.Update(runeKey('k'))
-	if got := updated.(Model); got.section != sectionTimer {
-		t.Fatalf("k in Intro: section=%v, want the previous section (Timer)", got.section)
+	intro := func() *Model {
+		m := renderedDashboard(120, 40)
+		m.setSection(sectionIntro)
+		return m
 	}
-	updated, _ = intro.Update(runeKey('j'))
-	if got := updated.(Model); got.section != sectionReading {
-		t.Fatalf("j in Intro: section=%v, want the next section (Reading)", got.section)
+	up := intro()
+	send(t, up, runeKey('k'))
+	if up.tab != sectionTimer {
+		t.Fatalf("k in Intro: section=%v, want the previous section (Timer)", up.tab)
 	}
-	if rows := modalRows(intro); strings.Contains(rows, "j/k           next section") || !strings.Contains(rows, "j/k           section") {
+	down := intro()
+	send(t, down, runeKey('j'))
+	if down.tab != sectionReading {
+		t.Fatalf("j in Intro: section=%v, want the next section (Reading)", down.tab)
+	}
+	fresh := intro()
+	if rows := stripANSI(helpBody(fresh)); strings.Contains(rows, "j/k           next section") || !strings.Contains(rows, "j/k           section") {
 		t.Fatalf("Intro help should label j/k as moving between sections, not one way:\n%s", rows)
 	}
-	if d := intro.activeKeys().upDownDesc(); d != "section" {
+	if d := fresh.activeKeys().upDownDesc(); d != "section" {
 		t.Fatalf("upDownDesc in Intro = %q, want section", d)
 	}
 }
@@ -1974,17 +1954,15 @@ func TestLaterToastDropsThePendingUndo(t *testing.T) {
 
 	// Something else fails before U is pressed: the toast that named the
 	// undo is gone, and so is the undo.
-	updated, _ := m.Update(opDoneMsg{op: opSync, err: errors.New("offline")})
-	got := updated.(Model)
-	if got.undo != nil {
+	m.Update(opDoneMsg{op: opSync, err: errors.New("offline")})
+	if m.undo != nil {
 		t.Fatal("a later toast must drop the pending undo")
 	}
-	if got.activeKeys().Undo.Enabled() {
+	if m.activeKeys().Undo.Enabled() {
 		t.Fatal("U should not be advertised once its toast is gone")
 	}
-	before := got.inflight
-	updated, cmd := got.Update(runeKey('U'))
-	if cmd != nil || updated.(Model).inflight != before {
+	before := m.inflight
+	if cmd := send(t, m, runeKey('U')); cmd != nil || m.inflight != before {
 		t.Fatal("U after a later toast must do nothing")
 	}
 }
@@ -2007,18 +1985,16 @@ func TestToastExpiresOnItsOwnTickOnly(t *testing.T) {
 	}
 
 	// The first toast's tick arrives late: the second one must survive it.
-	updated, _ := m.Update(toastExpiredMsg{seq: firstSeq})
-	got := updated.(Model)
-	if got.toast.text != "second" {
-		t.Fatalf("toast = %+v, want the newer toast left alone by the old tick", got.toast)
+	m.Update(toastExpiredMsg{seq: firstSeq})
+	if m.toast.text != "second" {
+		t.Fatalf("toast = %+v, want the newer toast left alone by the old tick", m.toast)
 	}
 
-	updated, _ = got.Update(toastExpiredMsg{seq: got.toast.seq})
-	got = updated.(Model)
-	if got.toast.text != "" {
-		t.Fatalf("toast = %+v, want it cleared by its own tick", got.toast)
+	m.Update(toastExpiredMsg{seq: m.toast.seq})
+	if m.toast.text != "" {
+		t.Fatalf("toast = %+v, want it cleared by its own tick", m.toast)
 	}
-	if strings.Contains(stripANSI(got.frame()), "second") {
+	if strings.Contains(stripANSI(m.frame()), "second") {
 		t.Fatal("an expired toast should leave the status bar")
 	}
 
@@ -2029,82 +2005,85 @@ func TestToastExpiresOnItsOwnTickOnly(t *testing.T) {
 }
 
 func TestStatusChangeOffersUndoWhileTheToastIsUp(t *testing.T) {
-	m := renderedDashboard(120, 40)
-	m.setSection(sectionReading)
-	m.inflight = 1
-
-	updated, _ := m.Update(opDoneMsg{
-		op: opStatus, info: "Status changed to Read", reload: true, markDirty: true,
-		bookID: 1, title: "Dune", prevStatus: model.StatusCurrentlyReading, newStatus: model.StatusRead,
-	})
-	got := updated.(Model)
-
-	if got.undo == nil || got.undo.op != opStatus || got.undo.bookID != 1 ||
-		got.undo.toStatus != model.StatusCurrentlyReading || got.undo.fromStatus != model.StatusRead {
-		t.Fatalf("undo = %+v, want the way back to Currently Reading for Dune", got.undo)
+	moved := func() *Model {
+		m := renderedDashboard(120, 40)
+		m.setSection(sectionReading)
+		m.inflight = 1
+		m.Update(opDoneMsg{
+			op: opStatus, info: "Status changed to Read", reload: true, markDirty: true,
+			bookID: 1, title: "Dune", prevStatus: model.StatusCurrentlyReading, newStatus: model.StatusRead,
+		})
+		return m
 	}
-	bar := stripANSI(got.statusBar())
+
+	m := moved()
+	if m.undo == nil || m.undo.op != opStatus || m.undo.bookID != 1 ||
+		m.undo.toStatus != model.StatusCurrentlyReading || m.undo.fromStatus != model.StatusRead {
+		t.Fatalf("undo = %+v, want the way back to Currently Reading for Dune", m.undo)
+	}
+	bar := stripANSI(m.statusBar())
 	if !strings.Contains(bar, "Moved 'Dune' to Read") || !strings.Contains(bar, "U undo") {
 		t.Fatalf("status bar = %q, want the move and the undo hint", bar)
 	}
-	if !got.activeKeys().Undo.Enabled() {
+	if !m.activeKeys().Undo.Enabled() {
 		t.Fatal("U should be live while the undo is on offer")
 	}
 
 	// The reload the result started is still in flight; undo must not wait
 	// for it, the status it sets is absolute.
-	before := got.inflight
-	updated, cmd := got.Update(runeKey('U'))
-	undone := updated.(Model)
-	if cmd == nil || undone.inflight != before+1 {
-		t.Fatalf("U should start the reverse status change (inflight %d → %d)", before, undone.inflight)
+	before := m.inflight
+	if cmd := send(t, m, runeKey('U')); cmd == nil || m.inflight != before+1 {
+		t.Fatalf("U should start the reverse status change (inflight %d → %d)", before, m.inflight)
 	}
-	if undone.undo != nil {
+	if m.undo != nil {
 		t.Fatal("an undo can only be taken once")
 	}
 
 	// Once the toast has expired, U does nothing.
-	expired, _ := got.Update(toastExpiredMsg{seq: got.toast.seq})
-	late, cmd := expired.(Model).Update(runeKey('U'))
-	if cmd != nil || late.(Model).inflight != before {
-		t.Fatal("U after the toast expired must not change anything")
-	}
-	if expired.(Model).activeKeys().Undo.Enabled() {
+	expired := moved()
+	expired.Update(toastExpiredMsg{seq: expired.toast.seq})
+	if expired.activeKeys().Undo.Enabled() {
 		t.Fatal("U should not be advertised once the undo is gone")
+	}
+	before = expired.inflight
+	if cmd := send(t, expired, runeKey('U')); cmd != nil || expired.inflight != before {
+		t.Fatal("U after the toast expired must not change anything")
 	}
 }
 
 func TestQuickProgressOffersUndoToThePreviousPage(t *testing.T) {
-	m := renderedDashboard(120, 40)
-	m.setSection(sectionReading)
-	m.inflight = 1
+	updated := func(msg opDoneMsg) *Model {
+		m := renderedDashboard(120, 40)
+		m.setSection(sectionReading)
+		m.inflight = 1
+		m.Update(msg)
+		return m
+	}
 
-	updated, _ := m.Update(opDoneMsg{
+	m := updated(opDoneMsg{
 		op: opProgress, info: "Progress +10 → page 130", reload: true, markDirty: true,
 		bookID: 1, title: "Dune", prevPage: 120, newPage: 130,
 	})
-	got := updated.(Model)
 
-	if got.undo == nil || got.undo.op != opProgress || got.undo.toPage != 120 || got.undo.fromPage != 130 {
-		t.Fatalf("undo = %+v, want the way back to page 120", got.undo)
+	if m.undo == nil || m.undo.op != opProgress || m.undo.toPage != 120 || m.undo.fromPage != 130 {
+		t.Fatalf("undo = %+v, want the way back to page 120", m.undo)
 	}
-	if bar := stripANSI(got.statusBar()); !strings.Contains(bar, "Page 130") || !strings.Contains(bar, "U undo") {
+	if bar := stripANSI(m.statusBar()); !strings.Contains(bar, "Page 130") || !strings.Contains(bar, "U undo") {
 		t.Fatalf("status bar = %q, want the page and the undo hint", bar)
 	}
 
-	before := got.inflight
-	updated, cmd := got.Update(runeKey('U'))
-	if cmd == nil || updated.(Model).inflight != before+1 {
+	before := m.inflight
+	if cmd := send(t, m, runeKey('U')); cmd == nil || m.inflight != before+1 {
 		t.Fatal("U should start the update back to the previous page")
 	}
 
 	// A failed operation and one that changed nothing offer no undo.
-	failed, _ := m.Update(opDoneMsg{op: opProgress, err: errors.New("offline"), bookID: 1, prevPage: 120, newPage: 130})
-	if f := failed.(Model); f.undo != nil || f.toast.level != toastError {
-		t.Fatalf("a failed update offered undo or hid the error: %+v", f.toast)
+	failed := updated(opDoneMsg{op: opProgress, err: errors.New("offline"), bookID: 1, prevPage: 120, newPage: 130})
+	if failed.undo != nil || failed.toast.level != toastError {
+		t.Fatalf("a failed update offered undo or hid the error: %+v", failed.toast)
 	}
-	same, _ := m.Update(opDoneMsg{op: opProgress, info: "Progress updated to page 120", bookID: 1, prevPage: 120, newPage: 120})
-	if same.(Model).undo != nil {
+	same := updated(opDoneMsg{op: opProgress, info: "Progress updated to page 120", bookID: 1, prevPage: 120, newPage: 120})
+	if same.undo != nil {
 		t.Fatal("an update that changed nothing has nothing to undo")
 	}
 }
@@ -2114,15 +2093,14 @@ func TestUndoNeverStealsALetterFromTheSearchInput(t *testing.T) {
 	m.showUndoToast("Moved 'Dune' to Read", undoAction{op: opStatus, bookID: 1,
 		fromStatus: model.StatusRead, toStatus: model.StatusCurrentlyReading})
 	m.setSection(sectionSearch)
-	m.searchSub = searchSubInput
-	m.enterSearchInsertMode()
+	m.search.sub = searchSubInput
+	m.search.enterInsertMode()
 
-	updated, _ := m.Update(runeKey('U'))
-	got := updated.(Model)
-	if got.searchInput.Value() != "U" {
-		t.Fatalf("search input = %q, want the letter typed", got.searchInput.Value())
+	m.Update(runeKey('U'))
+	if m.search.input.Value() != "U" {
+		t.Fatalf("search input = %q, want the letter typed", m.search.input.Value())
 	}
-	if got.undo == nil {
+	if m.undo == nil {
 		t.Fatal("typing must not spend the undo")
 	}
 }
@@ -2145,9 +2123,9 @@ func TestFocusIsVisibleWithoutColour(t *testing.T) {
 
 	// The right pane takes the focus border when the cursor moves into it.
 	m.setSection(sectionSearch)
-	m.searchSub = searchSubInput
+	m.search.sub = searchSubInput
 	inputFrame := ansi.Strip(m.frame())
-	m.searchSub = searchSubResults
+	m.search.sub = searchSubResults
 	resultsFrame := ansi.Strip(m.frame())
 	if inputFrame == resultsFrame {
 		t.Fatal("focusing the search results should change the frame without colour")
@@ -2159,5 +2137,27 @@ func TestFocusIsVisibleWithoutColour(t *testing.T) {
 	// never coexist, so the marked card is the only other thick border.
 	if strings.Count(strings.Split(resultsFrame, "\n")[3], "┃") < 2 {
 		t.Fatalf("the right pane should carry the thick border:\n%s", resultsFrame)
+	}
+}
+
+func TestSharedClockDrivesEveryRender(t *testing.T) {
+	fixed := time.Date(2026, 9, 5, 20, 30, 0, 0, time.Local)
+	m := renderedDashboard(120, 40)
+	m.shared.now = func() time.Time { return fixed }
+	m.shared.timer = &model.TimerState{BookID: 1, StartedAt: fixed.Add(-90 * time.Second)}
+	m.shared.timerBook = &m.shared.reading[0].Book
+	m.shared.stats, m.shared.sessions = demoLocalData(fixed)
+
+	m.setSection(sectionTimer)
+	frame := stripANSI(m.frame())
+	if !strings.Contains(frame, "00:01:30") {
+		t.Fatalf("the timer should be read off the shared clock:\n%s", frame)
+	}
+	if !strings.Contains(frame, "Today") {
+		t.Fatalf("sessions should be dated against the shared clock:\n%s", frame)
+	}
+	m.setSection(sectionIntro)
+	if got := stripANSI(m.frame()); !strings.Contains(got, "1m 30s") {
+		t.Fatalf("the intro's timer should be read off the shared clock:\n%s", got)
 	}
 }

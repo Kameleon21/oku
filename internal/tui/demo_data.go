@@ -16,8 +16,9 @@ func shouldUseDemoLocalData() bool {
 	return strings.EqualFold(strings.TrimSpace(os.Getenv("OKU_TUI_DEMO_DATA")), "1")
 }
 
-func demoLocalData() (*model.ReadingStats, []model.ReadingSession) {
-	now := time.Now()
+// demoLocalData fabricates stats and sessions around now, so a fixed clock
+// gives a fixed page.
+func demoLocalData(now time.Time) (*model.ReadingStats, []model.ReadingSession) {
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 
 	heatmap := make([]model.DayActivity, 0, 26*7)

@@ -10,183 +10,96 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func (m Model) handleTimerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	k := m.activeKeys()
-	if m.timerSelecting && m.timerState == nil {
-		switch {
-		case key.Matches(msg, k.Quit, k.ForceQuit):
-			return m, tea.Quit
-		case key.Matches(msg, k.Help):
-			m.openHelp()
-			return m, nil
-		case key.Matches(msg, k.Back):
-			m.timerSelecting = false
-			cmd := m.showToast(toastInfo, "Timer start cancelled")
-			return m, cmd
-		case key.Matches(msg, k.Down):
-			if m.timerSelectIdx < len(m.readingBooks)-1 {
-				m.timerSelectIdx++
-			}
-			return m, nil
-		case key.Matches(msg, k.Up):
-			if m.timerSelectIdx > 0 {
-				m.timerSelectIdx--
-			}
-			return m, nil
-		case key.Matches(msg, k.Select):
-			if len(m.readingBooks) == 0 {
-				m.timerSelecting = false
-				cmd := m.showToast(toastError, "no currently reading books available")
-				return m, cmd
-			}
-			// Background sync can shrink readingBooks while the picker is open.
-			if m.timerSelectIdx >= len(m.readingBooks) {
-				m.timerSelectIdx = len(m.readingBooks) - 1
-			}
-			selected := m.readingBooks[m.timerSelectIdx]
-			m.timerSelecting = false
-			return m.startOp(startTimerForBookCmd(m.app, selected.Book.ID))
-		}
-		return m, nil
-	}
-
-	switch {
-	case key.Matches(msg, k.Quit, k.ForceQuit):
-		return m, tea.Quit
-	case key.Matches(msg, k.Help):
-		m.openHelp()
-		return m, nil
-	case key.Matches(msg, k.Down, k.NextSection):
-		m.nextSection()
-		return m, nil
-	case key.Matches(msg, k.Up, k.PrevSection):
-		m.prevSection()
-		return m, nil
-	case key.Matches(msg, k.Search):
-		m.focusSearchInput()
-		return m, nil
-	case key.Matches(msg, k.Timer):
-		if m.timerState != nil {
-			// Same key, same meaning as in the library: t toggles.
-			return m.startOp(stopTimerCmd(m.app))
-		}
-		if len(m.readingBooks) == 0 {
-			cmd := m.showToast(toastError, "no currently reading books available — add a book to Reading first")
-			return m, cmd
-		}
-
-		m.timerSelecting = true
-		m.timerSelectIdx = 0
-		if selected := m.selectedLibraryBook(); selected != nil {
-			for i, b := range m.readingBooks {
-				if b.Book.ID == selected.Book.ID {
-					m.timerSelectIdx = i
-					break
-				}
-			}
-		}
-		cmd := m.showToast(toastInfo, "Select a book and press Enter to start timer")
-		return m, cmd
-	case key.Matches(msg, k.TimerStop):
-		// Only enabled while a timer runs.
-		return m.startOp(stopTimerCmd(m.app))
-	}
-	return m, nil
+// timerSection shows the running timer, or how to start one, with today's
+// total and the recent sessions. Picking the book happens in the
+// timerPickerModal.
+type timerSection struct {
+	sh *shared
+	st styles
 }
 
-// timerView renders the timer right panel.
-func (m Model) timerView(w int) string {
+func newTimerSection(sh *shared, st styles) *timerSection {
+	return &timerSection{sh: sh, st: st}
+}
+
+func (s *timerSection) Update(msg tea.Msg) tea.Cmd {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return nil
+	}
+	k := keysFor(s)
+	switch {
+	case key.Matches(keyMsg, k.Down):
+		return request(reqSwitchTab{step: +1})
+	case key.Matches(keyMsg, k.Up):
+		return request(reqSwitchTab{step: -1})
+	case key.Matches(keyMsg, k.Timer):
+		if s.sh.timer != nil {
+			// Same key, same meaning as in the library: t toggles.
+			return request(reqTimer{})
+		}
+		if len(s.sh.reading) == 0 {
+			return request(reqToast{toastError, "no currently reading books available — add a book to Reading first"})
+		}
+		return request(reqTimerPick{})
+	case key.Matches(keyMsg, k.TimerStop):
+		// Only enabled while a timer runs.
+		return request(reqTimer{})
+	}
+	return nil
+}
+
+// View renders the timer page.
+func (s *timerSection) View(w, _ int) string {
+	st := s.st
 	var sb strings.Builder
 
-	sb.WriteString(m.st.head.Render("Reading Timer"))
+	sb.WriteString(st.head.Render("Reading Timer"))
 	sb.WriteString("\n\n")
 
-	if m.timerSelecting && m.timerState == nil {
-		sb.WriteString(m.st.label.Render("  Select a book"))
-		sb.WriteString("\n")
-		sb.WriteString(m.st.dim.Render("  j/k move   Enter start   Esc cancel"))
+	now := s.sh.now()
+	if s.sh.timer == nil {
+		sb.WriteString(st.dim.Render("  No timer running."))
 		sb.WriteString("\n\n")
-
-		if len(m.readingBooks) == 0 {
-			sb.WriteString(m.st.dim.Render("  No books in Reading."))
-			return sb.String()
-		}
-
-		maxTitle := w - 8
-		if maxTitle < 12 {
-			maxTitle = 12
-		}
-		for i, b := range m.readingBooks {
-			if i >= 9 {
-				break
-			}
-			title := b.Book.Title
-			if len(title) > maxTitle {
-				title = title[:maxTitle-3] + "..."
-			}
-			author := b.Book.AuthorString()
-			if author == "" {
-				author = "Unknown author"
-			}
-
-			prefix := "  "
-			titleStyle := m.st.value
-			if i == m.timerSelectIdx {
-				prefix = "▸ "
-				titleStyle = m.st.keyHint
-			}
-
-			sb.WriteString(titleStyle.Render(prefix + title))
-			sb.WriteString("\n")
-			sb.WriteString(m.st.dim.Render("  " + author))
-			sb.WriteString("\n")
-		}
-		return strings.TrimRight(sb.String(), "\n")
-	}
-
-	if m.timerState == nil {
-		sb.WriteString(m.st.dim.Render("  No timer running."))
-		sb.WriteString("\n\n")
-		sb.WriteString(m.st.dim.Render("  Press [t] to choose a book, or [t] in Reading."))
+		sb.WriteString(st.dim.Render("  Press [t] to choose a book, or [t] in Reading."))
 	} else {
 		// Book info.
-		if m.timerBook != nil {
-			sb.WriteString(m.st.value.Render("  " + m.timerBook.Title))
+		if s.sh.timerBook != nil {
+			sb.WriteString(st.value.Render("  " + s.sh.timerBook.Title))
 			sb.WriteString("\n")
-			if author := m.timerBook.AuthorString(); author != "" {
-				sb.WriteString(m.st.dim.Render("  " + author))
+			if author := s.sh.timerBook.AuthorString(); author != "" {
+				sb.WriteString(st.dim.Render("  " + author))
 				sb.WriteString("\n")
 			}
 			sb.WriteString("\n")
 		}
 
 		// Large timer display.
-		elapsed := time.Since(m.timerState.StartedAt)
+		elapsed := now.Sub(s.sh.timer.StartedAt)
 		h := int(elapsed.Hours())
 		min := int(elapsed.Minutes()) % 60
 		sec := int(elapsed.Seconds()) % 60
 		timeStr := fmt.Sprintf("%02d:%02d:%02d", h, min, sec)
 
-		sb.WriteString(m.st.timerDisplay.Render(fmt.Sprintf("       %s", timeStr)))
+		sb.WriteString(st.timerDisplay.Render(fmt.Sprintf("       %s", timeStr)))
 		sb.WriteString("\n")
-		sb.WriteString(m.st.timerLabel.Render("        elapsed"))
+		sb.WriteString(st.timerLabel.Render("        elapsed"))
 		sb.WriteString("\n\n")
 
-		sb.WriteString(m.st.dim.Render(fmt.Sprintf("  Started: %s",
-			m.timerState.StartedAt.Local().Format("3:04 PM"))))
+		sb.WriteString(st.dim.Render(fmt.Sprintf("  Started: %s",
+			s.sh.timer.StartedAt.Local().Format("3:04 PM"))))
 	}
 
 	// Today's stats.
 	todayCount := 0
 	todayMinutes := 0
-	now := time.Now()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	for _, s := range m.recentSessions {
-		started := s.StartedAt.Local()
+	for _, sess := range s.sh.sessions {
+		started := sess.StartedAt.Local()
 		sessionDate := time.Date(started.Year(), started.Month(), started.Day(), 0, 0, 0, 0, started.Location())
 		if sessionDate.Equal(today) {
 			todayCount++
-			todayMinutes += int(s.Duration().Minutes())
+			todayMinutes += int(sess.Duration().Minutes())
 		}
 	}
 	if todayCount > 0 {
@@ -196,24 +109,24 @@ func (m Model) timerView(w int) string {
 	}
 
 	// Recent sessions.
-	if len(m.recentSessions) > 0 {
+	if len(s.sh.sessions) > 0 {
 		sb.WriteString("\n")
-		sb.WriteString(m.st.dim.Render("  ────────────────────────────────"))
+		sb.WriteString(st.dim.Render("  ────────────────────────────────"))
 		sb.WriteString("\n")
-		sb.WriteString(m.st.label.Render("  Recent"))
+		sb.WriteString(st.label.Render("  Recent"))
 		sb.WriteString("\n")
 
-		for i, s := range m.recentSessions {
+		for i, sess := range s.sh.sessions {
 			if i >= 5 {
 				break
 			}
-			dateStr := format.DayLabel(s.StartedAt, now)
+			dateStr := format.DayLabel(sess.StartedAt, now)
 
 			dur := ""
-			if s.EndedAt != nil {
-				dur = format.Duration(s.Duration())
+			if sess.EndedAt != nil {
+				dur = format.Duration(sess.Duration())
 			}
-			bookTitle := s.BookTitle
+			bookTitle := sess.BookTitle
 			if bookTitle == "" {
 				bookTitle = "(no book)"
 			}
@@ -230,11 +143,38 @@ func (m Model) timerView(w int) string {
 
 	// Keybindings hint.
 	sb.WriteString("\n")
-	if m.timerState != nil {
-		sb.WriteString(m.st.dim.Render("  [t] or [s] stop"))
+	if s.sh.timer != nil {
+		sb.WriteString(st.dim.Render("  [t] or [s] stop"))
 	} else {
-		sb.WriteString(m.st.dim.Render("  [t] start"))
+		sb.WriteString(st.dim.Render("  [t] start"))
 	}
 
 	return sb.String()
 }
+
+func (s *timerSection) Resize(int, int) {}
+
+func (s *timerSection) Keys(k *keyMap) {
+	sectionHint := hint("section", k.PrevSection, k.NextSection)
+	k.Up.SetHelp("k", "section")
+	k.Down.SetHelp("j", "section")
+	if s.sh.timer != nil {
+		k.Timer.SetHelp("t", "stop timer")
+		enable(&k.Quit, &k.Help, &k.Up, &k.Down, &k.NextSection, &k.PrevSection, &k.Search,
+			&k.Timer, &k.TimerStop)
+		k.short = []key.Binding{k.Help, hint("stop", k.Timer, k.TimerStop), sectionHint, k.Search, k.Quit}
+		return
+	}
+	k.Timer.SetHelp("t", "choose + start")
+	enable(&k.Quit, &k.Help, &k.Up, &k.Down, &k.NextSection, &k.PrevSection, &k.Search, &k.Timer)
+	k.short = []key.Binding{k.Help, k.Timer, sectionHint, k.Search, k.Quit}
+}
+
+func (s *timerSection) Focus() {}
+func (s *timerSection) Blur()  {}
+
+func (s *timerSection) CapturesKeys() bool { return false }
+
+func (s *timerSection) Title() string { return "Timer" }
+
+func (s *timerSection) Selected() selection { return selection{} }

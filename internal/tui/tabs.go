@@ -3,9 +3,10 @@ package tui
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/Kameleon21/oku/internal/format"
+	"github.com/charmbracelet/bubbles/key"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 type focusSection int
@@ -26,26 +27,6 @@ type sectionDef struct {
 	count int // -1 = no count
 }
 
-// ── Navigation helpers ─────────────────────────────────────────────────────
-
-// setSection focuses a section and re-sizes the lists. leftSectionHeights
-// gives the focused list extra rows, so the sizes have to follow the focus and
-// not only a window resize.
-func (m *Model) setSection(s focusSection) {
-	m.section = s
-	m.resize()
-}
-
-func (m *Model) nextSection() {
-	m.searchInput.Blur()
-	m.setSection((m.section + 1) % sectionCount)
-}
-
-func (m *Model) prevSection() {
-	m.searchInput.Blur()
-	m.setSection((m.section - 1 + sectionCount) % sectionCount)
-}
-
 const okuASCII = `
    ____  __ __  __  __
   / __ \/ //_/ / / / /
@@ -54,33 +35,59 @@ const okuASCII = `
 \____/_/ |_| \____/   
 `
 
-// introView renders the intro/welcome right panel.
-func (m Model) introView(w int) string {
+// introSection is the welcome page: the logo, the library at a glance and
+// the keys to get going.
+type introSection struct {
+	sh *shared
+	st styles
+}
+
+func newIntroSection(sh *shared, st styles) *introSection {
+	return &introSection{sh: sh, st: st}
+}
+
+func (s *introSection) Update(msg tea.Msg) tea.Cmd {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return nil
+	}
+	k := keysFor(s)
+	switch {
+	case key.Matches(keyMsg, k.Down):
+		return request(reqSwitchTab{step: +1})
+	case key.Matches(keyMsg, k.Up):
+		return request(reqSwitchTab{step: -1})
+	}
+	return nil
+}
+
+func (s *introSection) View(int, int) string {
+	st := s.st
 	var sb strings.Builder
 
-	sb.WriteString(m.st.head.Render(okuASCII))
+	sb.WriteString(st.head.Render(okuASCII))
 	sb.WriteString("\n")
-	sb.WriteString(m.st.dim.Render("  a reading companion"))
+	sb.WriteString(st.dim.Render("  a reading companion"))
 	sb.WriteString("\n\n")
 
 	writeField := func(label, value string) {
-		sb.WriteString(m.st.label.Render(fmt.Sprintf("  %-10s ", label)))
-		sb.WriteString(m.st.value.Render(value))
+		sb.WriteString(st.label.Render(fmt.Sprintf("  %-10s ", label)))
+		sb.WriteString(st.value.Render(value))
 		sb.WriteString("\n")
 	}
 
-	writeField("Reading", fmt.Sprintf("%d books", len(m.readingBooks)))
-	writeField("Oku", fmt.Sprintf("%d books", len(m.okuBooks)))
+	writeField("Reading", fmt.Sprintf("%d books", len(s.sh.reading)))
+	writeField("Oku", fmt.Sprintf("%d books", len(s.sh.oku)))
 
-	if m.readingStats != nil && m.readingStats.Year.BooksFinished > 0 {
-		writeField("This year", fmt.Sprintf("%d books", m.readingStats.Year.BooksFinished))
+	if s.sh.stats != nil && s.sh.stats.Year.BooksFinished > 0 {
+		writeField("This year", fmt.Sprintf("%d books", s.sh.stats.Year.BooksFinished))
 	}
 
-	if m.timerState != nil {
-		elapsed := time.Since(m.timerState.StartedAt)
+	if s.sh.timer != nil {
+		elapsed := s.sh.now().Sub(s.sh.timer.StartedAt)
 		bookTitle := ""
-		if m.timerBook != nil {
-			bookTitle = m.timerBook.Title
+		if s.sh.timerBook != nil {
+			bookTitle = s.sh.timerBook.Title
 		}
 
 		if bookTitle != "" {
@@ -93,7 +100,26 @@ func (m Model) introView(w int) string {
 	}
 
 	sb.WriteString("\n")
-	sb.WriteString(m.st.dim.Render("  j/k navigate   h/l section   ? help"))
+	sb.WriteString(st.dim.Render("  j/k navigate   h/l section   ? help"))
 
 	return sb.String()
 }
+
+func (s *introSection) Resize(int, int) {}
+
+func (s *introSection) Keys(k *keyMap) {
+	sectionHint := hint("section", k.PrevSection, k.NextSection)
+	k.Up.SetHelp("k", "section")
+	k.Down.SetHelp("j", "section")
+	enable(&k.Quit, &k.Help, &k.Up, &k.Down, &k.NextSection, &k.PrevSection, &k.Search)
+	k.short = []key.Binding{k.Help, sectionHint, hintAs("Tab", "next", k.NextSection), k.Search, k.Quit}
+}
+
+func (s *introSection) Focus() {}
+func (s *introSection) Blur()  {}
+
+func (s *introSection) CapturesKeys() bool { return false }
+
+func (s *introSection) Title() string { return "Intro" }
+
+func (s *introSection) Selected() selection { return selection{} }

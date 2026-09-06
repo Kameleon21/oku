@@ -45,15 +45,17 @@ func (d Density) Label() string {
 	}
 }
 
+// cycleDensity steps to the next density and tells the sections, whose
+// rows are rebuilt from it.
 func (m *Model) cycleDensity() tea.Cmd {
-	switch m.density {
+	switch m.shared.density {
 	case DensityCompact:
-		m.density = DensityDefault
+		m.shared.density = DensityDefault
 	case DensityDefault:
-		m.density = DensityVerbose
+		m.shared.density = DensityVerbose
 	default:
-		m.density = DensityCompact
+		m.shared.density = DensityCompact
 	}
-	cmd := tea.Batch(m.refreshListItems(), m.refreshSearchResultItems())
-	return tea.Batch(cmd, m.showToast(toastInfo, "Density: "+m.density.Label()))
+	cmd := m.broadcast(dataChangedMsg{dataDensity})
+	return tea.Batch(cmd, m.showToast(toastInfo, "Density: "+m.shared.density.Label()))
 }

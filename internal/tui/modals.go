@@ -6,10 +6,31 @@ import (
 
 	"github.com/Kameleon21/oku/internal/model"
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
+
+// modal is one entry of the root's modal stack. The top modal takes every
+// key; every modal sees every broadcast message, so one can close on its
+// own async result wherever it sits.
+type modal interface {
+	// Update handles a key while on top, or a broadcast. done asks the root
+	// to drop the modal from the stack.
+	Update(msg tea.Msg) (done bool, cmd tea.Cmd)
+	// View is the panel only; the root places it.
+	View(lay layout, st styles) string
+	// Keys enables and relabels the bindings the modal understands, and sets
+	// k.short.
+	Keys(k *keyMap)
+	// Resize follows the terminal: the help viewport's height, the review
+	// textarea's width.
+	Resize(lay layout)
+}
+
+// ── Confirm ────────────────────────────────────────────────────────────────
 
 // confirmState is a reusable, keyboard-driven modal confirmation state.
 type confirmState struct {
@@ -86,19 +107,470 @@ func renderConfirmModal(c confirmState, width int, st styles) string {
 	return renderModalPanel("Confirm", content, width, st)
 }
 
-// ── View & Focus types ─────────────────────────────────────────────────────
+// confirmModal guards the library keys that are hard to walk back from. It
+// holds the operation; yes hands it back to the root to run.
+type confirmModal struct {
+	c     confirmState
+	onYes tea.Cmd
+}
 
-type viewMode int
+func newConfirmModal(message string, onYes tea.Cmd) *confirmModal {
+	return &confirmModal{c: newConfirmState(message), onYes: onYes}
+}
 
-const (
-	modeLibrary viewMode = iota
-	modeUpdatePage
-	modeReviewRating
-)
+func (c *confirmModal) Update(msg tea.Msg) (bool, tea.Cmd) {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return false, nil
+	}
+	confirmed, handled := c.c.handleKey(keyMsg, keysFor(c))
+	if !handled || c.c.Active {
+		// An unknown key, or the cursor only moved between the buttons.
+		return false, nil
+	}
+	if !confirmed {
+		return true, request(reqToast{toastInfo, "Cancelled"})
+	}
+	return true, request(reqRunOp{cmd: c.onYes})
+}
+
+func (c *confirmModal) View(lay layout, st styles) string {
+	return renderConfirmModal(c.c, max(36, min(60, lay.W-10)), st)
+}
+
+func (c *confirmModal) Keys(k *keyMap) {
+	k.Select.SetHelp("↵", "choose")
+	enable(&k.ConfirmYes, &k.ConfirmNo, &k.ConfirmLeft, &k.ConfirmRight, &k.Select)
+	k.short = []key.Binding{k.ConfirmYes, hintAs("n/Esc", "no", k.ConfirmNo), hint("pick", k.ConfirmLeft, k.ConfirmRight)}
+}
+
+func (c *confirmModal) Resize(layout) {}
+
+// ── Page prompt ────────────────────────────────────────────────────────────
 
 // pagePromptRows is how many rows View spends on the page-update prompt it
 // draws under the layout: the book, where it stands, and the input.
 const pagePromptRows = 3
+
+// pageModal is the page prompt for one book. The input starts empty, so an
+// accidental Enter cannot rewrite the progress, and keeps its format hint as
+// the placeholder: the title and the current page get lines of their own.
+// It closes on its own result, told apart from any other progress update by
+// the token.
+type pageModal struct {
+	bookID  int
+	title   string
+	current int
+	total   int
+	input   textinput.Model
+	token   int
+}
+
+func newPageModal(sh *shared, st styles, b model.UserBook) *pageModal {
+	in := textinput.New()
+	in.Placeholder = "370 or +10 or -5"
+	in.CharLimit = 32
+	in.Prompt = "› "
+	in.PromptStyle = st.inputPrompt
+	in.TextStyle = st.inputText
+	in.Focus()
+
+	return &pageModal{
+		bookID:  b.Book.ID,
+		title:   b.Book.Title,
+		current: currentPage(b),
+		total:   b.Book.Pages,
+		input:   in,
+		token:   sh.nextToken(),
+	}
+}
+
+func (p *pageModal) Update(msg tea.Msg) (bool, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		k := keysFor(p)
+		switch {
+		case key.Matches(msg, k.Back):
+			return true, nil
+		case key.Matches(msg, k.Select):
+			raw := strings.TrimSpace(p.input.Value())
+			if raw == "" {
+				return false, request(reqToast{toastError, "page value cannot be empty"})
+			}
+			return false, request(reqSetPage{
+				bookID: p.bookID, title: p.title, prevPage: p.current, raw: raw, token: p.token,
+			})
+		}
+	case opDoneMsg:
+		if msg.op == opProgress && msg.seq == p.token {
+			return true, nil
+		}
+		return false, nil
+	}
+	var cmd tea.Cmd
+	p.input, cmd = p.input.Update(msg)
+	return false, cmd
+}
+
+// View renders the page-update prompt under the layout. It is always
+// pagePromptRows tall, which is what the layout height is computed against.
+func (p *pageModal) View(_ layout, st styles) string {
+	current := fmt.Sprintf("current: page %d", p.current)
+	if p.total > 0 {
+		current = fmt.Sprintf("current: %d/%d", p.current, p.total)
+	}
+	return "\n" + strings.Join([]string{
+		" " + st.keyHint.Render("Update page") + "  " + st.value.Render(p.title),
+		" " + st.dim.Render(current),
+		" " + p.input.View() + st.dim.Render("   Enter save · Esc cancel"),
+	}, "\n")
+}
+
+func (p *pageModal) Keys(k *keyMap) {
+	k.Back.SetHelp("Esc", "cancel")
+	k.Select.SetHelp("↵", "save")
+	enable(&k.Back, &k.Select)
+	k.short = []key.Binding{k.Select, k.Back}
+}
+
+func (p *pageModal) Resize(layout) {}
+
+// ── Review / rating ────────────────────────────────────────────────────────
+
+type reviewFocus int
+
+const (
+	reviewFocusRating reviewFocus = iota
+	reviewFocusText
+)
+
+// The focused field carries a marker in its label as well as the cursor, so
+// the focus is visible on a terminal without colour.
+const (
+	reviewFieldFocused = "▸ "
+	reviewFieldBlurred = "  "
+)
+
+// reviewModal edits a book's rating and review. It stays open until its own
+// save succeeds, so a failed save never throws away what was typed; the
+// error is shown inside, because the status bar sits behind the overlay.
+type reviewModal struct {
+	book   model.UserBook
+	rating textinput.Model
+	text   textarea.Model
+	focus  reviewFocus
+	token  int
+	// submitting makes the fields read-only until the save reports back.
+	submitting bool
+	err        string
+}
+
+func newReviewModal(sh *shared, st styles, book model.UserBook) *reviewModal {
+	// The review fields sit inside a modal, so they carry its background: a
+	// style that only sets a foreground would leave the field on the
+	// terminal's own colour.
+	rating := textinput.New()
+	rating.Placeholder = "4.5"
+	rating.CharLimit = 4
+	rating.Prompt = reviewFieldFocused + "Rating: "
+	rating.PromptStyle = st.modalKey
+	rating.TextStyle = st.modalValue
+	rating.PlaceholderStyle = st.modalDim
+
+	text := textarea.New()
+	text.Placeholder = "Write your review..."
+	text.SetWidth(60)
+	text.SetHeight(8)
+	text.ShowLineNumbers = false
+	for _, fs := range []*textarea.Style{&text.FocusedStyle, &text.BlurredStyle} {
+		fs.Base = st.modalBg
+		fs.Text = st.modalValue
+		fs.Placeholder = st.modalDim
+		fs.Prompt = st.modalKey
+		fs.CursorLine = st.modalBg
+		fs.EndOfBuffer = st.modalBg
+	}
+
+	if book.Rating > 0 {
+		rating.SetValue(fmt.Sprintf("%.1f", book.Rating))
+	}
+	text.SetValue(book.Review)
+
+	r := &reviewModal{book: book, rating: rating, text: text, token: sh.nextToken()}
+	r.focusRating()
+	return r
+}
+
+func (r *reviewModal) focusRating() {
+	r.focus = reviewFocusRating
+	r.rating.Prompt = reviewFieldFocused + "Rating: "
+	r.rating.Focus()
+	r.text.Blur()
+}
+
+func (r *reviewModal) focusText() {
+	r.focus = reviewFocusText
+	r.rating.Prompt = reviewFieldBlurred + "Rating: "
+	r.rating.Blur()
+	r.text.Focus()
+}
+
+func (r *reviewModal) Update(msg tea.Msg) (bool, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		return r.handleKey(msg)
+	case opDoneMsg:
+		if msg.op != opReview || msg.seq != r.token {
+			return false, nil
+		}
+		r.submitting = false
+		if msg.err != nil {
+			// Shown in the overlay; the rating and review text are preserved.
+			r.err = msg.err.Error()
+			return false, nil
+		}
+		return true, nil
+	}
+	return false, r.updateField(msg)
+}
+
+func (r *reviewModal) handleKey(msg tea.KeyMsg) (bool, tea.Cmd) {
+	k := keysFor(r)
+	if r.submitting {
+		// The fields are read-only until the save reports back; cancelling
+		// drops the modal, so the pending result is reported like any other.
+		if key.Matches(msg, k.Back) {
+			return true, request(reqToast{toastInfo, "Review update cancelled"})
+		}
+		return false, nil
+	}
+
+	switch {
+	case key.Matches(msg, k.Back):
+		return true, request(reqToast{toastInfo, "Review update cancelled"})
+	case key.Matches(msg, k.ReviewNextField):
+		if r.focus == reviewFocusRating {
+			r.focusText()
+		} else {
+			r.focusRating()
+		}
+		return false, nil
+	case key.Matches(msg, k.ReviewPrevField):
+		if r.focus == reviewFocusText {
+			r.focusRating()
+		} else {
+			r.focusText()
+		}
+		return false, nil
+	case key.Matches(msg, k.ReviewSave):
+		rating, err := model.ParseRating(r.rating.Value())
+		if err != nil {
+			r.err = err.Error()
+			return false, nil
+		}
+		r.err = ""
+		r.submitting = true
+		return false, request(reqReview{
+			bookID: r.book.Book.ID, rating: rating, review: r.text.Value(), token: r.token,
+		})
+	}
+	return false, r.updateField(msg)
+}
+
+// updateField forwards a message to the focused field.
+func (r *reviewModal) updateField(msg tea.Msg) tea.Cmd {
+	var cmd tea.Cmd
+	if r.focus == reviewFocusRating {
+		r.rating, cmd = r.rating.Update(msg)
+	} else {
+		r.text, cmd = r.text.Update(msg)
+	}
+	return cmd
+}
+
+func (r *reviewModal) View(lay layout, st styles) string {
+	rating, err := model.ParseRating(r.rating.Value())
+	ratingLabel := "invalid rating"
+	stars := "☆☆☆☆☆"
+	if err == nil {
+		stars = model.StarString(rating)
+		ratingLabel = fmt.Sprintf("%.1f", rating)
+	}
+
+	var sb strings.Builder
+	sb.WriteString(st.modalValue.Render(r.book.Book.Title))
+	sb.WriteString("\n")
+	sb.WriteString(st.modalDim.Render(fallback(r.book.Book.AuthorString(), "Unknown author")))
+	sb.WriteString("\n\n")
+	sb.WriteString(r.rating.View())
+	sb.WriteString(st.modalBg.Render("  "))
+	sb.WriteString(st.modalKey.Render(stars))
+	sb.WriteString(st.modalBg.Render(" "))
+	sb.WriteString(st.modalDim.Render("(" + ratingLabel + ")"))
+	sb.WriteString("\n\n")
+	reviewMarker := reviewFieldBlurred
+	if r.focus == reviewFocusText {
+		reviewMarker = reviewFieldFocused
+	}
+	sb.WriteString(st.modalLabel.Render(reviewMarker + "Review"))
+	sb.WriteString("\n")
+	sb.WriteString(r.text.View())
+	sb.WriteString("\n\n")
+	switch {
+	case r.submitting:
+		sb.WriteString(st.modalDim.Render("Saving..."))
+		sb.WriteString("\n")
+	case r.err != "":
+		// The status bar sits behind the modal, so surface the failure here.
+		sb.WriteString(st.modalError.Render(r.err))
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString(st.modalDim.Render("Tab/Shift+Tab switch fields   Ctrl+S save   Esc cancel"))
+
+	width := max(70, lay.W-10)
+	if width > 100 {
+		width = 100
+	}
+	return renderModalPanel("Review / Rate Book", sb.String(), width, st)
+}
+
+func (r *reviewModal) Keys(k *keyMap) {
+	k.Back.SetHelp("Esc", "cancel")
+	enable(&k.Back)
+	if !r.submitting {
+		enable(&k.ReviewSave, &k.ReviewNextField, &k.ReviewPrevField)
+	}
+	k.short = []key.Binding{hint("switch field", k.ReviewNextField, k.ReviewPrevField), k.ReviewSave, k.Back}
+}
+
+func (r *reviewModal) Resize(lay layout) {
+	if lay.W > 0 {
+		r.text.SetWidth(max(40, lay.W/2))
+	}
+}
+
+// ── Timer picker ───────────────────────────────────────────────────────────
+
+// timerPickerModal chooses which Reading book a timer starts for. It is
+// drawn in the Timer pane, where the choice was always made.
+type timerPickerModal struct {
+	sh  *shared
+	idx int
+}
+
+func newTimerPickerModal(sh *shared, idx int) *timerPickerModal {
+	return &timerPickerModal{sh: sh, idx: idx}
+}
+
+func (p *timerPickerModal) Update(msg tea.Msg) (bool, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		return p.handleKey(msg)
+	case timerOpDoneMsg:
+		return true, nil
+	case dataChangedMsg:
+		// Background sync can shrink the Reading list while the picker is
+		// open; a timer started elsewhere makes it moot.
+		if msg.kind == dataLibrary && p.idx >= len(p.sh.reading) {
+			p.idx = max(0, len(p.sh.reading)-1)
+		}
+		if msg.kind == dataLocal && p.sh.timer != nil {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (p *timerPickerModal) handleKey(msg tea.KeyMsg) (bool, tea.Cmd) {
+	k := keysFor(p)
+	switch {
+	case key.Matches(msg, k.Quit):
+		return false, tea.Quit
+	case key.Matches(msg, k.Help):
+		return false, request(reqHelp{})
+	case key.Matches(msg, k.Back):
+		return true, request(reqToast{toastInfo, "Timer start cancelled"})
+	case key.Matches(msg, k.Down):
+		if p.idx < len(p.sh.reading)-1 {
+			p.idx++
+		}
+	case key.Matches(msg, k.Up):
+		if p.idx > 0 {
+			p.idx--
+		}
+	case key.Matches(msg, k.Select):
+		if len(p.sh.reading) == 0 {
+			return true, request(reqToast{toastError, "no currently reading books available"})
+		}
+		if p.idx >= len(p.sh.reading) {
+			p.idx = len(p.sh.reading) - 1
+		}
+		return true, request(reqTimer{start: true, bookID: p.sh.reading[p.idx].Book.ID})
+	}
+	return false, nil
+}
+
+func (p *timerPickerModal) View(lay layout, st styles) string {
+	w := lay.rightPanelContentWidth()
+
+	var sb strings.Builder
+	sb.WriteString(st.head.Render("Reading Timer"))
+	sb.WriteString("\n\n")
+	sb.WriteString(st.label.Render("  Select a book"))
+	sb.WriteString("\n")
+	sb.WriteString(st.dim.Render("  j/k move   Enter start   Esc cancel"))
+	sb.WriteString("\n\n")
+
+	if len(p.sh.reading) == 0 {
+		sb.WriteString(st.dim.Render("  No books in Reading."))
+		return sb.String()
+	}
+
+	maxTitle := w - 8
+	if maxTitle < 12 {
+		maxTitle = 12
+	}
+	for i, b := range p.sh.reading {
+		if i >= 9 {
+			break
+		}
+		title := b.Book.Title
+		if len(title) > maxTitle {
+			title = title[:maxTitle-3] + "..."
+		}
+		author := b.Book.AuthorString()
+		if author == "" {
+			author = "Unknown author"
+		}
+
+		prefix := "  "
+		titleStyle := st.value
+		if i == p.idx {
+			prefix = "▸ "
+			titleStyle = st.keyHint
+		}
+
+		sb.WriteString(titleStyle.Render(prefix + title))
+		sb.WriteString("\n")
+		sb.WriteString(st.dim.Render("  " + author))
+		sb.WriteString("\n")
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+func (p *timerPickerModal) Keys(k *keyMap) {
+	k.Up.SetHelp("k", "choose")
+	k.Down.SetHelp("j", "choose")
+	k.Select.SetHelp("↵", "start")
+	k.Back.SetHelp("Esc", "cancel")
+	enable(&k.Quit, &k.Help, &k.Up, &k.Down, &k.Select, &k.Back)
+	k.short = []key.Binding{k.Help, hint("choose", k.Down, k.Up), k.Select, k.Back, k.Quit}
+}
+
+func (p *timerPickerModal) Resize(layout) {}
+
+// ── Help ───────────────────────────────────────────────────────────────────
 
 const (
 	helpModalWidth = 50
@@ -113,340 +585,98 @@ const (
 	helpModalMarginRows = 2
 )
 
-type dashboardReviewFocus int
-
-const (
-	dashboardReviewFocusRating dashboardReviewFocus = iota
-	dashboardReviewFocusText
-)
-
-// updateConfirmMode answers the confirmation: y (or Enter on Confirm) runs the
-// operation it is holding, n and Esc drop it.
-func (m Model) updateConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	k := m.activeKeys()
-	if key.Matches(msg, k.ForceQuit) {
-		return m, tea.Quit
-	}
-
-	confirmed, handled := m.confirm.handleKey(msg, k)
-	if !handled || m.confirm.Active {
-		// An unknown key, or the cursor only moved between the buttons.
-		return m, nil
-	}
-
-	pending := m.confirmCmd
-	m.confirm = confirmState{}
-	m.confirmCmd = nil
-	if !confirmed {
-		cmd := m.showToast(toastInfo, "Cancelled")
-		return m, cmd
-	}
-	return m.startOp(pending)
+// helpModal lists every key, group by group, from the same bindings the
+// handlers dispatch on. keys is the keymap of the focus under the modal,
+// read at render time so the rows follow it.
+type helpModal struct {
+	keys func() keyMap
+	st   styles
+	// vp scrolls the body, which is taller than a short terminal.
+	vp viewport.Model
 }
 
-// ── Page update mode ───────────────────────────────────────────────────────
+func newHelpModal(keys func() keyMap, st styles) *helpModal {
+	return &helpModal{keys: keys, st: st}
+}
 
-func (m Model) updatePageMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	k := m.activeKeys()
+func (h *helpModal) Update(msg tea.Msg) (bool, tea.Cmd) {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return false, nil
+	}
+	k := keysFor(h)
 	switch {
-	case key.Matches(msg, k.Back):
-		m.closePageModal()
-		return m, nil
-	case key.Matches(msg, k.ForceQuit):
-		return m, tea.Quit
-	case key.Matches(msg, k.Select):
-		raw := strings.TrimSpace(m.pageInput.Value())
-		if raw == "" {
-			cmd := m.showToast(toastError, "page value cannot be empty")
-			return m, cmd
-		}
-		if m.isLoading() {
-			cmd := m.showToast(toastWarn, inFlightNotice)
-			return m, cmd
-		}
-		m.pageSubmitting = true
-		return m.startOp(updateProgressCmd(m.ctx, m.app, m.pendingBookID, m.pageBookTitle, m.pageCurrentPage, raw))
+	case key.Matches(keyMsg, k.Help, k.Back):
+		return true, nil
+	case key.Matches(keyMsg, k.Quit):
+		return false, tea.Quit
+	case key.Matches(keyMsg, k.Down):
+		h.vp.LineDown(1)
+	case key.Matches(keyMsg, k.Up):
+		h.vp.LineUp(1)
+	case key.Matches(keyMsg, k.HalfPageDown):
+		h.vp.HalfViewDown()
+	case key.Matches(keyMsg, k.HalfPageUp):
+		h.vp.HalfViewUp()
+	case key.Matches(keyMsg, k.ScrollTop):
+		h.vp.GotoTop()
+	case key.Matches(keyMsg, k.ScrollBottom):
+		h.vp.GotoBottom()
 	}
-
-	var cmd tea.Cmd
-	m.pageInput, cmd = m.pageInput.Update(msg)
-	return m, cmd
+	return false, nil
 }
 
-// openPageModal opens the page prompt for a book. The input starts empty, so
-// an accidental Enter cannot rewrite the progress, and keeps its format hint
-// as the placeholder: the title and the current page get lines of their own.
-func (m *Model) openPageModal(b model.UserBook) {
-	m.mode = modeUpdatePage
-	m.pendingBookID = b.Book.ID
-	m.pageBookTitle = b.Book.Title
-	m.pageCurrentPage = b.CurrentPage
-	if len(b.UserBookReads) > 0 {
-		m.pageCurrentPage = b.UserBookReads[0].ProgressPages
+// Resize fits the help body to the terminal. The body is taller than a
+// 40-row window, so it scrolls rather than spilling off the screen.
+func (h *helpModal) Resize(lay layout) {
+	body := h.body()
+	height := lipgloss.Height(body)
+	if lay.H > 0 {
+		height = min(height, max(helpModalMinBodyRows, lay.H-helpModalChromeRows-helpModalMarginRows))
 	}
-	m.pageTotalPages = b.Book.Pages
-	m.pageInput.SetValue("")
-	m.pageInput.Focus()
-	// The prompt is taller than the help bar it replaces.
-	m.resize()
+
+	offset := h.vp.YOffset
+	h.vp = viewport.New(helpModalWidth-h.st.helpModal.GetHorizontalPadding(), height)
+	h.vp.SetContent(body)
+	h.vp.SetYOffset(offset)
 }
 
-func (m *Model) closePageModal() {
-	m.mode = modeLibrary
-	m.pageSubmitting = false
-	m.pageBookTitle = ""
-	m.pageCurrentPage = 0
-	m.pageTotalPages = 0
-	m.pageInput.Blur()
-	m.pageInput.SetValue("")
-	m.resize()
-}
-
-// pagePrompt renders the page-update prompt under the layout. It is always
-// pagePromptRows tall, which is what the layout height is computed against.
-func (m Model) pagePrompt() string {
-	current := fmt.Sprintf("current: page %d", m.pageCurrentPage)
-	if m.pageTotalPages > 0 {
-		current = fmt.Sprintf("current: %d/%d", m.pageCurrentPage, m.pageTotalPages)
-	}
-	return "\n" + strings.Join([]string{
-		" " + m.st.keyHint.Render("Update page") + "  " + m.st.value.Render(m.pageBookTitle),
-		" " + m.st.dim.Render(current),
-		" " + m.pageInput.View() + m.st.dim.Render("   Enter save · Esc cancel"),
-	}, "\n")
-}
-
-// ── Review/rating mode ─────────────────────────────────────────────────────
-
-func (m Model) updateReviewRatingMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	k := m.activeKeys()
-	if m.reviewSubmitting {
-		// The fields are read-only until the save reports back; cancelling
-		// bumps reviewSeq, so the pending result is ignored.
-		switch {
-		case key.Matches(msg, k.ForceQuit):
-			return m, tea.Quit
-		case key.Matches(msg, k.Back):
-			m.closeReviewRatingModal()
-			cmd := m.showToast(toastInfo, "Review update cancelled")
-			return m, cmd
-		}
-		return m, nil
-	}
-
-	switch {
-	case key.Matches(msg, k.ForceQuit):
-		return m, tea.Quit
-	case key.Matches(msg, k.Back):
-		m.closeReviewRatingModal()
-		cmd := m.showToast(toastInfo, "Review update cancelled")
-		return m, cmd
-	case key.Matches(msg, k.ReviewNextField):
-		if m.reviewFocus == dashboardReviewFocusRating {
-			m.focusReviewTextField()
-		} else {
-			m.focusReviewRatingField()
-		}
-		return m, nil
-	case key.Matches(msg, k.ReviewPrevField):
-		if m.reviewFocus == dashboardReviewFocusText {
-			m.focusReviewRatingField()
-		} else {
-			m.focusReviewTextField()
-		}
-		return m, nil
-	case key.Matches(msg, k.ReviewSave):
-		if m.reviewBook == nil {
-			return m, nil
-		}
-		rating, err := model.ParseRating(m.reviewRatingInput.Value())
-		if err != nil {
-			m.reviewErr = err.Error()
-			return m, nil
-		}
-		review := m.reviewTextInput.Value()
-		m.reviewErr = ""
-		toastCmd := m.showToast(toastInfo, reviewSavePendingMessage(review))
-		// The modal stays open until the save succeeds, so a failure can show
-		// the error without discarding the draft.
-		m.reviewSubmitting = true
-		save := m.beginLoading(submitReviewRatingCmd(m.ctx, m.app, m.reviewBook.Book.ID, rating, review, m.reviewSeq))
-		return m, tea.Batch(save, toastCmd)
-	}
-
-	var cmd tea.Cmd
-	if m.reviewFocus == dashboardReviewFocusRating {
-		m.reviewRatingInput, cmd = m.reviewRatingInput.Update(msg)
-	} else {
-		m.reviewTextInput, cmd = m.reviewTextInput.Update(msg)
-	}
-	return m, cmd
-}
-
-func (m *Model) openReviewRatingModal(book model.UserBook) {
-	b := book
-	m.reviewBook = &b
-	m.mode = modeReviewRating
-	m.showHelp = false
-	m.reviewSubmitting = false
-	m.reviewErr = ""
-	m.reviewSeq++
-
-	if b.Rating > 0 {
-		m.reviewRatingInput.SetValue(fmt.Sprintf("%.1f", b.Rating))
-	} else {
-		m.reviewRatingInput.SetValue("")
-	}
-	m.reviewTextInput.SetValue(b.Review)
-	m.focusReviewRatingField()
-}
-
-func (m *Model) closeReviewRatingModal() {
-	m.mode = modeLibrary
-	m.reviewBook = nil
-	m.reviewSubmitting = false
-	m.reviewErr = ""
-	m.reviewSeq++
-	m.reviewRatingInput.Blur()
-	m.reviewTextInput.Blur()
-}
-
-// The focused field carries a marker in its label as well as the cursor, so
-// the focus is visible on a terminal without colour.
-const (
-	reviewFieldFocused = "▸ "
-	reviewFieldBlurred = "  "
-)
-
-func (m *Model) focusReviewRatingField() {
-	m.reviewFocus = dashboardReviewFocusRating
-	m.reviewRatingInput.Prompt = reviewFieldFocused + "Rating: "
-	m.reviewRatingInput.Focus()
-	m.reviewTextInput.Blur()
-}
-
-func (m *Model) focusReviewTextField() {
-	m.reviewFocus = dashboardReviewFocusText
-	m.reviewRatingInput.Prompt = reviewFieldBlurred + "Rating: "
-	m.reviewRatingInput.Blur()
-	m.reviewTextInput.Focus()
-}
-
-func (m Model) reviewRatingOverlay() string {
-	if m.reviewBook == nil {
-		return renderModalPanel("Review / Rate Book", m.st.modalDim.Render("No book selected"), 48, m.st)
-	}
-
-	rating, err := model.ParseRating(m.reviewRatingInput.Value())
-	ratingLabel := "invalid rating"
-	stars := "☆☆☆☆☆"
-	if err == nil {
-		stars = model.StarString(rating)
-		ratingLabel = fmt.Sprintf("%.1f", rating)
-	}
-
-	var sb strings.Builder
-	sb.WriteString(m.st.modalValue.Render(m.reviewBook.Book.Title))
-	sb.WriteString("\n")
-	sb.WriteString(m.st.modalDim.Render(fallback(m.reviewBook.Book.AuthorString(), "Unknown author")))
-	sb.WriteString("\n\n")
-	sb.WriteString(m.reviewRatingInput.View())
-	sb.WriteString(m.st.modalBg.Render("  "))
-	sb.WriteString(m.st.modalKey.Render(stars))
-	sb.WriteString(m.st.modalBg.Render(" "))
-	sb.WriteString(m.st.modalDim.Render("(" + ratingLabel + ")"))
-	sb.WriteString("\n\n")
-	reviewMarker := reviewFieldBlurred
-	if m.reviewFocus == dashboardReviewFocusText {
-		reviewMarker = reviewFieldFocused
-	}
-	sb.WriteString(m.st.modalLabel.Render(reviewMarker + "Review"))
-	sb.WriteString("\n")
-	sb.WriteString(m.reviewTextInput.View())
-	sb.WriteString("\n\n")
-	switch {
-	case m.reviewSubmitting:
-		sb.WriteString(m.st.modalDim.Render("Saving..."))
-		sb.WriteString("\n")
-	case m.reviewErr != "":
-		// The status bar sits behind the modal, so surface the failure here.
-		sb.WriteString(m.st.modalError.Render(m.reviewErr))
-		sb.WriteString("\n")
-	}
-
-	sb.WriteString(m.st.modalDim.Render("Tab/Shift+Tab switch fields   Ctrl+S save   Esc cancel"))
-
-	width := max(70, m.width-10)
-	if width > 100 {
-		width = 100
-	}
-	return renderModalPanel("Review / Rate Book", sb.String(), width, m.st)
-}
-
-// ── Help ───────────────────────────────────────────────────────────────────
-
-// openHelp shows the help modal, scrolled back to the top.
-func (m *Model) openHelp() {
-	m.showHelp = true
-	m.syncHelpViewport()
-	m.helpViewport.GotoTop()
-}
-
-// syncHelpViewport fits the help body to the terminal. The body is taller than
-// a 40-row window, so it scrolls rather than spilling off the screen.
-func (m *Model) syncHelpViewport() {
-	body := m.helpModalBody()
-	h := lipgloss.Height(body)
-	if m.height > 0 {
-		h = min(h, max(helpModalMinBodyRows, m.height-helpModalChromeRows-helpModalMarginRows))
-	}
-
-	offset := m.helpViewport.YOffset
-	m.helpViewport = viewport.New(helpModalWidth-m.st.helpModal.GetHorizontalPadding(), h)
-	m.helpViewport.SetContent(body)
-	m.helpViewport.SetYOffset(offset)
-}
-
-func (m Model) renderHelpModal() string {
+func (h *helpModal) View(_ layout, st styles) string {
 	footer := "? or esc close"
-	if m.helpViewport.TotalLineCount() > m.helpViewport.Height {
+	if h.vp.TotalLineCount() > h.vp.Height {
 		footer = "j/k scroll · ? or esc close"
 	}
 	return renderModalPanel(
 		"Help",
-		m.helpModalRows()+"\n"+m.st.modalDim.Render(footer),
+		h.rows()+"\n"+st.modalDim.Render(footer),
 		helpModalWidth,
-		m.st,
+		st,
 	)
 }
 
-// helpModalRows returns the rows the help body currently shows. They are taken
-// from the body rather than from viewport.View, which pads its own output with
+// rows returns the rows the help body currently shows. They are taken from
+// the body rather than from viewport.View, which pads its own output with
 // unstyled spaces: that padding would leave the panel striped, because only
 // the modal style's own fill carries its background.
-func (m Model) helpModalRows() string {
-	lines := strings.Split(m.helpModalBody(), "\n")
-	h := max(1, m.helpViewport.Height)
-	start := clampInt(m.helpViewport.YOffset, 0, max(0, len(lines)-h))
+func (h *helpModal) rows() string {
+	lines := strings.Split(h.body(), "\n")
+	height := max(1, h.vp.Height)
+	start := clampInt(h.vp.YOffset, 0, max(0, len(lines)-height))
 
-	rows := make([]string, 0, h)
-	rows = append(rows, lines[start:min(len(lines), start+h)]...)
-	for len(rows) < h {
+	rows := make([]string, 0, height)
+	rows = append(rows, lines[start:min(len(lines), start+height)]...)
+	for len(rows) < height {
 		rows = append(rows, "")
 	}
 	return strings.Join(rows, "\n")
 }
 
-// helpModalBody lists every key, group by group, from the same bindings the
-// handlers dispatch on. The keys the focus behind the modal understands are
-// drawn in full and their groups come first; the rest are dimmed, so the
-// modal still teaches what the other sections can do.
-func (m Model) helpModalBody() string {
-	behind := m
-	behind.showHelp = false
-	k := behind.activeKeys()
-
-	groups := k.helpGroups()
+// body lists every key, group by group. The keys the focus behind the modal
+// understands are drawn in full and their groups come first; the rest are
+// dimmed, so the modal still teaches what the other sections can do.
+func (h *helpModal) body() string {
+	st := h.st
+	groups := h.keys().helpGroups()
 	active := make([]helpGroup, 0, len(groups))
 	inactive := make([]helpGroup, 0, len(groups))
 	for _, g := range groups {
@@ -464,18 +694,18 @@ func (m Model) helpModalBody() string {
 			// Every run carries the modal background, including the gaps: a
 			// style that only sets a foreground ends with a reset, which would
 			// stripe the row with the terminal's own background.
-			keySt, descSt := m.st.modalKey, m.st.modalDesc
+			keySt, descSt := st.modalKey, st.modalDesc
 			if !b.Enabled() {
-				keySt, descSt = m.st.modalDim.Bold(true), m.st.modalDim
+				keySt, descSt = st.modalDim.Bold(true), st.modalDim
 			}
-			rows += m.st.modalBg.Render("  ") +
+			rows += st.modalBg.Render("  ") +
 				keySt.Width(12).Render(b.Help().Key) +
-				m.st.modalBg.Render("  ") +
+				st.modalBg.Render("  ") +
 				descSt.Render(b.Help().Desc) + "\n"
 		}
-		title := m.st.modalHead
+		title := st.modalHead
 		if !g.hasEnabled() {
-			title = m.st.modalDim.Bold(true)
+			title = st.modalDim.Bold(true)
 		}
 		sections = append(sections, title.Render(g.title)+"\n"+rows)
 	}
@@ -486,14 +716,16 @@ func (m Model) helpModalBody() string {
 	return strings.TrimRight(strings.Join(sections, "\n"), "\n")
 }
 
-func (m Model) overlayModal(modal string) string {
-	return lipgloss.Place(
-		m.width, m.height,
-		lipgloss.Center, lipgloss.Center,
-		modal,
-		lipgloss.WithWhitespaceChars(" "),
-	)
+func (h *helpModal) Keys(k *keyMap) {
+	k.Up.SetHelp("k", "scroll")
+	k.Down.SetHelp("j", "scroll")
+	k.Back.SetHelp("Esc", "close")
+	enable(&k.Help, &k.Back, &k.Quit, &k.Up, &k.Down,
+		&k.HalfPageUp, &k.HalfPageDown, &k.ScrollTop, &k.ScrollBottom)
+	k.short = []key.Binding{hint("scroll", k.Down, k.Up), k.Back}
 }
+
+// ── Panels ─────────────────────────────────────────────────────────────────
 
 func renderModalPanel(title, content string, width int, st styles) string {
 	style := st.helpModal
@@ -510,4 +742,16 @@ func renderModalPanel(title, content string, width int, st styles) string {
 	// carries it. Pre-padding here would be trimmed by the wrap and refilled
 	// with unstyled spaces, striping the panel.
 	return style.Render(body)
+}
+
+// overlayModal centres a panel over a blank screen. True compositing over
+// the dashboard needs lipgloss v2; on v1 the blanked background is what
+// ships.
+func overlayModal(lay layout, panel string) string {
+	return lipgloss.Place(
+		lay.W, lay.H,
+		lipgloss.Center, lipgloss.Center,
+		panel,
+		lipgloss.WithWhitespaceChars(" "),
+	)
 }
