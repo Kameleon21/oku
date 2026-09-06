@@ -94,8 +94,8 @@ func TestDayLabel(t *testing.T) {
 		{"same day", time.Date(2026, time.September, 5, 8, 0, 0, 0, time.Local), "Today"},
 		{"one minute past local midnight", time.Date(2026, time.September, 5, 0, 1, 0, 0, time.Local), "Today"},
 		{"ten to midnight yesterday", time.Date(2026, time.September, 4, 23, 50, 0, 0, time.Local), "Yest."},
-		{"two days back", time.Date(2026, time.September, 3, 21, 12, 0, 0, time.Local), "Sep 03"},
-		{"last year", time.Date(2025, time.December, 31, 12, 0, 0, 0, time.Local), "Dec 31"},
+		{"two days back", time.Date(2026, time.September, 3, 21, 12, 0, 0, time.Local), "3 Sep"},
+		{"last year", time.Date(2025, time.December, 31, 12, 0, 0, 0, time.Local), "31 Dec"},
 	}
 	for _, c := range cases {
 		if got := DayLabel(c.at, now); got != c.want {

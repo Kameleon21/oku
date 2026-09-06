@@ -52,19 +52,22 @@ func (s *statsSection) Update(msg tea.Msg) tea.Cmd {
 
 func (s *statsSection) View(w, h int) string {
 	content, _ := clipLines(s.render(w), s.scroll, h)
-	return content
+	return fitBlock(content, w, h)
 }
 
-func (s *statsSection) Resize(w, h int) { s.w, s.h = w, h }
+func (s *statsSection) Resize(w, h int) tea.Cmd {
+	s.w, s.h = w, h
+	return nil
+}
 
 func (s *statsSection) Keys(k *keyMap) {
-	sectionHint := hint("section", k.PrevSection, k.NextSection)
+	tabHint := hint("tab", k.PrevSection, k.NextSection)
 	k.Up.SetHelp("k", "scroll")
 	k.Down.SetHelp("j", "scroll")
 	enable(&k.Quit, &k.Help, &k.Up, &k.Down, &k.ScrollTop, &k.NextSection, &k.PrevSection,
-		&k.Sync, &k.Refresh, &k.Search)
+		&k.TabJump, &k.Sync, &k.Refresh, &k.Search)
 	k.short = []key.Binding{
-		k.Help, hint("scroll", k.Down, k.Up), k.ScrollTop, sectionHint,
+		k.Help, hint("scroll", k.Down, k.Up), k.ScrollTop, tabHint,
 		hintAs("s", "sync", k.Sync), k.Refresh, k.Search, k.Quit,
 	}
 }
@@ -161,14 +164,8 @@ func (s *statsSection) render(w int) string {
 	rs := s.sh.stats
 	st := s.st
 
+	// No heading: the pane's own title already names the page and the year.
 	var sb strings.Builder
-	title := "Reading Stats"
-	if rs != nil {
-		title = fmt.Sprintf("Reading Stats · %d", rs.Year.Year)
-	}
-	sb.WriteString(st.head.Render(title))
-	sb.WriteString("\n\n")
-
 	if rs == nil {
 		sb.WriteString(st.dim.Render("  No stats yet. Press s to sync with Hardcover."))
 		return sb.String()

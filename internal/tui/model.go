@@ -20,6 +20,16 @@ import (
 
 // ── Dashboard Model ────────────────────────────────────────────────────────
 
+// focus is which of the two panes the keyboard is aimed at. The content pane
+// has it unless Enter moved it to the detail pane; the focused pane carries
+// the thick border.
+type focus int
+
+const (
+	focusContent focus = iota
+	focusDetail
+)
+
 // Model is the root of the dashboard. It routes keys to the top modal or the
 // active section, owns the data they share, and is the only place work
 // starts: sections and modals answer keys with requests, updateCommon runs
@@ -29,6 +39,8 @@ type Model struct {
 	// ctx is cancelled when the program exits so in-flight API calls abort
 	// instead of outliving the store.
 	ctx context.Context
+	// version is the build the dashboard is running, shown in the help modal.
+	version string
 
 	// st is every style the dashboard draws with, derived from a Theme. It is
 	// a value on the model so a theme change can rebuild it mid-run.
@@ -36,12 +48,12 @@ type Model struct {
 
 	shared *shared
 
-	// sections is one pane per focusSection; tab is the focused one. The
-	// typed handles are the same objects, for what the six-card layout asks
-	// of them beyond the interface.
-	sections [sectionCount]section
-	tab      focusSection
-	search   *searchSection
+	// sections is one content pane per tab; tab is the one on screen and
+	// focus says which of its two panes takes the keys.
+	sections [tabCount]section
+	tab      tab
+	focus    focus
+	detail   *detailPane
 
 	// modals is the stack of overlays; the top one takes the keys.
 	modals []modal
@@ -62,14 +74,17 @@ type Model struct {
 	// reconciling marks the background reconcile load; only its success
 	// clears dirty.
 	reconciling bool
+	// syncing marks a full sync, which the header reports in place of the
+	// age of the last one.
+	syncing bool
 
 	help help.Model
 
 	dirty          bool
 	lastMutationAt time.Time
 
-	// toast is the status bar's message, and undo what U would reverse
-	// while it is up. Both are dropped when the toast expires.
+	// toast is the footer's message, and undo what U would reverse while it
+	// is up. Both are dropped when the toast expires.
 	toast toast
 	undo  *undoAction
 
@@ -79,8 +94,9 @@ type Model struct {
 }
 
 // New builds the dashboard model. density is the CLI's --view setting, which
-// the list rows and the detail pane read to decide how much to show.
-func New(ctx context.Context, a *app.App, density Density) *Model {
+// the list rows and the detail pane read to decide how much to show, and
+// version is the build the help modal names.
+func New(ctx context.Context, a *app.App, density Density, version string) *Model {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -104,33 +120,32 @@ func New(ctx context.Context, a *app.App, density Density) *Model {
 	hlp.Styles.ShortSeparator = st.dim
 	hlp.Styles.Ellipsis = st.dim
 
-	search := newSearchSection(sh, st)
 	m := &Model{
-		app:    a,
-		ctx:    ctx,
-		st:     st,
-		shared: sh,
-		search: search,
-		tab:    sectionReading,
-		help:   hlp,
+		app:     a,
+		ctx:     ctx,
+		version: version,
+		st:      st,
+		shared:  sh,
+		tab:     tabReading,
+		detail:  newDetailPane(sh, st),
+		help:    hlp,
 		// Init starts the cached-library and local-data loads, so two
 		// commands are already in flight.
 		inflight: 2,
 		spinning: true,
 	}
-	m.sections = [sectionCount]section{
-		sectionIntro:   newIntroSection(sh, st),
-		sectionReading: newLibrarySection(sh, st, sectionReading),
-		sectionOku:     newLibrarySection(sh, st, sectionOku),
-		sectionSearch:  search,
-		sectionStats:   newStatsSection(sh, st),
-		sectionTimer:   newTimerSection(sh, st),
+	m.sections = [tabCount]section{
+		tabReading: newLibrarySection(sh, st, tabReading),
+		tabOku:     newLibrarySection(sh, st, tabOku),
+		tabSearch:  newSearchSection(sh, st),
+		tabStats:   newStatsSection(sh, st),
+		tabTimer:   newTimerSection(sh, st),
 	}
 	m.section().Focus()
 	return m
 }
 
-// section is the focused section.
+// section is the content pane of the tab on screen.
 func (m *Model) section() section {
 	return m.sections[m.tab]
 }
@@ -150,8 +165,8 @@ func (m *Model) Init() tea.Cmd {
 
 // Update routes a key press: ctrl+c quits from anywhere; the top modal takes
 // every other key; the root keys apply unless the section's input owns the
-// keyboard; the section gets the rest. Everything else is common handling
-// plus a broadcast.
+// keyboard; the focused detail pane scrolls on j/k; the section gets the
+// rest. Everything else is common handling plus a broadcast.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	keyMsg, isKey := msg.(tea.KeyMsg)
 	if !isKey {
@@ -173,11 +188,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd, handled := m.rootKey(keyMsg, k); handled {
 			return m, cmd
 		}
+		// The detail pane only takes the keys that scroll it; the shelf and
+		// progress keys still act on the selection it is showing.
+		if m.focus == focusDetail && m.detail.handleKey(keyMsg, k) {
+			return m, nil
+		}
 	}
 	return m, m.section().Update(keyMsg)
 }
 
-// rootKey handles the keys every section shares. Like the sections, it only
+// rootKey handles the keys every tab shares. Like the sections, it only
 // answers with requests: quitting, help and moving the focus are the
 // exceptions, since they start no work.
 func (m *Model) rootKey(msg tea.KeyMsg, k keyMap) (tea.Cmd, bool) {
@@ -189,22 +209,49 @@ func (m *Model) rootKey(msg tea.KeyMsg, k keyMap) (tea.Cmd, bool) {
 		return nil, true
 	case key.Matches(msg, k.Undo):
 		return request(reqUndo{}), true
-	case key.Matches(msg, k.NextSection):
-		m.setSection((m.tab + 1) % sectionCount)
-		return nil, true
+	case key.Matches(msg, k.TabJump):
+		if t, ok := tabForKey(msg.String()); ok {
+			return request(reqSwitchTab{to: t, abs: true}), true
+		}
+	case key.Matches(msg, k.Details):
+		// Enter used to move the book to another shelf, so a stray keypress
+		// silently rewrote the library. It now only moves the keyboard into
+		// the detail pane; g/w/f/d still change the status.
+		return m.setFocus(focusDetail), true
+	case key.Matches(msg, k.Back):
+		if m.focus == focusDetail {
+			return m.setFocus(focusContent), true
+		}
 	case key.Matches(msg, k.PrevSection):
-		m.setSection((m.tab - 1 + sectionCount) % sectionCount)
-		return nil, true
+		if m.focus == focusDetail {
+			// The detail pane is the right-hand one: h comes back from it.
+			return m.setFocus(focusContent), true
+		}
+		return m.setTab((m.tab - 1 + tabCount) % tabCount), true
+	case key.Matches(msg, k.NextSection):
+		return m.setTab((m.tab + 1) % tabCount), true
 	case key.Matches(msg, k.Search):
-		m.setSection(sectionSearch)
-		m.search.focusInput()
-		return nil, true
+		return tea.Batch(m.setTab(tabSearch), m.focusSectionInput()), true
 	case key.Matches(msg, k.Sync):
 		return request(reqSync{}), true
 	case key.Matches(msg, k.Density):
 		return request(reqDensity{}), true
 	}
 	return nil, false
+}
+
+// focusSectionInput puts the cursor in the section's text input, for the one
+// section that has one. The keyboard goes back to the content pane first: an
+// input that owns the keys while the detail pane still holds the focus would
+// draw the thick border around a pane no key reaches.
+func (m *Model) focusSectionInput() tea.Cmd {
+	s, ok := m.section().(interface{ focusInput() })
+	if !ok {
+		return nil
+	}
+	cmd := m.setFocus(focusContent)
+	s.focusInput()
+	return cmd
 }
 
 // updateCommon handles every message that is not a key press, whatever has
@@ -214,15 +261,17 @@ func (m *Model) updateCommon(msg tea.Msg) tea.Cmd {
 	return tea.Batch(cmd, m.broadcast(msg))
 }
 
-// broadcast hands a message to every section and every modal. A modal that
-// reports done is dropped from the stack. Bubbles' own messages are id-stamped
-// so duplicates are harmless, except list.FilterMatchesMsg, which the lists
-// themselves drop unless they are filtering.
+// broadcast hands a message to every section, the detail pane and every
+// modal. A modal that reports done is dropped from the stack. Bubbles' own
+// messages are id-stamped so duplicates are harmless, except
+// list.FilterMatchesMsg, which the lists themselves drop unless they are
+// filtering.
 func (m *Model) broadcast(msg tea.Msg) tea.Cmd {
-	cmds := make([]tea.Cmd, 0, len(m.sections)+len(m.modals))
+	cmds := make([]tea.Cmd, 0, len(m.sections)+len(m.modals)+1)
 	for _, s := range m.sections {
 		cmds = append(cmds, s.Update(msg))
 	}
+	cmds = append(cmds, m.detail.Update(msg))
 	kept := m.modals[:0]
 	for _, mod := range m.modals {
 		done, cmd := mod.Update(msg)
@@ -262,9 +311,8 @@ func (m *Model) handleCommon(msg tea.Msg) tea.Cmd {
 		return timerTickCmd()
 
 	case tea.WindowSizeMsg:
-		m.lay = layout{W: msg.Width, H: msg.Height}
-		m.resize()
-		return nil
+		m.lay.W, m.lay.H = msg.Width, msg.Height
+		return m.resize()
 
 	case libraryLoadedMsg:
 		return m.applyLibraryLoaded(msg)
@@ -354,6 +402,9 @@ func (m *Model) applyLocalDataLoaded(msg localDataLoadedMsg) tea.Cmd {
 	m.shared.timer = msg.timerState
 	m.shared.timerBook = msg.timerBook
 	m.shared.lastSyncAt = msg.lastSyncAt
+	if msg.shelf != nil {
+		m.shared.shelf = msg.shelf
+	}
 	return tea.Batch(m.startTimerTick(), m.broadcast(dataChangedMsg{dataLocal}))
 }
 
@@ -362,6 +413,9 @@ func (m *Model) applyLocalDataLoaded(msg localDataLoadedMsg) tea.Cmd {
 // sees it in the broadcast that follows.
 func (m *Model) applyOpDone(msg opDoneMsg) tea.Cmd {
 	m.endLoading()
+	if msg.op == opSync {
+		m.syncing = false
+	}
 
 	toastCmd := m.toastFor(msg)
 	if msg.err == nil && msg.markDirty {
@@ -383,8 +437,10 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 		return m.showToast(r.level, r.text)
 
 	case reqSwitchTab:
-		m.setSection((m.tab + focusSection(r.step) + sectionCount) % sectionCount)
-		return nil
+		if r.abs {
+			return m.setTab(r.to)
+		}
+		return m.setTab((m.tab + tab(r.step) + tabCount) % tabCount)
 
 	case reqOpenModal:
 		m.push(r.m)
@@ -398,6 +454,7 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 		return m.beginLoading(r.cmd)
 
 	case reqSync:
+		m.syncing = true
 		return m.beginLoading(syncAllAndReloadCmd(m.ctx, m.app))
 
 	case reqRefresh:
@@ -485,7 +542,7 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 			return m.showToast(toastError, "no currently reading books available — add a book to Reading first")
 		}
 		idx := 0
-		if sel := m.sections[sectionReading].Selected().Book; sel != nil {
+		if sel := m.sections[tabReading].Selected().Book; sel != nil {
 			for i, b := range m.shared.reading {
 				if b.Book.ID == sel.Book.ID {
 					idx = i
@@ -568,14 +625,47 @@ func (m *Model) startTimerTick() tea.Cmd {
 
 // ── Focus and modals ───────────────────────────────────────────────────────
 
-// setSection moves the focus and re-sizes the lists. leftSectionHeights
-// gives the focused list extra rows, so the sizes have to follow the focus
-// and not only a window resize.
-func (m *Model) setSection(s focusSection) {
+// setTab shows another tab. The keyboard goes back to the content pane: the
+// detail pane of the tab being left has nothing to do with the new one.
+func (m *Model) setTab(t tab) tea.Cmd {
+	if t == m.tab {
+		return nil
+	}
 	m.section().Blur()
-	m.tab = s
+	m.tab = t
+	m.focus = focusContent
 	m.section().Focus()
-	m.resize()
+	return m.resize()
+}
+
+// setFocus moves the keyboard between the two panes. On a terminal too
+// narrow to split, the detail pane takes the content pane's place instead of
+// sitting beside it, so the sizes are recomputed either way.
+func (m *Model) setFocus(f focus) tea.Cmd {
+	if f == focusDetail && !m.tab.hasDetail() {
+		return nil
+	}
+	if f == m.focus {
+		return nil
+	}
+	m.focus = f
+	return m.resize()
+}
+
+// resize recomputes the layout and pushes the two panes' sizes into the
+// section and the detail pane. The library rows are drawn to the width they
+// are given, so a resize rebuilds them — and a rebuild has a command that
+// must be run, or an active filter goes blank.
+func (m *Model) resize() tea.Cmd {
+	m.lay = computeLayout(m.lay.W, m.lay.H, m.tab, m.focus == focusDetail)
+	m.help.Width = m.helpBarWidth()
+
+	cmd := m.section().Resize(m.lay.ContentInner, m.lay.InnerH)
+	m.detail.Resize(m.lay.DetailInner, m.lay.InnerH)
+	for _, mod := range m.modals {
+		mod.Resize(m.lay)
+	}
+	return cmd
 }
 
 // topModal is the modal that takes the keys, or nil.
@@ -598,33 +688,20 @@ func (m *Model) pop() {
 	m.modalsChanged()
 }
 
-// modalsChanged follows a push or a pop: the page prompt takes rows from the
-// layout, so the sizes are recomputed, and an empty stack gives the section
-// its focus back.
+// modalsChanged follows a push or a pop: a new modal is sized to the
+// terminal, and an empty stack gives the section its focus back.
 func (m *Model) modalsChanged() {
 	if len(m.modals) == 0 {
 		m.section().Focus()
 	}
-	m.resize()
+	for _, mod := range m.modals {
+		mod.Resize(m.lay)
+	}
 }
 
 // openHelp shows the help modal, scrolled back to the top.
 func (m *Model) openHelp() {
-	m.push(newHelpModal(m.keysBehind, m.st))
-}
-
-// pagePrompt is the page prompt when it is up: it is drawn under the layout
-// rather than over it, so the layout has to make room.
-func (m *Model) pagePrompt() *pageModal {
-	p, _ := m.topModal().(*pageModal)
-	return p
-}
-
-// timerPicker is the book picker when it is up: it is drawn in the Timer
-// pane rather than over the screen.
-func (m *Model) timerPicker() *timerPickerModal {
-	p, _ := m.topModal().(*timerPickerModal)
-	return p
+	m.push(newHelpModal(m.keysBehind, m.version, m.st))
 }
 
 // ── View ───────────────────────────────────────────────────────────────────
@@ -640,56 +717,55 @@ func (m *Model) frame() string {
 	if !m.shared.loaded {
 		return "\n  " + m.shared.spin.View() + " Loading dashboard..."
 	}
-
-	statusBar := m.statusBar()
-
-	// Body.
-	var body string
-	if page := m.pagePrompt(); page != nil {
-		body = statusBar + "\n" + m.renderLayout() + page.View(m.lay, m.st)
-	} else {
-		body = statusBar + "\n" + m.renderLayout() + "\n" + m.contextHelpBar()
+	if top := m.topModal(); top != nil {
+		// True compositing over the dashboard needs lipgloss v2; on v1 the
+		// modal is centred over a blank screen.
+		return fitBlock(overlayModal(m.lay, top.View(m.lay, m.st)),
+			max(minFrameWidth, m.lay.W), max(1, m.lay.H))
 	}
-
-	// The page prompt and the timer picker are drawn in the layout; every
-	// other modal is laid over it.
-	if top := m.topModal(); top != nil && m.pagePrompt() == nil && m.timerPicker() == nil {
-		return overlayModal(m.lay, top.View(m.lay, m.st))
-	}
-	return body
+	return m.header(m.lay) + "\n" + m.body(m.lay) + "\n" + m.footer(m.lay)
 }
 
-// statusBar renders the top bar: the app name and spinner on the left, the
-// latest message on the right, over an unbroken background.
-func (m *Model) statusBar() string {
-	width := max(20, m.lay.W)
-	inner := max(1, width-m.st.statusBar.GetHorizontalPadding())
-
-	left := m.st.statusBarTitle.Render("oku")
-	if m.isLoading() {
-		left += m.st.statusBarAccent.Render(" " + m.shared.spin.View())
+// body is the row of panes between the header and the footer: the content
+// pane, the detail pane beside it when the terminal is wide enough, or the
+// detail pane on its own when Enter opened it on a narrow one.
+func (m *Model) body(lay layout) string {
+	sel := m.section().Selected()
+	if lay.DetailOnly {
+		return m.pane(m.detail.Title(sel), m.detail.View(sel, m.tab), lay.DetailW, lay.PaneH, true)
 	}
 
-	right := m.renderToast(inner - lipgloss.Width(left) - 2)
-
-	gap := max(1, inner-lipgloss.Width(left)-lipgloss.Width(right))
-	return m.st.statusBar.Width(width).Render(
-		left + m.st.statusBarFill.Render(strings.Repeat(" ", gap)) + right,
+	content := m.pane(
+		m.section().Title(),
+		m.section().View(lay.ContentInner, lay.InnerH),
+		lay.ContentW, lay.PaneH,
+		m.focus == focusContent || !lay.Split,
 	)
+	if !lay.Split {
+		return content
+	}
+	detail := m.pane(
+		m.detail.Title(sel),
+		m.detail.View(sel, m.tab),
+		lay.DetailW, lay.PaneH,
+		m.focus == focusDetail,
+	)
+	return lipgloss.JoinHorizontal(lipgloss.Top, content, detail)
 }
 
 // ── Run ────────────────────────────────────────────────────────────────────
 
 // Run starts the dashboard on a, with density as the row detail the CLI's
-// --view flag asked for. It returns when the user quits.
-func Run(ctx context.Context, a *app.App, density Density) error {
+// --view flag asked for and version as the build it reports. It returns when
+// the user quits.
+func Run(ctx context.Context, a *app.App, density Density, version string) error {
 	// Bubble Tea runs commands in goroutines it does not track, so cancel the
 	// command context as soon as the program exits: in-flight API calls abort
 	// instead of racing the caller's store shutdown.
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	p := tea.NewProgram(New(runCtx, a, density), tea.WithAltScreen())
+	p := tea.NewProgram(New(runCtx, a, density, version), tea.WithAltScreen())
 	_, err := p.Run()
 	cancel()
 	return err

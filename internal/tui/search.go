@@ -177,12 +177,6 @@ func (s *searchSection) handleKey(msg tea.KeyMsg) tea.Cmd {
 				s.input.CursorEnd()
 			case key.Matches(msg, k.SearchMode):
 				return s.setQueryMode(s.queryMode.Next())
-			case key.Matches(msg, k.SearchModeBook):
-				return s.setQueryMode(model.SearchModeBook)
-			case key.Matches(msg, k.SearchModeAuthor):
-				return s.setQueryMode(model.SearchModeAuthor)
-			case key.Matches(msg, k.SearchModeGenre):
-				return s.setQueryMode(model.SearchModeGenre)
 			case key.Matches(msg, k.SearchSubmit):
 				return s.submit()
 			case key.Matches(msg, k.Back, k.Up):
@@ -235,19 +229,30 @@ func (s *searchSection) handleKey(msg tea.KeyMsg) tea.Cmd {
 	return cmd
 }
 
-// inputRow is the search card's body: the modes and the input on one line.
+// searchChromeRows is what the pane spends above the results: the input,
+// the row that names them, and a blank line between.
+const searchChromeRows = 3
+
+// inputRow is the top of the pane: the modes and the input on one line.
 func (s *searchSection) inputRow() string {
 	mode := s.st.dim.Render("[NORMAL]")
 	if s.mode == searchModeInsert {
 		mode = s.st.keyHint.Render("[INSERT]")
 	}
 	queryMode := s.st.keyHint.Render("[" + s.queryMode.Label() + "]")
-	return "  " + mode + " " + queryMode + " " + s.input.View()
+	return mode + " " + queryMode + " " + s.input.View()
 }
 
-// View is the results panel: the search in progress, the empty state, or
-// the titled list.
-func (s *searchSection) View(int, int) string {
+// View is the whole pane: the input, the row naming the results on screen,
+// and the results themselves — the search in progress, the empty state or
+// the list.
+func (s *searchSection) View(w, h int) string {
+	body := s.resultsView()
+	return fitBlock(s.inputRow()+"\n"+s.st.label.Render(s.list.Title)+"\n\n"+body, w, h)
+}
+
+// resultsView is the pane below the input row.
+func (s *searchSection) resultsView() string {
 	if s.loading {
 		query := s.loadingQuery
 		if strings.TrimSpace(query) == "" {
@@ -256,7 +261,7 @@ func (s *searchSection) View(int, int) string {
 		if strings.TrimSpace(query) == "" {
 			query = "..."
 		}
-		return "\n  " + s.sh.spin.View() + " " + strings.ToLower(s.queryMode.Label()) +
+		return "  " + s.sh.spin.View() + " " + strings.ToLower(s.queryMode.Label()) +
 			" search (" + s.queryMode.Description() + ") for " + fmt.Sprintf("%q", query)
 	}
 
@@ -270,17 +275,21 @@ func (s *searchSection) View(int, int) string {
 		}
 		return s.st.dim.Render(fmt.Sprintf("  No results for %q", s.lastQuery))
 	}
-
-	return s.st.listHeader.Render(s.list.Title) + "\n" + s.list.View()
+	return s.list.View()
 }
 
-// Resize sizes the results list; resizeInput the input on the card.
-func (s *searchSection) Resize(w, h int) { s.list.SetSize(w, h) }
-
-func (s *searchSection) resizeInput(w int) { s.input.Width = w }
+// Resize gives the results the rows the input row and the header do not
+// take, and the input the columns its badges leave.
+func (s *searchSection) Resize(w, h int) tea.Cmd {
+	s.list.SetSize(w, max(1, h-searchChromeRows))
+	// "[NORMAL] [BOOK] / " eats the front of the row; the input takes what
+	// is left instead of being cut off mid-placeholder.
+	s.input.Width = max(4, w-20)
+	return nil
+}
 
 func (s *searchSection) Keys(k *keyMap) {
-	sectionHint := hint("section", k.PrevSection, k.NextSection)
+	tabHint := hint("tab", k.PrevSection, k.NextSection)
 	switch {
 	case s.sub == searchSubResults:
 		k.Up.SetHelp("k", "navigate")
@@ -288,17 +297,19 @@ func (s *searchSection) Keys(k *keyMap) {
 		// h and left go back to the input here, so the previous-section
 		// binding is left with the one key it really has.
 		k.PrevSection.SetKeys("shift+tab")
-		k.PrevSection.SetHelp("S-Tab", "previous section")
+		k.PrevSection.SetHelp("S-Tab", "previous tab")
 		k.SearchBack.SetHelp("Esc/h", "back to input")
 		k.SetReading.SetHelp("g", "add as reading")
 		k.SetWant.SetHelp("w", "add as want to read")
 		k.SetFinished.SetHelp("f", "add as finished")
 		k.SetDNF.SetHelp("d", "add as did not finish")
-		enable(&k.Help, &k.Up, &k.Down, &k.AddReading, &k.SetReading, &k.SetWant, &k.SetFinished,
-			&k.SetDNF, &k.SearchBack, &k.NextSection, &k.PrevSection, &k.Density)
+		enable(&k.Help, &k.Up, &k.Down, &k.Details, &k.AddReading, &k.SetReading, &k.SetWant,
+			&k.SetFinished, &k.SetDNF, &k.SearchBack, &k.NextSection, &k.PrevSection,
+			&k.TabJump, &k.Density)
 		k.short = []key.Binding{
 			k.Help,
 			hint("navigate", k.Down, k.Up),
+			k.Details,
 			k.AddReading,
 			hint("status", k.SetReading, k.SetWant, k.SetFinished, k.SetDNF),
 			hintAs("h/l", "input/next", k.SearchBack, k.NextSection),
@@ -311,20 +322,19 @@ func (s *searchSection) Keys(k *keyMap) {
 		enable(&k.SearchSubmit, &k.Back)
 		k.short = []key.Binding{k.SearchSubmit, k.Back}
 	default:
-		// j goes down into the results (or on to the next section), k
-		// up to the previous one: one label that fits both.
-		k.Up.SetHelp("k", "results / section")
-		k.Down.SetHelp("j", "results / section")
+		// j goes down into the results (or on to the next tab), k up to the
+		// previous one: one label that fits both.
+		k.Up.SetHelp("k", "results / tab")
+		k.Down.SetHelp("j", "results / tab")
 		enable(&k.Help, &k.SearchInsert, &k.SearchAppend, &k.SearchMode,
-			&k.SearchModeBook, &k.SearchModeAuthor, &k.SearchModeGenre,
-			&k.Density, &k.SearchSubmit, &k.NextSection, &k.PrevSection, &k.Back, &k.Up, &k.Down)
+			&k.Density, &k.SearchSubmit, &k.NextSection, &k.PrevSection, &k.TabJump,
+			&k.Back, &k.Up, &k.Down)
 		k.short = []key.Binding{
 			k.Help,
 			k.SearchSubmit,
 			hint("insert", k.SearchInsert, k.SearchAppend),
 			hintAs("m", "mode", k.SearchMode),
-			hint("book/author/genre", k.SearchModeBook, k.SearchModeAuthor, k.SearchModeGenre),
-			sectionHint,
+			tabHint,
 			k.Density,
 			k.Back,
 		}
@@ -345,10 +355,15 @@ func (s *searchSection) CapturesKeys() bool {
 
 func (s *searchSection) Title() string { return "Search" }
 
-func (s *searchSection) Selected() selection { return selection{Result: s.selected()} }
-
-// inResults reports whether j/k act on the results.
-func (s *searchSection) inResults() bool { return s.sub == searchSubResults }
+// Selected is the result the detail pane shows: only once the cursor is in
+// the results, so typing a query does not flicker the pane through every
+// title the cursor happens to land on.
+func (s *searchSection) Selected() selection {
+	if s.sub != searchSubResults {
+		return selection{}
+	}
+	return selection{Result: s.selected()}
+}
 
 // focusInput jumps into the input in insert mode, keeping whatever query was
 // already typed.

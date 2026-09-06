@@ -4,24 +4,87 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Kameleon21/oku/internal/format"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
-// layout is the geometry the frame is drawn into: the terminal size. The
-// six-card layout derives its panes from it as it draws.
+// The rows and columns the frame is built from. Everything else is derived,
+// so a change here moves the whole dashboard together.
+const (
+	headerRows = 1
+	footerRows = 1
+	// detailMinWidth is the narrowest terminal that still shows the detail
+	// pane beside the content pane. Below it Enter swaps one for the other.
+	detailMinWidth = 100
+	// minContentW keeps a book title readable when the split would otherwise
+	// squeeze the list.
+	minContentW = 40
+	// borderW and padW are what a pane spends on itself: one border column
+	// and one space of padding each side.
+	borderW, padW = 2, 2
+	// minFrameWidth is the narrowest frame worth drawing; below it the rows
+	// are padded rather than folded.
+	minFrameWidth = 20
+)
+
+// layout is the geometry of one frame, computed once per window resize, tab
+// switch or detail toggle. Every pane reads its size from here, so the panes
+// and the sections inside them can never disagree about the room they have.
 type layout struct {
 	W, H int
+	// BodyH is the rows left between the header and the footer.
+	BodyH int
+	// Split reports that both panes are drawn side by side.
+	Split bool
+	// DetailOnly reports that the detail pane has taken the whole width,
+	// which is what Enter does on a terminal too narrow to split.
+	DetailOnly bool
+	// ContentW and DetailW are the outer widths of the two panes, borders
+	// included; a pane that is not drawn is zero.
+	ContentW, DetailW int
+	// PaneH is the outer height of both panes, InnerH the rows inside the
+	// border.
+	PaneH, InnerH int
+	// ContentInner and DetailInner are the columns inside a pane's border
+	// and padding: what the section and the detail pane draw into.
+	ContentInner, DetailInner int
 }
 
-// rightPanelContentWidth mirrors renderLayout's width math for the right
-// panel's content area.
-func (l layout) rightPanelContentWidth() int {
-	totalW := max(60, l.W-2)
-	leftW := max(28, totalW*2/5)
-	rightW := max(28, l.W-leftW-4)
-	return rightW - 4
+// computeLayout derives the frame's geometry from the terminal size, the tab
+// on screen and whether the detail pane has the focus.
+func computeLayout(w, h int, t tab, detailFocused bool) layout {
+	lay := layout{W: w, H: h}
+	if w <= 0 || h <= 0 {
+		return lay
+	}
+
+	lay.BodyH = max(1, h-headerRows-footerRows)
+	lay.PaneH = lay.BodyH
+	lay.InnerH = max(1, lay.PaneH-borderW)
+
+	hasDetail := t.hasDetail()
+	lay.Split = hasDetail && w >= detailMinWidth
+	lay.DetailOnly = hasDetail && !lay.Split && detailFocused
+
+	switch {
+	case lay.DetailOnly:
+		lay.DetailW = w
+	case lay.Split:
+		lay.ContentW = max(minContentW, w*2/5)
+		lay.DetailW = w - lay.ContentW
+	default:
+		lay.ContentW = w
+	}
+
+	inner := func(outer int) int {
+		if outer <= 0 {
+			return 0
+		}
+		return max(1, outer-borderW-padW)
+	}
+	lay.ContentInner = inner(lay.ContentW)
+	lay.DetailInner = inner(lay.DetailW)
+	return lay
 }
 
 // fitToScreen pads the frame to the terminal and clamps it to those bounds, so
@@ -38,263 +101,87 @@ func (m *Model) fitToScreen(frame string) string {
 		Render(frame)
 }
 
-// chromeRows counts the rows View draws outside the two-column layout: the
-// status bar, plus whatever footer the current mode prints under it.
-func (m *Model) chromeRows() int {
-	if m.pagePrompt() != nil {
-		return 1 + pagePromptRows
-	}
-	return 1 + 1 // status bar + help bar
-}
+// ── Panes ──────────────────────────────────────────────────────────────────
 
-// layoutHeight is the height of the two-column layout, borders included. It
-// takes every row the chrome does not, so the panels reach the bottom of the
-// terminal instead of leaving it blank.
-func (m *Model) layoutHeight() int {
-	return max(8, m.lay.H-m.chromeRows())
-}
-
-// rightPanelContentHeight mirrors renderLayout's height math for the right
-// panel's content area.
-func (m *Model) rightPanelContentHeight() int {
-	return max(1, m.layoutHeight()-2)
-}
-
-// renderLayout renders the 2-column layout: left sections + right context panel.
-func (m *Model) renderLayout() string {
-	totalW := max(60, m.lay.W-2)
-	panelInnerH := m.rightPanelContentHeight()
-	leftW := max(28, totalW*2/5)
-
-	// The left frame is only a frame: the focus cue belongs to the card
-	// inside it, or to the right pane when the cursor is over there.
-	leftContent := clampPanelContent(m.renderSections(leftW-2, panelInnerH), leftW, panelInnerH)
-	leftPanel := m.st.pane.Width(leftW).Height(panelInnerH).Render(leftContent)
-
-	// Right panel: context-sensitive.
-	rightW := max(28, m.lay.W-lipgloss.Width(leftPanel)-2)
-	rightContent := clampPanelContent(m.rightPanelView(rightW-4, panelInnerH), rightW, panelInnerH)
-	rightStyle := m.st.pane
-	if m.rightPaneFocused() {
-		rightStyle = m.st.paneFocused
-	}
-	rightPanel := rightStyle.
-		Width(rightW).
-		Height(panelInnerH).
-		Render(rightContent)
-
-	return lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
-}
-
-// rightPaneFocused reports whether j/k act on the right pane: over the search
-// results, the timer's book picker or the stats page. The pane then carries
-// the focus border, and the section card keeps its marker.
-func (m *Model) rightPaneFocused() bool {
-	switch m.tab {
-	case sectionSearch:
-		return m.search.inResults()
-	case sectionTimer:
-		return m.timerPicker() != nil
-	case sectionStats:
-		return true
-	}
-	return false
-}
-
-// clampPanelContent pins a panel's content to its box: over-long lines are cut
-// instead of wrapped, and content past the last row is dropped, so one long
-// title can never stretch the layout past the bottom of the terminal.
-func clampPanelContent(content string, w, h int) string {
-	return lipgloss.NewStyle().
-		MaxWidth(w).
-		Height(h).
-		MaxHeight(h).
-		Render(content)
-}
-
-// renderSections renders the left panel content: section labels + expanded section.
-func (m *Model) renderSections(w, h int) string {
-	defs := m.sectionDefinitions()
-	if len(defs) == 0 {
-		return ""
-	}
-
-	heights := m.leftSectionHeights(h)
-	parts := make([]string, 0, len(defs))
-	for _, def := range defs {
-		// A zero-height card still costs a row once joined, so drop it.
-		if heights[def.id] <= 0 {
-			continue
-		}
-		parts = append(parts, m.renderSectionCard(def, w, heights[def.id], def.id == m.tab))
-	}
-	return lipgloss.JoinVertical(lipgloss.Left, parts...)
-}
-
-func (m *Model) sectionDefinitions() []sectionDef {
-	return []sectionDef{
-		{sectionIntro, "Intro", -1},
-		{sectionReading, "Reading", len(m.shared.reading)},
-		{sectionOku, "Oku", len(m.shared.oku)},
-		{sectionSearch, "Search Titles", -1},
-		{sectionStats, "Stats", -1},
-		{sectionTimer, "Timer", -1},
-	}
-}
-
-func (m *Model) leftSectionHeights(totalH int) map[focusSection]int {
-	heights := map[focusSection]int{
-		sectionIntro:  3,
-		sectionSearch: 4,
-		sectionStats:  3,
-		sectionTimer:  3,
-	}
-	minHeights := map[focusSection]int{
-		sectionIntro:  2,
-		sectionSearch: 3,
-		sectionStats:  2,
-		sectionTimer:  2,
-	}
-	// Intro gives up its box first: it is the one card whose whole content is
-	// its label, so it is the one that loses nothing by being drawn bare.
-	reduceOrder := []focusSection{
-		sectionIntro, sectionStats, sectionTimer, sectionSearch,
-	}
-
-	fixedSum := heights[sectionIntro] + heights[sectionSearch] + heights[sectionStats] + heights[sectionTimer]
-	remaining := totalH - fixedSum
-	for remaining < 8 {
-		changed := false
-		for _, id := range reduceOrder {
-			if remaining >= 8 {
-				break
-			}
-			if heights[id] > minHeights[id] {
-				heights[id]--
-				fixedSum--
-				remaining++
-				changed = true
-			}
-		}
-		if !changed {
-			break
-		}
-	}
-
-	readingH := max(4, remaining*3/5)
-	okuH := max(4, remaining-readingH)
-	for readingH+okuH > remaining && (readingH > 2 || okuH > 2) {
-		if readingH >= okuH && readingH > 2 {
-			readingH--
-		} else if okuH > 2 {
-			okuH--
-		}
-	}
-	for readingH+okuH < remaining {
-		readingH++
-	}
-
-	if m.tab == sectionReading && okuH > 4 {
-		shift := min(2, okuH-4)
-		okuH -= shift
-		readingH += shift
-	}
-	if m.tab == sectionOku && readingH > 4 {
-		shift := min(2, readingH-4)
-		readingH -= shift
-		okuH += shift
-	}
-
-	heights[sectionReading] = readingH
-	heights[sectionOku] = okuH
-
-	sum := 0
-	for _, def := range m.sectionDefinitions() {
-		sum += heights[def.id]
-	}
-	if sum > totalH {
-		deficit := sum - totalH
-		shrinkOrder := []focusSection{
-			sectionReading, sectionOku, sectionSearch, sectionIntro, sectionStats, sectionTimer,
-		}
-		for deficit > 0 {
-			changed := false
-			for _, id := range shrinkOrder {
-				minH := 1
-				if id == sectionReading || id == sectionOku {
-					minH = 2
-				}
-				if heights[id] > minH {
-					heights[id]--
-					deficit--
-					changed = true
-					if deficit == 0 {
-						break
-					}
-				}
-			}
-			if !changed {
-				break
-			}
-		}
-	}
-	sum = 0
-	for _, def := range m.sectionDefinitions() {
-		sum += heights[def.id]
-	}
-	if sum < totalH {
-		heights[sectionReading] += totalH - sum
-	}
-
-	return heights
-}
-
-func (m *Model) renderSectionCard(def sectionDef, w, h int, focused bool) string {
-	if h <= 0 {
-		return ""
-	}
-	label := m.formatSectionLabel(def.id, def.label, def.count, focused)
-	if h < 3 {
-		// Too short to draw a border around: just the label.
-		return clampPanelContent(label, w, h)
-	}
-	innerH := h - 2
-
-	content := label
-	if def.id == sectionReading || def.id == sectionOku || def.id == sectionSearch {
-		// innerH > 1 leaves at least one row under the label.
-		if innerH > 1 {
-			if body := m.sectionContent(def.id, max(8, w-4), innerH-1); body != "" {
-				content += "\n" + body
-			}
-		}
-	}
-
-	style := m.st.pane
+// pane draws one bordered box: the title in the top border, body inside it,
+// exactly w columns by h rows. The focused pane carries a thick border, so
+// which side the keys go to is visible on a terminal without colour.
+//
+// The box is laid out by hand rather than by a lipgloss border because the
+// title sits in the border itself, and because every row has to be exactly w
+// wide: a pane that renders one column over would push its neighbour off the
+// screen.
+func (m *Model) pane(title, body string, w, h int, focused bool) string {
+	st := m.st
+	border := lipgloss.RoundedBorder()
+	borderStyle, titleStyle := st.paneBorder, st.paneTitle
 	if focused {
-		style = m.st.paneFocused
+		border = lipgloss.ThickBorder()
+		borderStyle, titleStyle = st.paneBorderFocused, st.paneTitleFocused
 	}
-	// A list whose items are taller than the rows it was given renders past
-	// them; clip so the overflow cannot push the cards below this one off the
-	// panel.
-	clipped := clampPanelContent(content, w, innerH)
-	clipped = stampOverflowBadge(clipped, m.listOverflowBadge(def.id), w, m.st)
-	return style.Width(w).Height(innerH).Render(clipped)
+	if w < 4 || h < 2 {
+		return fitBlock(body, max(0, w), max(0, h))
+	}
+
+	innerW := w - borderW
+	line := func(n int) string {
+		if n <= 0 {
+			return ""
+		}
+		return borderStyle.Render(strings.Repeat(border.Top, n))
+	}
+
+	// Top border, with the title in it: "┏━ Reading (3) ━━━┓".
+	top := borderStyle.Render(border.TopLeft)
+	if t := strings.TrimSpace(ansi.Strip(title)); t != "" && innerW >= 6 {
+		t = ansi.Truncate(t, innerW-4, "…")
+		top += line(1) + " " + titleStyle.Render(t) + " " + line(innerW-3-lipgloss.Width(t))
+	} else {
+		top += line(innerW)
+	}
+	top += borderStyle.Render(border.TopRight)
+
+	rows := make([]string, 0, h)
+	rows = append(rows, top)
+	side := borderStyle.Render(border.Left)
+	if inner := fitBlock(body, innerW-padW, h-borderW); inner != "" {
+		for _, row := range strings.Split(inner, "\n") {
+			rows = append(rows, side+" "+row+" "+side)
+		}
+	}
+	rows = append(rows, borderStyle.Render(border.BottomLeft)+line(innerW)+borderStyle.Render(border.BottomRight))
+	return strings.Join(rows, "\n")
 }
 
-// listOverflowBadge is the library section's badge, or nothing for the
-// other cards.
-func (m *Model) listOverflowBadge(id focusSection) string {
-	if lib, ok := m.sections[id].(*librarySection); ok {
-		return lib.overflowBadge()
+// fitBlock pins a block of text to exactly w columns by h rows: over-long
+// lines are cut instead of wrapped, short ones are padded, and rows past the
+// last are dropped. Sections render into it, so what they hand back can
+// never stretch the pane around them.
+func fitBlock(s string, w, h int) string {
+	if w <= 0 || h <= 0 {
+		return ""
 	}
-	return ""
+	lines := strings.Split(s, "\n")
+	rows := make([]string, 0, h)
+	for i := 0; i < h; i++ {
+		row := ""
+		if i < len(lines) {
+			// ansi.Truncate counts cells, not bytes, so a multi-byte glyph
+			// is dropped whole rather than cut into broken runes.
+			row = ansi.Truncate(lines[i], w, "")
+		}
+		if pad := w - lipgloss.Width(row); pad > 0 {
+			row += strings.Repeat(" ", pad)
+		}
+		rows = append(rows, row)
+	}
+	return strings.Join(rows, "\n")
 }
 
-// stampOverflowBadge right-aligns the badge on the card's last row, in the
+// stampOverflowBadge right-aligns the badge on the block's last row, in the
 // space the pagination dots used to take. The row is overwritten rather than
-// appended to: a list pads its rows out to the full card width, so there is
-// never anything left to append to.
+// appended to: a list pads its rows out to the full width, so there is never
+// anything left to append to.
 func stampOverflowBadge(content, badge string, w int, st styles) string {
 	if badge == "" {
 		return content
@@ -314,94 +201,6 @@ func stampOverflowBadge(content, badge string, w int, st styles) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m *Model) formatSectionLabel(id focusSection, label string, count int, focused bool) string {
-	num := fmt.Sprintf("%d", int(id)+1)
-	countStr := ""
-	if count >= 0 {
-		countStr = m.st.sectionCountLabel.Render(fmt.Sprintf(" (%d)", count))
-	}
-
-	// Timer running indicator.
-	if id == sectionTimer && m.shared.timer != nil {
-		elapsed := m.shared.now().Sub(m.shared.timer.StartedAt)
-		countStr = " " + m.st.keyHint.Render(format.Duration(elapsed))
-	}
-
-	if focused {
-		return m.st.sectionLabelFocused.Render("▸ "+num+"  "+label) + countStr
-	}
-	return m.st.sectionLabel.Render("  "+num+"  "+label) + countStr
-}
-
-// sectionContent returns the expanded content for a card: the list, or the
-// search input row.
-func (m *Model) sectionContent(id focusSection, w, h int) string {
-	switch id {
-	case sectionReading, sectionOku:
-		return m.sections[id].View(w, h)
-	case sectionSearch:
-		return m.search.inputRow()
-	default:
-		// Intro, Stats, Timer use the right pane for full details.
-		return m.st.dim.Render("  See Output panel")
-	}
-}
-
-// ── Right Panel Views ──────────────────────────────────────────────────────
-
-func (m *Model) rightPanelView(w, h int) string {
-	switch m.tab {
-	case sectionReading, sectionOku:
-		return detailsView(m.section().Selected().Book, m.shared.density, w, m.st)
-	case sectionTimer:
-		if p := m.timerPicker(); p != nil {
-			return p.View(m.lay, m.st)
-		}
-		return m.section().View(w, h)
-	default:
-		return m.section().View(w, h)
-	}
-}
-
-// ── Resize ─────────────────────────────────────────────────────────────────
-
-// resize pushes the layout's sizes into the sections and the modals.
-// leftSectionHeights gives the focused list extra rows, so this follows the
-// focus and not only a window resize.
-func (m *Model) resize() {
-	m.help.Width = m.helpBarWidth()
-
-	totalW := max(60, m.lay.W-2)
-	panelInnerH := m.rightPanelContentHeight()
-
-	leftW := max(28, totalW*2/5)
-	rightW := max(28, totalW-leftW-3)
-
-	heights := m.leftSectionHeights(panelInnerH)
-	readingContentH := max(1, heights[sectionReading]-3)
-	okuContentH := max(1, heights[sectionOku]-3)
-	leftContentW := leftW - 6
-	if leftContentW < 8 {
-		leftContentW = 8
-	}
-
-	// "[NORMAL] [BOOK] / " eats the front of the search card's row; the input
-	// takes what is left instead of being cut off mid-placeholder.
-	m.search.resizeInput(max(4, leftContentW-20))
-
-	m.sections[sectionReading].Resize(leftContentW, readingContentH)
-	m.sections[sectionOku].Resize(leftContentW, okuContentH)
-	m.search.Resize(rightW-4, max(1, panelInnerH-1))
-	rightInner := m.lay.rightPanelContentWidth()
-	m.sections[sectionIntro].Resize(rightInner, panelInnerH)
-	m.sections[sectionStats].Resize(rightInner, panelInnerH)
-	m.sections[sectionTimer].Resize(rightInner, panelInnerH)
-
-	for _, mod := range m.modals {
-		mod.Resize(m.lay)
-	}
-}
-
 func clampInt(v, lo, hi int) int {
 	if v < lo {
 		return lo
@@ -412,33 +211,32 @@ func clampInt(v, lo, hi int) int {
 	return v
 }
 
-// ── Progress Bar ────────────────────────────────────────────────────────────
+// ── Progress bars ──────────────────────────────────────────────────────────
 
-// progressBar renders a Unicode block-character progress bar.
+// progressBar renders a Unicode block-character progress bar with its
+// percentage:
 //
 //	progressBar(45, 300, 20) → "███░░░░░░░░░░░░░░░░░  15%"
 func progressBar(current, total, width int, st styles) string {
 	if total <= 0 {
 		return st.dim.Render(fmt.Sprintf("p.%d", current))
 	}
-	pct := float64(current) / float64(total)
-	if pct > 1.0 {
-		pct = 1.0
+	return fmt.Sprintf("%s %s", bar(current, total, width, st),
+		st.dim.Render(fmt.Sprintf("%3d%%", int(percent(current, total)*100))))
+}
+
+// bar is the block-character track on its own, for the rows that print the
+// numbers themselves.
+func bar(current, total, width int, st styles) string {
+	if width < 0 {
+		width = 0
 	}
-	if pct < 0 {
-		pct = 0
-	}
-	filled := int(pct * float64(width))
+	filled := int(percent(current, total) * float64(width))
 	if filled > width {
 		filled = width
 	}
-	empty := width - filled
-
-	bar := st.progressFilled.Render(strings.Repeat("█", filled)) +
-		st.progressEmpty.Render(strings.Repeat("░", empty))
-
-	pctStr := fmt.Sprintf("%3d%%", int(pct*100))
-	return fmt.Sprintf("%s %s", bar, st.dim.Render(pctStr))
+	return st.progressFilled.Render(strings.Repeat("█", filled)) +
+		st.progressEmpty.Render(strings.Repeat("░", width-filled))
 }
 
 // miniProgressBar renders a compact progress bar for inline list items.
@@ -446,19 +244,26 @@ func miniProgressBar(current, total, width int) string {
 	if total <= 0 {
 		return ""
 	}
-	pct := float64(current) / float64(total)
-	if pct > 1.0 {
-		pct = 1.0
-	}
-	if pct < 0 {
-		pct = 0
-	}
+	pct := percent(current, total)
 	filled := int(pct * float64(width))
 	if filled > width {
 		filled = width
 	}
-	empty := width - filled
-
-	return strings.Repeat("█", filled) + strings.Repeat("░", empty) +
+	return strings.Repeat("█", filled) + strings.Repeat("░", width-filled) +
 		fmt.Sprintf(" %d%%", int(pct*100))
+}
+
+// percent is how far through total current is, clamped to 0..1.
+func percent(current, total int) float64 {
+	if total <= 0 {
+		return 0
+	}
+	pct := float64(current) / float64(total)
+	if pct > 1 {
+		return 1
+	}
+	if pct < 0 {
+		return 0
+	}
+	return pct
 }

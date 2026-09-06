@@ -85,7 +85,9 @@ func DayLabel(t, now time.Time) string {
 	case day.Equal(today.AddDate(0, 0, -1)):
 		return "Yest."
 	default:
-		return t.Local().Format("Jan 02")
+		// Day before month, so the two variable digits come first and the
+		// column reads down the page: "3 Sep", "31 Dec".
+		return t.Local().Format("2 Jan")
 	}
 }
 

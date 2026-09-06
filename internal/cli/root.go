@@ -42,7 +42,7 @@ func newRootCmd(version string) *cobra.Command {
 			if !isInteractiveTerminal(os.Stdin) || !isInteractiveTerminal(os.Stdout) {
 				return cmd.Help()
 			}
-			return runDashboard()
+			return runDashboard(version)
 		},
 	}
 	cmd.SilenceErrors = true
@@ -62,7 +62,7 @@ func newRootCmd(version string) *cobra.Command {
 	cmd.AddCommand(newActiveCmd())
 	cmd.AddCommand(newSetActiveCmd())
 	cmd.AddCommand(newOpenCmd())
-	cmd.AddCommand(newTUICmd())
+	cmd.AddCommand(newTUICmd(version))
 	cmd.AddCommand(newUpdateCmd())
 	cmd.AddCommand(newRateCmd())
 	cmd.AddCommand(newReviewCmd())

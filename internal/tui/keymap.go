@@ -28,6 +28,7 @@ type keyMap struct {
 	// Moving around.
 	Up, Down                 key.Binding
 	PrevSection, NextSection key.Binding
+	TabJump                  key.Binding // 1-5: straight to a tab
 	Search                   key.Binding
 	ScrollTop, ScrollBottom  key.Binding
 	HalfPageUp, HalfPageDown key.Binding
@@ -41,11 +42,10 @@ type keyMap struct {
 	Sync, Refresh, Density                               key.Binding
 
 	// Search.
-	SearchInsert, SearchAppend                        key.Binding
-	SearchMode                                        key.Binding
-	SearchModeBook, SearchModeAuthor, SearchModeGenre key.Binding
-	SearchSubmit, AddReading                          key.Binding
-	SearchBack                                        key.Binding // results back to the input
+	SearchInsert, SearchAppend key.Binding
+	SearchMode                 key.Binding
+	SearchSubmit, AddReading   key.Binding
+	SearchBack                 key.Binding // results back to the input
 
 	// Pickers and modals.
 	Select                           key.Binding // enter: the timer picker, a confirm button, the page prompt
@@ -90,15 +90,16 @@ func newKeyMap() keyMap {
 
 		Up:           bind("k", "up", "k", "up"),
 		Down:         bind("j", "down", "j", "down"),
-		PrevSection:  bind("h", "previous section", "h", "left", "shift+tab"),
-		NextSection:  bind("l", "next section", "l", "right", "tab"),
+		PrevSection:  bind("h", "previous tab", "h", "left", "shift+tab"),
+		NextSection:  bind("l", "next tab", "l", "right", "tab"),
+		TabJump:      bind("1-5", "jump to a tab", "1", "2", "3", "4", "5"),
 		Search:       bind("/", "search", "/"),
 		ScrollTop:    bind("g", "top", "g", "home"),
 		ScrollBottom: bind("G", "bottom", "G", "end"),
 		HalfPageUp:   bind("C-u", "half page up", "ctrl+u", "pgup"),
 		HalfPageDown: bind("C-d", "half page down", "ctrl+d", "pgdown"),
 
-		Details:      bind("↵", "details", "enter"),
+		Details:      bind("↵", "detail", "enter"),
 		ProgressUp:   bind("+", "+10 pages", "+", "="),
 		ProgressDown: bind("-", "-10 pages", "-"),
 		Update:       bind("u", "update page", "u"),
@@ -114,15 +115,14 @@ func newKeyMap() keyMap {
 		Refresh:      bind("r", "refresh", "r"),
 		Density:      bind("z", "density", "z"),
 
-		SearchInsert:     bind("i", "insert", "i"),
-		SearchAppend:     bind("a", "append", "a"),
-		SearchMode:       bind("m", "cycle mode", "m"),
-		SearchModeBook:   bind("1", "book mode", "1"),
-		SearchModeAuthor: bind("2", "author mode", "2"),
-		SearchModeGenre:  bind("3", "genre mode", "3"),
-		SearchSubmit:     bind("↵", "search", "enter"),
-		AddReading:       bind("↵", "add as reading", "enter"),
-		SearchBack:       bind("Esc", "back to input", "esc", "h", "left"),
+		SearchInsert: bind("i", "insert", "i"),
+		SearchAppend: bind("a", "append", "a"),
+		SearchMode:   bind("m", "cycle mode", "m"),
+		SearchSubmit: bind("↵", "search", "enter"),
+		// Enter opens a result in the detail pane, the way it opens a book
+		// everywhere else, so shelving one has a key of its own.
+		AddReading: bind("a", "add as reading", "a"),
+		SearchBack: bind("Esc", "back to input", "esc", "h", "left"),
 
 		Select: bind("↵", "select", "enter"),
 		// The dialog has always answered to shifted letters too.
@@ -213,8 +213,9 @@ func (k keyMap) helpGroups() []helpGroup {
 	return []helpGroup{
 		{"Navigation", []key.Binding{
 			hint(k.upDownDesc(), k.Down, k.Up),
-			hint("section", k.PrevSection, k.NextSection),
-			hintAs("Tab/S-Tab", "section (alias)", k.NextSection, k.PrevSection),
+			k.TabJump,
+			hint("tab", k.PrevSection, k.NextSection),
+			hintAs("Tab/S-Tab", "tab (alias)", k.NextSection, k.PrevSection),
 			k.Search,
 			k.Back,
 			k.SearchBack,
@@ -237,7 +238,6 @@ func (k keyMap) helpGroups() []helpGroup {
 			k.SetIgnored,
 			hint("insert", k.SearchInsert, k.SearchAppend),
 			k.SearchMode,
-			hint("book / author / genre", k.SearchModeBook, k.SearchModeAuthor, k.SearchModeGenre),
 			k.Density,
 		}},
 		{"Timer", []key.Binding{k.Timer, k.TimerStop}},
@@ -271,14 +271,18 @@ func (m *Model) activeKeys() keyMap {
 	return k
 }
 
-// sectionKeys is the keymap with no modal up: the section's own keys, and
-// undo while a toast offers one. Undo lasts as long as that toast, and never
-// takes a letter away from the search input.
+// sectionKeys is the keymap with no modal up: the section's own keys, undo
+// while a toast offers one, and the detail pane's scroll keys over the top
+// of them while it has the focus. Undo lasts as long as that toast, and
+// never takes a letter away from the search input.
 func (m *Model) sectionKeys(k *keyMap) {
 	if m.undo != nil && !m.section().CapturesKeys() {
 		enable(&k.Undo)
 	}
 	m.section().Keys(k)
+	if m.focus == focusDetail {
+		m.detail.Keys(k)
+	}
 }
 
 // keysBehind is the keymap the help modal describes: what the focus under
@@ -303,22 +307,17 @@ func (m *Model) helpBarWidth() int {
 	return max(minHelpBarWidth, m.lay.W-2)
 }
 
-// contextHelpBar renders the hints for whatever has focus, on one line.
-func (m *Model) contextHelpBar() string {
-	return " " + m.renderHelpBar(m.helpBindings())
-}
-
-// renderHelpBar lays out as many hints as fit and marks the rest with an
-// ellipsis. help.Model can do this itself, but when the ellipsis is the thing
-// that does not fit its width check falls through and appends the hint anyway,
-// leaving a dangling separator to be cut mid-word; the bar drops whole hints
-// here instead, so the width is always honoured and the cut is always marked.
-func (m *Model) renderHelpBar(bindings []key.Binding) string {
+// renderHelpBar lays out as many hints as fit in limit columns and marks the
+// rest with an ellipsis. help.Model can do this itself, but when the ellipsis
+// is the thing that does not fit its width check falls through and appends the
+// hint anyway, leaving a dangling separator to be cut mid-word; the bar drops
+// whole hints here instead, so the width is always honoured and the cut is
+// always marked.
+func (m *Model) renderHelpBar(bindings []key.Binding, limit int) string {
 	h := m.help
 	h.Width = 0 // The loop below owns the width.
 
 	view := h.ShortHelpView(bindings)
-	limit := m.helpBarWidth()
 	if limit <= 0 || lipgloss.Width(view)+2 <= limit {
 		return view
 	}

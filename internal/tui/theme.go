@@ -66,11 +66,13 @@ func DefaultTheme() Theme {
 // hands the terminal's background to the program as a message, so the whole
 // set has to be rebuildable mid-run.
 type styles struct {
-	// Panels. The focused one differs in shape as well as colour: a thick
+	// Panes. The focused one differs in shape as well as colour: a thick
 	// border survives NO_COLOR and a 16-colour terminal, where the accent
 	// alone would not.
-	paneFocused lipgloss.Style
-	pane        lipgloss.Style
+	paneBorder        lipgloss.Style
+	paneBorderFocused lipgloss.Style
+	paneTitle         lipgloss.Style
+	paneTitleFocused  lipgloss.Style
 
 	// Text.
 	head    lipgloss.Style
@@ -81,20 +83,25 @@ type styles struct {
 	label   lipgloss.Style
 	value   lipgloss.Style
 
-	// Status bar. Every segment carries the bar's background: a nested style
+	// Header bar. Every segment carries the bar's background: a nested style
 	// ends with a reset, so a segment without one drops the background for the
 	// rest of the line.
-	statusBar        lipgloss.Style
-	statusBarFill    lipgloss.Style
-	statusBarTitle   lipgloss.Style
-	statusBarAccent  lipgloss.Style
-	statusBarInfo    lipgloss.Style
-	statusBarSuccess lipgloss.Style
-	statusBarWarn    lipgloss.Style
-	statusBarError   lipgloss.Style
+	headerBar    lipgloss.Style
+	headerFill   lipgloss.Style
+	headerTitle  lipgloss.Style
+	headerAccent lipgloss.Style
+	headerDim    lipgloss.Style
+	tabActive    lipgloss.Style
+	tabIdle      lipgloss.Style
+	tabCount     lipgloss.Style
 
-	// listHeader titles a list that has no section card of its own.
-	listHeader lipgloss.Style
+	// The footer's toast, which sits on the terminal's own background rather
+	// than on a bar of its own.
+	toastInfo    lipgloss.Style
+	toastSuccess lipgloss.Style
+	toastWarn    lipgloss.Style
+	toastError   lipgloss.Style
+	toastAccent  lipgloss.Style
 
 	// Modals. Modal text carries the modal's own background for the same
 	// reason the status bar's does.
@@ -115,17 +122,14 @@ type styles struct {
 	idleButton    lipgloss.Style
 
 	// Sections and their contents.
-	sectionLabel        lipgloss.Style
-	sectionLabelFocused lipgloss.Style
-	sectionCountLabel   lipgloss.Style
-	timerDisplay        lipgloss.Style
-	timerLabel          lipgloss.Style
-	progressFilled      lipgloss.Style
-	progressEmpty       lipgloss.Style
-	statsBarFilled      lipgloss.Style
-	statsBarEmpty       lipgloss.Style
-	goldBar             lipgloss.Style
-	oliveBar            lipgloss.Style
+	timerDisplay   lipgloss.Style
+	timerLabel     lipgloss.Style
+	progressFilled lipgloss.Style
+	progressEmpty  lipgloss.Style
+	statsBarFilled lipgloss.Style
+	statsBarEmpty  lipgloss.Style
+	goldBar        lipgloss.Style
+	oliveBar       lipgloss.Style
 
 	// Text inputs and the spinner.
 	inputPrompt lipgloss.Style
@@ -151,16 +155,14 @@ type styles struct {
 
 // newStyles derives every style from th. It is called once per Model.
 func newStyles(th Theme) styles {
-	statusBarFill := lipgloss.NewStyle().Background(th.Surface)
+	headerFill := lipgloss.NewStyle().Background(th.Surface)
 	modalBg := lipgloss.NewStyle().Background(th.Surface)
 
 	return styles{
-		paneFocused: lipgloss.NewStyle().
-			Border(lipgloss.ThickBorder()).
-			BorderForeground(th.BorderFocused),
-		pane: lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(th.Border),
+		paneBorder:        lipgloss.NewStyle().Foreground(th.Border),
+		paneBorderFocused: lipgloss.NewStyle().Foreground(th.BorderFocused),
+		paneTitle:         lipgloss.NewStyle().Bold(true).Foreground(th.TextMuted),
+		paneTitleFocused:  lipgloss.NewStyle().Bold(true).Foreground(th.Accent),
 
 		head:    lipgloss.NewStyle().Bold(true).Foreground(th.Heading),
 		dim:     lipgloss.NewStyle().Foreground(th.TextDim),
@@ -170,23 +172,22 @@ func newStyles(th Theme) styles {
 		label:   lipgloss.NewStyle().Foreground(th.TextDim).Bold(true),
 		value:   lipgloss.NewStyle().Foreground(th.Text),
 
-		statusBar: lipgloss.NewStyle().
+		headerBar: lipgloss.NewStyle().
 			Background(th.Surface).
-			Foreground(th.Text).
-			Padding(0, 1),
-		statusBarFill:    statusBarFill,
-		statusBarTitle:   statusBarFill.Bold(true).Foreground(th.Heading),
-		statusBarAccent:  statusBarFill.Bold(true).Foreground(th.Accent),
-		statusBarInfo:    statusBarFill.Foreground(th.Text),
-		statusBarSuccess: statusBarFill.Foreground(th.Success),
-		statusBarWarn:    statusBarFill.Foreground(th.Warning),
-		statusBarError:   statusBarFill.Bold(true).Foreground(th.Error),
+			Foreground(th.Text),
+		headerFill:   headerFill,
+		headerTitle:  headerFill.Bold(true).Foreground(th.Heading),
+		headerAccent: headerFill.Bold(true).Foreground(th.Accent),
+		headerDim:    headerFill.Foreground(th.TextDim),
+		tabActive:    headerFill.Bold(true).Foreground(th.Accent),
+		tabIdle:      headerFill.Foreground(th.TextMuted),
+		tabCount:     headerFill.Foreground(th.TextDim),
 
-		listHeader: lipgloss.NewStyle().
-			Bold(true).
-			Foreground(th.Heading).
-			Background(th.Surface).
-			Padding(0, 1),
+		toastInfo:    lipgloss.NewStyle().Foreground(th.Text),
+		toastSuccess: lipgloss.NewStyle().Foreground(th.Success),
+		toastWarn:    lipgloss.NewStyle().Foreground(th.Warning),
+		toastError:   lipgloss.NewStyle().Bold(true).Foreground(th.Error),
+		toastAccent:  lipgloss.NewStyle().Bold(true).Foreground(th.Accent),
 
 		helpModal: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
@@ -219,16 +220,6 @@ func newStyles(th Theme) styles {
 			Background(th.Surface).
 			Padding(0, 2),
 
-		sectionLabel: lipgloss.NewStyle().
-			Bold(true).
-			Foreground(th.TextMuted).
-			Padding(0, 0, 0, 1),
-		sectionLabelFocused: lipgloss.NewStyle().
-			Bold(true).
-			Foreground(th.Accent).
-			Padding(0, 0, 0, 1),
-		sectionCountLabel: lipgloss.NewStyle().
-			Foreground(th.TextDim),
 		timerDisplay: lipgloss.NewStyle().
 			Bold(true).
 			Foreground(th.Heading),
