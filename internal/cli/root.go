@@ -34,7 +34,11 @@ func newRootCmd(version string) *cobra.Command {
 			// (or, for `config edit`, to tolerate), so only the theme value
 			// itself is checked here.
 			if cfg, err := config.Load(); err == nil {
-				return tui.ApplyThemeSetting(cfg.Theme)
+				// `oku config theme` is how a bad value is fixed, so it is
+				// not held up by one: it validates the name it is given.
+				if err := tui.ApplyThemeSetting(cfg.Theme); err != nil && !isConfigThemeCmd(cmd) {
+					return err
+				}
 			}
 			return nil
 		},

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -170,4 +171,53 @@ func EnsureConfigDir() error {
 		return err
 	}
 	return os.MkdirAll(filepath.Dir(path), 0o755)
+}
+
+// SetTheme writes the `theme` key to the config file. The file is rewritten
+// line by line rather than re-encoded from a Config, so a hand-written config
+// keeps its comments, its key order and any key this build does not know
+// about. name is one of the values the TUI accepts, validated by the caller.
+func SetTheme(name string) error {
+	if err := EnsureConfigDir(); err != nil {
+		return err
+	}
+	path, err := FilePath()
+	if err != nil {
+		return err
+	}
+	existing, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.WriteFile(path, []byte(setKey(string(existing), "theme", name)), 0o644)
+}
+
+// setKey replaces the value of a top-level key in a TOML document, or appends
+// the key when the document does not set it. Only the config's own flat
+// `key = "value"` shape is handled, which is the whole of oku's config: a key
+// inside a table would need the table tracked, and there are none.
+func setKey(doc, key, value string) string {
+	assignment := fmt.Sprintf("%s = %q", key, value)
+
+	lines := strings.Split(doc, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// A commented-out key is left alone: it is documentation, and the
+		// real assignment goes after it.
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		name, _, ok := strings.Cut(trimmed, "=")
+		if !ok || strings.TrimSpace(name) != key {
+			continue
+		}
+		lines[i] = assignment
+		return strings.Join(lines, "\n")
+	}
+
+	out := strings.TrimRight(doc, "\n")
+	if out != "" {
+		out += "\n"
+	}
+	return out + assignment + "\n"
 }
