@@ -66,7 +66,7 @@ func outStyles() {
 		} else if isInteractiveTerminal(os.Stdin) && isInteractiveTerminal(os.Stdout) {
 			isDark = lipgloss.HasDarkBackground(os.Stdin, os.Stdout)
 		}
-		applyOutputTheme(tui.NewTheme(isDark))
+		applyOutputTheme(tui.ActiveTheme(isDark))
 	})
 }
 
