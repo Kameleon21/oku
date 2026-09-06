@@ -1,104 +1,114 @@
 # Oku
 
-[![Contributors](https://img.shields.io/github/contributors/Kameleon21/oku)](https://github.com/Kameleon21/oku/graphs/contributors)
+<p align="center">
+  <img src="docs/assets/mascot-page-spirit.png" width="220" alt="Oku mascot: an ivory origami page spirit with vermilion folds">
+</p>
 
-Terminal companion for [Hardcover](https://hardcover.app): browse your shelves, search books, and track reading — all without leaving the terminal.
+[![Release](https://img.shields.io/github/v/release/Kameleon21/oku?style=flat)](https://github.com/Kameleon21/oku/releases/latest)
+[![Stars](https://img.shields.io/github/stars/Kameleon21/oku?style=flat)](https://github.com/Kameleon21/oku/stargazers)
+[![Contributors](https://img.shields.io/github/contributors/Kameleon21/oku?style=flat)](https://github.com/Kameleon21/oku/graphs/contributors)
 
-![Oku demo flow](./oku-demo.gif)
+Your [Hardcover](https://hardcover.app) library in your terminal. Browse your shelves, find your next book, and track your reading with a keyboard-driven dashboard or quick CLI commands.
 
-## Features
+![Oku dashboard, sample reading shelves, statistics, and timer picker](oku-demo.gif)
 
-- Full TUI dashboard with vim-style navigation (`h/j/k/l`)
-- CLI for scripting and quick actions
-- Search by book, author, or genre
-- Reading stats pulled from Hardcover: yearly summary, goal progress, activity heatmap, ratings and genre breakdowns
-- Reading timer to log sessions
-- Local SQLite cache with auto-refresh
+*The recording uses fictional books and sample reading data. [Recording instructions](docs/demo/README.md).*
 
-## Install
+## Install and run
 
-macOS (Homebrew cask):
+On macOS, install with Homebrew:
 
-```bash
+```sh
 brew tap Kameleon21/oku
 brew install --cask oku
 ```
 
-Linux / Windows:
+For Linux and Windows, download and extract a prebuilt archive from
+[GitHub Releases](https://github.com/Kameleon21/oku/releases/latest) and add the
+`oku` binary (`oku.exe` on Windows) to your `PATH`.
 
-- Download a prebuilt binary from [GitHub Releases](https://github.com/Kameleon21/oku/releases/latest).
-- Or install from source with Go:
+Alternatively, install from source with **Go 1.25.7 or later**:
 
-```bash
+```sh
 go install github.com/Kameleon21/oku/cmd/oku@latest
 ```
 
-Development branch (latest features):
+Make sure Go's binary directory (usually `~/go/bin`) is on your `PATH`.
+Run `oku --version` to check your version.
 
-```bash
-go install github.com/Kameleon21/oku/cmd/oku@develop
+### Connect Hardcover
+
+Create an account at [hardcover.app](https://hardcover.app), then copy your API
+token from [Account Settings](https://hardcover.app/account/api).
+
+```sh
+oku auth set-token  # Save your Hardcover API token
+oku sync            # Pull your library into the local cache
+oku                 # Launch the dashboard
 ```
 
-## Getting Started
+Your token is stored in the system keychain. You can also set `HARDCOVER_TOKEN`,
+which takes priority over the saved token.
 
-Oku connects to [Hardcover](https://hardcover.app), a book tracking platform. You'll need a free account and an API token.
+## Everyday use
 
-1. Create a free account at [hardcover.app](https://hardcover.app)
-2. Go to [Account Settings](https://hardcover.app/account/api) to find your API token
-3. Run the setup:
+Browse reading lists, search by book, author, or genre, and update your progress
+without leaving the terminal. The dashboard also shows your Hardcover reading
+goal, yearly summary, activity heatmap, ratings, and genre breakdowns.
 
-```bash
-# Save your Hardcover API token
-oku auth set-token
-
-# Pull your library to local cache
-oku sync
-
-# Launch the TUI
-oku
+```sh
+oku reading                          # Currently reading
+oku finished                         # Finished books
+oku search "Ursula K. Le Guin" --mode author
+oku update --book 123 --page +10      # Add 10 pages to a book's progress
+oku stats                            # Reading stats and activity heatmap
+oku sync                             # Refresh cached Hardcover data
 ```
 
-Your token is stored in the system keychain. You can also set `HARDCOVER_TOKEN` as an environment variable.
+Replace `123` with a book ID from your library. You can omit `--book` when there
+is exactly one active book. `--page` accepts an absolute page number or a relative
+change such as `+10` or `-5`.
 
-## Usage
+Use `--json` on commands that support structured output, such as
+`oku reading --json`. Set `--view compact|default|verbose` to adjust output
+density. Run `oku --help` or `oku <command> --help` for all commands and flags.
 
-```text
-oku                    Launch TUI dashboard
-oku tui                Launch TUI dashboard
+### Dashboard controls
 
-oku search <query>     Search books (--mode book|author|genre)
-oku now                Show current read
-oku reading            Show reading list
-oku update --page <N>  Update page progress
-oku stats              Show reading stats and activity heatmap
+Launch with `oku` or `oku tui`. Navigation uses vim-style keys; arrow keys also work.
 
-oku sync               Refresh all cached data
-oku auth set-token     Set API token
-oku config show        Show configuration
+| Key | What it does |
+| --- | --- |
+| `h` / `l` | Move between panes |
+| `j` / `k` | Navigate lists |
+| `/` | Search |
+| `Enter` | Open details |
+| `+` / `-` | Quick page update |
+| `U` | Undo the last change while its toast is visible |
+| `?` / `q` | Help / quit |
+
+Press `?` for all controls available in the focused section.
+
+### Reading timer
+
+Track time spent reading with local sessions:
+
+```sh
+oku timer start     # Choose a currently reading book
+oku timer status    # Check elapsed time
+oku timer stop      # Save the session
+oku timer stats     # Review reading time
 ```
 
-Use `--json` for JSON output and `--view compact|default|verbose` to control detail level.
+Timer sessions are stored locally, separately from your Hardcover reading stats.
 
-## TUI Navigation
+## Configuration
 
-Oku uses vim-style keybindings throughout. Arrow keys also work.
-
-| Key     | Action                 |
-| ------- | ---------------------- |
-| `h/l`   | Move between panes     |
-| `j/k`   | Navigate lists         |
-| `/`     | Search                 |
-| `Enter` | Open details           |
-| `+/-`   | Quick page update      |
-| `U`     | Undo the last change   |
-| `?`     | Help                   |
-| `q`     | Quit                   |
-
-Status changes and page updates show a toast for a few seconds; press `U` while it is up to put the book back where it was. Press `?` for every key the focused section understands.
-
-## Config
-
-Config lives at `~/.config/oku/config.toml`:
+Run `oku config edit` to open your settings, or `oku config show` to see the
+configuration and data paths. On macOS and Linux, the default configuration file
+is `~/.config/oku/config.toml`; on Windows it is `%AppData%\oku\config.toml`.
+`XDG_CONFIG_HOME` overrides the configuration directory. Existing Windows
+installations may continue using the legacy `~/.config/oku/config.toml` file.
 
 ```toml
 editor = "nvim"
@@ -107,34 +117,33 @@ default_list = "reading"
 theme = "auto" # auto | dark | light
 ```
 
-The TUI and the coloured CLI output adapt their palette to a light or dark terminal on their own. Set `theme` when your terminal does not report its background (or reports it wrongly); it applies to every command. `NO_COLOR` is honoured: focus is also shown by a thick border and a `▸` marker, not by colour alone.
+The dashboard and colored CLI output adapt to light and dark terminals.
+Set `theme` explicitly if your terminal reports its background incorrectly.
+`NO_COLOR` is supported; borders and a `▸` marker also indicate focus.
 
-## Development
+Oku caches library data in SQLite and refreshes it automatically. Run `oku sync`
+for a full refresh, or use `oku reading --refresh` to refresh a reading list.
 
-```bash
+## Contributing
+
+Use the Go version specified in [go.mod](go.mod), then run:
+
+```sh
 go test ./...
+go vet ./...
 go build ./cmd/oku
 ```
 
-### Branch and release flow
+Open feature pull requests against `develop`. See the
+[development and release guide](docs/development.md) for the branch workflow and
+release steps. To try the development version:
 
-Feature branches are opened as pull requests into `develop` (CI runs `go test ./...` on every PR). `Master` is the release branch and keeps the released history.
-
-To release:
-
-```bash
-git checkout Master
-git pull origin Master
-git merge origin/develop
-go test ./...
-goreleaser release --snapshot --clean
-git tag vX.Y.Z
-git push origin Master
-git push origin vX.Y.Z
+```sh
+go install github.com/Kameleon21/oku/cmd/oku@develop
 ```
 
-Pushing a `v*` tag runs the GoReleaser workflow, publishes the GitHub release, and updates the Homebrew cask.
-
-## Contributors
-
 [![Contributors](https://contrib.rocks/image?repo=Kameleon21/oku)](https://github.com/Kameleon21/oku/graphs/contributors)
+
+## License
+
+[MIT](LICENSE).
