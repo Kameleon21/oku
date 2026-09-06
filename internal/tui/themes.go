@@ -22,7 +22,7 @@ import (
 // a handful: a scheme's own "comment" grey is sometimes too dark to serve as
 // TextDim on the scheme's own panel background, and the nearest palette
 // colour that clears the contrast floor is used instead (see
-// TestThemeContrast).
+// TestNamedThemeRoles, which holds every palette to those floors).
 
 // NamedTheme is one palette under the name the `theme` config key selects it
 // with.
@@ -46,8 +46,9 @@ var namedThemes = []NamedTheme{
 	// nord13 #EBCB8B, nord14 #A3BE8C.
 	//
 	// Deviation: nord3 #4C566A, the palette's comment grey, reaches only
-	// 1.7:1 on nord1, so TextDim takes nord4 #D8DEE9 and nord3 stays where
-	// it reads — the empty end of the activity ramp.
+	// 1.7:1 on nord1, so the dim role takes the Frost nord9 instead — three
+	// near-white Snow Storm greys would be no ramp at all — and nord3 stays
+	// where it reads, at the empty end of the activity ramp.
 	{
 		Name:   "nord",
 		IsDark: true,
@@ -55,8 +56,8 @@ var namedThemes = []NamedTheme{
 			Accent:        hex("#88C0D0"), // nord8, Frost's primary
 			Heading:       hex("#8FBCBB"), // nord7
 			Text:          hex("#ECEFF4"), // nord6
-			TextMuted:     hex("#E5E9F0"), // nord5
-			TextDim:       hex("#D8DEE9"), // nord4
+			TextMuted:     hex("#D8DEE9"), // nord4
+			TextDim:       hex("#81A1C1"), // nord9
 			Border:        hex("#434C5E"), // nord2
 			BorderFocused: hex("#88C0D0"), // nord8
 			Surface:       hex("#3B4252"), // nord1
