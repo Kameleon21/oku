@@ -312,7 +312,7 @@ func TestSearchResultOpensInTheDetailPane(t *testing.T) {
 		s := searchOf(m)
 		s.results = []model.SearchResult{{ID: 1, Title: "Dune", Authors: []string{"Frank Herbert"}, Pages: 412, Slug: "dune"}}
 		s.rebuildResults()
-		s.sub = searchSubResults
+		s.focusResults()
 
 		send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 		if m.focus != focusDetail {
@@ -394,8 +394,7 @@ func TestDetailEmptyStates(t *testing.T) {
 // not owned by a text field, and are typed where it is.
 func TestTabKeysNeverReachTheSearchInput(t *testing.T) {
 	states := map[string]func(*searchSection){
-		"normal mode": func(s *searchSection) { s.sub, s.mode = searchSubInput, searchModeNormal },
-		"results":     func(s *searchSection) { s.sub = searchSubResults },
+		"results": func(s *searchSection) { s.focusResults() },
 	}
 	want := map[rune]tab{'1': tabReading, '2': tabOku, '3': tabSearch, '4': tabStats, '5': tabTimer}
 
@@ -419,7 +418,7 @@ func TestTabKeysNeverReachTheSearchInput(t *testing.T) {
 		}
 	}
 
-	// In insert mode the input owns the keyboard, and a digit is a digit.
+	// With the input focused it owns the keyboard, and a digit is a digit.
 	m := renderedDashboard(120, 40)
 	m.setTab(tabSearch)
 	searchOf(m).focusInput()
@@ -428,7 +427,7 @@ func TestTabKeysNeverReachTheSearchInput(t *testing.T) {
 		t.Fatalf("a digit typed into the input should not switch tabs, tab = %v", m.tab)
 	}
 	if got := searchOf(m).input.Value(); got != "1" {
-		t.Fatalf("insert mode should type the digit, input = %q", got)
+		t.Fatalf("a focused input should type the digit, input = %q", got)
 	}
 }
 

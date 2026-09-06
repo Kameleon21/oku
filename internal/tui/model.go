@@ -52,8 +52,11 @@ type Model struct {
 	// focus says which of its two panes takes the keys.
 	sections [tabCount]section
 	tab      tab
-	focus    focus
-	detail   *detailPane
+	// prevTab is the tab the current one was reached from, which Esc in the
+	// search input goes back to.
+	prevTab tab
+	focus   focus
+	detail  *detailPane
 
 	// modals is the stack of overlays; the top one takes the keys.
 	modals []modal
@@ -254,6 +257,14 @@ func (m *Model) focusSectionInput() tea.Cmd {
 	return cmd
 }
 
+// openEmptySectionInput puts the cursor in the section's input when the
+// section has nothing to show yet, for the one section that has one.
+func (m *Model) openEmptySectionInput() {
+	if s, ok := m.section().(interface{ focusInputIfEmpty() }); ok {
+		s.focusInputIfEmpty()
+	}
+}
+
 // updateCommon handles every message that is not a key press, whatever has
 // focus, then broadcasts it to the sections and the modals.
 func (m *Model) updateCommon(msg tea.Msg) tea.Cmd {
@@ -437,10 +448,20 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 		return m.showToast(r.level, r.text)
 
 	case reqSwitchTab:
-		if r.abs {
-			return m.setTab(r.to)
+		switch {
+		case r.back:
+			return m.setTab(m.backTab())
+		case r.abs:
+			cmd := m.setTab(r.to)
+			// A tab asked for by its own number is one the reader means to
+			// use: a section whose pane has nothing to show yet puts the
+			// cursor where they are about to type. Walking the strip never
+			// does — see searchFocus.
+			m.openEmptySectionInput()
+			return cmd
+		default:
+			return m.setTab((m.tab + tab(r.step) + tabCount) % tabCount)
 		}
-		return m.setTab((m.tab + tab(r.step) + tabCount) % tabCount)
 
 	case reqOpenModal:
 		m.push(r.m)
@@ -631,11 +652,21 @@ func (m *Model) setTab(t tab) tea.Cmd {
 	if t == m.tab {
 		return nil
 	}
+	m.prevTab = m.tab
 	m.section().Blur()
 	m.tab = t
 	m.focus = focusContent
 	m.section().Focus()
 	return m.resize()
+}
+
+// backTab is where Esc goes from a tab that was reached by name: the one it
+// was reached from, or the first tab when that is this one.
+func (m *Model) backTab() tab {
+	if m.prevTab == m.tab {
+		return tabReading
+	}
+	return m.prevTab
 }
 
 // setFocus moves the keyboard between the two panes. On a terminal too

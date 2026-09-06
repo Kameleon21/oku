@@ -206,11 +206,13 @@ type reqOpenModal struct{ m modal }
 // reqHelp opens the help modal over whatever has focus.
 type reqHelp struct{}
 
-// reqSwitchTab shows another tab: to when abs is set, otherwise step tabs
-// along from the current one, wrapping.
+// reqSwitchTab shows another tab: to when abs is set, the one the reader
+// came from when back is, otherwise step tabs along from the current one,
+// wrapping.
 type reqSwitchTab struct {
 	to   tab
 	abs  bool
+	back bool
 	step int
 }
 

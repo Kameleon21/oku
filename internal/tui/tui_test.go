@@ -29,27 +29,6 @@ func openReview(m *Model, book model.UserBook) *reviewModal {
 	return m.topModal().(*reviewModal)
 }
 
-func TestSearchInputNormalModeNavigation(t *testing.T) {
-	m := newTestModel()
-	m.setTab(tabSearch)
-	searchOf(m).sub = searchSubInput
-	searchOf(m).mode = searchModeNormal
-	searchOf(m).input.SetValue("dune")
-
-	// Press 'k' (up) → should go to previous section (tabOku).
-	send(t, m, runeKey('k'))
-
-	if m.tab != tabOku {
-		t.Fatalf("section after k = %v, want %v", m.tab, tabOku)
-	}
-	if searchOf(m).input.Value() != "dune" {
-		t.Fatalf("search input changed in normal mode, got %q", searchOf(m).input.Value())
-	}
-	if searchOf(m).mode != searchModeNormal {
-		t.Fatalf("search mode = %v, want normal", searchOf(m).mode)
-	}
-}
-
 func TestLoadLibraryCmdWithNilAppReturnsError(t *testing.T) {
 	cmd := loadLibraryCmd(context.Background(), nil, false)
 	if cmd == nil {
@@ -103,33 +82,6 @@ func TestStaleCachedLibraryRendersBeforeRefresh(t *testing.T) {
 	}
 }
 
-func TestSearchInputInsertModeTypingAndEsc(t *testing.T) {
-	m := newTestModel()
-	m.setTab(tabSearch)
-	searchOf(m).sub = searchSubInput
-	searchOf(m).enterInsertMode()
-
-	m.Update(runeKey('h'))
-
-	if m.tab != tabSearch {
-		t.Fatalf("section after typing in insert mode = %v, want %v", m.tab, tabSearch)
-	}
-	if searchOf(m).input.Value() != "h" {
-		t.Fatalf("search input value = %q, want %q", searchOf(m).input.Value(), "h")
-	}
-	if searchOf(m).mode != searchModeInsert {
-		t.Fatalf("search mode after typing = %v, want insert", searchOf(m).mode)
-	}
-
-	m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	if searchOf(m).mode != searchModeNormal {
-		t.Fatalf("search mode after esc = %v, want normal", searchOf(m).mode)
-	}
-	if m.tab != tabSearch {
-		t.Fatalf("section after esc = %v, want %v", m.tab, tabSearch)
-	}
-}
-
 func TestLibrarySectionVimNavigation(t *testing.T) {
 	m := newTestModel()
 	m.setTab(tabReading)
@@ -145,21 +97,10 @@ func TestLibrarySectionVimNavigation(t *testing.T) {
 	}
 }
 
-func TestSearchInputNormalModeEscGoesBack(t *testing.T) {
-	m := newTestModel()
-	m.setTab(tabSearch)
-	searchOf(m).sub = searchSubInput
-	searchOf(m).mode = searchModeNormal
-
-	send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
-	if m.tab != tabOku {
-		t.Fatalf("section after Esc = %v, want %v", m.tab, tabOku)
-	}
-}
-
 func TestSubmitSearchSetsLoadingState(t *testing.T) {
 	m := newTestModel()
 	m.setTab(tabSearch)
+	searchOf(m).focusInput()
 	searchOf(m).input.SetValue("dune")
 	searchOf(m).queryMode = model.SearchModeAuthor
 
@@ -174,8 +115,8 @@ func TestSubmitSearchSetsLoadingState(t *testing.T) {
 	if searchOf(m).loadingQuery != "dune" {
 		t.Fatalf("loadingQuery = %q, want dune", searchOf(m).loadingQuery)
 	}
-	if !strings.Contains(searchOf(m).list.Title, "loading") {
-		t.Fatalf("search list title %q does not include loading state", searchOf(m).list.Title)
+	if got := stripANSI(searchOf(m).controlRow(60)); !strings.Contains(got, "searching") {
+		t.Fatalf("control row %q does not say a search is running", got)
 	}
 	if !strings.Contains(strings.ToLower(m.toast.text), "searching for") {
 		t.Fatalf("toast %q does not include searching feedback", m.toast.text)
@@ -185,6 +126,7 @@ func TestSubmitSearchSetsLoadingState(t *testing.T) {
 func TestSubmitSearchGuardAndEmptyValidation(t *testing.T) {
 	m := newTestModel()
 	m.setTab(tabSearch)
+	searchOf(m).focusInput()
 	searchOf(m).loading = true
 	searchOf(m).input.SetValue("dune")
 	if cmd := send(t, m, tea.KeyMsg{Type: tea.KeyEnter}); cmd == nil {
@@ -209,7 +151,7 @@ func TestSearchLoadedMsgTransitionsToResults(t *testing.T) {
 	m.inflight = 1
 	m.setTab(tabSearch)
 	searchOf(m).loading = true
-	searchOf(m).sub = searchSubInput
+	searchOf(m).focusInput()
 	searchOf(m).queryMode = model.SearchModeAuthor
 
 	send(t, m, searchLoadedMsg{
@@ -222,8 +164,8 @@ func TestSearchLoadedMsgTransitionsToResults(t *testing.T) {
 		t.Fatalf("loading flags after response = loading:%v searchLoading:%v, want false/false", m.isLoading(), searchOf(m).loading)
 	}
 
-	if searchOf(m).sub != searchSubResults {
-		t.Fatalf("searchSub = %v, want %v", searchOf(m).sub, searchSubResults)
+	if searchOf(m).focus != resultsFocused {
+		t.Fatalf("search focus = %v, want the results", searchOf(m).focus)
 	}
 	if searchOf(m).lastQuery != "dune" {
 		t.Fatalf("lastQuery = %q, want dune", searchOf(m).lastQuery)
@@ -232,8 +174,8 @@ func TestSearchLoadedMsgTransitionsToResults(t *testing.T) {
 		t.Fatalf("lastMode = %q, want %q", searchOf(m).lastMode, model.SearchModeAuthor)
 	}
 
-	if searchOf(m).list.Title != "AUTHOR Results (1)" {
-		t.Fatalf("searchList title = %q, want %q", searchOf(m).list.Title, "AUTHOR Results (1)")
+	if got := stripANSI(searchOf(m).controlRow(60)); !strings.Contains(got, "1 results") {
+		t.Fatalf("control row = %q, want it to count the results", got)
 	}
 	if !strings.Contains(m.toast.text, "loaded 1 results") {
 		t.Fatalf("toast = %q, expected loaded-count feedback", m.toast.text)
@@ -250,8 +192,8 @@ func TestSlashSearchPreservesExistingQuery(t *testing.T) {
 	if m.tab != tabSearch {
 		t.Fatalf("section after / = %v, want %v", m.tab, tabSearch)
 	}
-	if searchOf(m).sub != searchSubInput {
-		t.Fatalf("searchSub after / = %v, want %v", searchOf(m).sub, searchSubInput)
+	if searchOf(m).focus != inputFocused {
+		t.Fatalf("search focus after / = %v, want the input", searchOf(m).focus)
 	}
 	if searchOf(m).input.Value() != "dune" {
 		t.Fatalf("search query after / = %q, want %q", searchOf(m).input.Value(), "dune")
@@ -273,27 +215,6 @@ func TestTimerStartOpensBookSelectionFirst(t *testing.T) {
 	}
 	if timerPickerOf(m) == nil {
 		t.Fatal("the picker should be up after pressing t")
-	}
-}
-
-func TestSearchResultsKStaysInResults(t *testing.T) {
-	m := newTestModel()
-	m.setTab(tabSearch)
-	searchOf(m).sub = searchSubResults
-	searchOf(m).mode = searchModeNormal
-	searchOf(m).list.SetItems([]list.Item{
-		searchResultItem{result: model.SearchResult{ID: 1, Title: "Dune"}},
-		searchResultItem{result: model.SearchResult{ID: 2, Title: "Dune Messiah"}},
-	})
-	searchOf(m).list.Select(1)
-
-	m.Update(runeKey('k'))
-
-	if searchOf(m).sub != searchSubResults {
-		t.Fatalf("searchSub after k = %v, want %v", searchOf(m).sub, searchSubResults)
-	}
-	if m.tab != tabSearch {
-		t.Fatalf("section after k = %v, want %v", m.tab, tabSearch)
 	}
 }
 
@@ -430,8 +351,7 @@ func TestAsyncResultsAreAppliedInEveryMode(t *testing.T) {
 			m := newTestModel()
 			m.shared.loaded = true
 			m.setTab(tabSearch)
-			searchOf(m).sub = searchSubInput
-			searchOf(m).enterInsertMode()
+			searchOf(m).focusInput()
 			searchOf(m).input.SetValue("dune")
 			if cmd := send(t, m, tea.KeyMsg{Type: tea.KeyEnter}); cmd == nil {
 				t.Fatal("submitting the query should start a search")
@@ -459,11 +379,8 @@ func TestAsyncResultsAreAppliedInEveryMode(t *testing.T) {
 			if m.topModal() != top {
 				t.Fatalf("top modal = %T, want %T: an async result must not close a modal", m.topModal(), top)
 			}
-			if searchOf(m).sub != searchSubResults {
-				t.Fatalf("searchSub = %v, want %v", searchOf(m).sub, searchSubResults)
-			}
-			if searchOf(m).mode != searchModeNormal {
-				t.Fatal("results should leave search insert mode so j/k scroll them")
+			if searchOf(m).focus != resultsFocused {
+				t.Fatalf("search focus = %v, want the results, so j/k move through them", searchOf(m).focus)
 			}
 			if page := pageModalOf(m); page != nil && page.input.Value() != "120" {
 				t.Fatalf("page input = %q, want it untouched", page.input.Value())
@@ -475,6 +392,7 @@ func TestAsyncResultsAreAppliedInEveryMode(t *testing.T) {
 func TestStaleSearchResultIsIgnored(t *testing.T) {
 	m := newTestModel()
 	m.setTab(tabSearch)
+	searchOf(m).focusInput()
 	searchOf(m).input.SetValue("dune")
 	if cmd := send(t, m, tea.KeyMsg{Type: tea.KeyEnter}); cmd == nil {
 		t.Fatal("the first query should start a search")
@@ -535,8 +453,8 @@ func TestSearchResultKeepsUserSelectedMode(t *testing.T) {
 	if searchOf(m).queryMode != model.SearchModeGenre {
 		t.Fatalf("queryMode = %q, want the mode the user picked (%q)", searchOf(m).queryMode, model.SearchModeGenre)
 	}
-	if searchOf(m).list.Title != "BOOK Results (1)" {
-		t.Fatalf("searchList title = %q, want the mode the results came from", searchOf(m).list.Title)
+	if got := stripANSI(searchOf(m).controlRow(60)); !strings.Contains(got, "[Genre]") {
+		t.Fatalf("control row = %q, want the mode the user picked marked as the active one", got)
 	}
 }
 
@@ -989,22 +907,6 @@ func TestLibraryReloadRunsTheSetItemsCmd(t *testing.T) {
 	}
 }
 
-func TestSearchInsertModeTypesQuestionMark(t *testing.T) {
-	m := newTestModel()
-	m.setTab(tabSearch)
-	searchOf(m).sub = searchSubInput
-	searchOf(m).enterInsertMode()
-
-	m.Update(runeKey('?'))
-
-	if m.topModal() != nil {
-		t.Fatal("? should be typed in insert mode, not open help")
-	}
-	if searchOf(m).input.Value() != "?" {
-		t.Fatalf("search input = %q, want ?", searchOf(m).input.Value())
-	}
-}
-
 func TestReviewModalIsReadOnlyWhileSaving(t *testing.T) {
 	m := newTestModel()
 	m.shared.loaded = true
@@ -1038,6 +940,7 @@ func TestReviewModalIsReadOnlyWhileSaving(t *testing.T) {
 func TestSearchErrorClearsLoadingTitle(t *testing.T) {
 	m := newTestModel()
 	m.setTab(tabSearch)
+	searchOf(m).focusInput()
 	searchOf(m).input.SetValue("dune")
 	if cmd := send(t, m, tea.KeyMsg{Type: tea.KeyEnter}); cmd == nil {
 		t.Fatal("submitting the query should start a search")
@@ -1050,8 +953,8 @@ func TestSearchErrorClearsLoadingTitle(t *testing.T) {
 		err:   errors.New("network down"),
 	})
 
-	if strings.Contains(searchOf(m).list.Title, "loading") {
-		t.Fatalf("searchList title = %q, want the loading state cleared", searchOf(m).list.Title)
+	if got := stripANSI(searchOf(m).controlRow(60)); strings.Contains(got, "searching") {
+		t.Fatalf("control row = %q, want the search over", got)
 	}
 	if searchOf(m).loading {
 		t.Fatal("a failed search should clear searchLoading")
@@ -1161,16 +1064,6 @@ func TestHelpHintIsNeverTheHintThatGetsDropped(t *testing.T) {
 		if got := stripANSI(m.footer(m.lay)); !strings.Contains(got, "? help") {
 			t.Fatalf("width %d: %q should always keep the help hint", w, got)
 		}
-	}
-}
-
-func TestSearchInsertModeDoesNotAdvertiseHelp(t *testing.T) {
-	m := renderedDashboard(120, 40)
-	m.setTab(tabSearch)
-	searchOf(m).enterInsertMode()
-
-	if got := stripANSI(m.footer(m.lay)); strings.Contains(got, "? help") {
-		t.Fatalf("help bar = %q, but ? types a literal in insert mode", got)
 	}
 }
 
@@ -1594,42 +1487,6 @@ func TestSecondTimerPressIsGuardedWhileInFlight(t *testing.T) {
 	}
 }
 
-func TestSearchHeaderNamesTheResultsOnScreen(t *testing.T) {
-	m := newTestModel()
-	m.setTab(tabSearch)
-	searchOf(m).input.SetValue("dune")
-	m.inflight = 1
-
-	send(t, m, searchLoadedMsg{
-		results: []model.SearchResult{{ID: 1, Title: "Dune"}, {ID: 2, Title: "Dune Messiah"}},
-		query:   "dune",
-		mode:    model.SearchModeBook,
-		seq:     searchOf(m).seq,
-	})
-	if searchOf(m).list.Title != "BOOK Results (2)" {
-		t.Fatalf("title = %q, want BOOK Results (2)", searchOf(m).list.Title)
-	}
-
-	// Switching the mode does not rename results fetched in the old one.
-	send(t, m, searchOf(m).setQueryMode(model.SearchModeAuthor))
-	if searchOf(m).list.Title != "BOOK Results (2)" {
-		t.Fatalf("title after switching mode = %q, want the results' own mode", searchOf(m).list.Title)
-	}
-
-	// A failed search leaves the previous results, and their count, named.
-	m.inflight = 1
-	searchOf(m).loading = true
-	send(t, m, searchLoadedMsg{
-		query: "dune",
-		mode:  model.SearchModeAuthor,
-		seq:   searchOf(m).seq,
-		err:   errors.New("network down"),
-	})
-	if searchOf(m).list.Title != "BOOK Results (2)" {
-		t.Fatalf("title after a failed search = %q, want the results still on screen", searchOf(m).list.Title)
-	}
-}
-
 func TestThemeResolvesDistinctColoursForLightAndDark(t *testing.T) {
 	withColorProfile(t)
 
@@ -1704,13 +1561,23 @@ func TestApplyThemeSetting(t *testing.T) {
 
 // keyMsgFor turns a binding's key name into the KeyMsg Bubble Tea would send
 // for it.
+// slicesContain reports whether want is one of keys.
+func slicesContain(keys []string, want string) bool {
+	for _, k := range keys {
+		if k == want {
+			return true
+		}
+	}
+	return false
+}
+
 func keyMsgFor(t *testing.T, name string) tea.KeyMsg {
 	t.Helper()
 	for _, kt := range []tea.KeyType{
 		tea.KeyEnter, tea.KeyEsc, tea.KeyTab, tea.KeyShiftTab,
 		tea.KeyUp, tea.KeyDown, tea.KeyLeft, tea.KeyRight,
 		tea.KeyHome, tea.KeyEnd, tea.KeyPgUp, tea.KeyPgDown,
-		tea.KeyCtrlC, tea.KeyCtrlD, tea.KeyCtrlU, tea.KeyCtrlS,
+		tea.KeyCtrlC, tea.KeyCtrlD, tea.KeyCtrlU, tea.KeyCtrlS, tea.KeyCtrlT,
 	} {
 		if (tea.KeyMsg{Type: kt}).String() == name {
 			return tea.KeyMsg{Type: kt}
@@ -1801,22 +1668,16 @@ func TestEveryAdvertisedBindingIsHandled(t *testing.T) {
 		{name: "oku", variants: []func() *Model{inSection(tabOku)}, selfKey: "2"},
 		{name: "reading, detail focused", selfKey: "1",
 			variants: []func() *Model{longReview(tabReading, false), longReview(tabReading, true)}},
-		{name: "search input, normal mode", selfKey: "3", variants: []func() *Model{func() *Model {
+		{name: "search input", variants: []func() *Model{func() *Model {
+			// No selfKey: the input owns the keyboard, so 3 is a digit here
+			// and the tab numbers are not advertised.
 			m := withResults(inSection(tabSearch)())
-			searchOf(m).sub = searchSubInput
-			searchOf(m).enterNormalMode()
-			return m
-		}}},
-		{name: "search input, insert mode", selfKey: "3", variants: []func() *Model{func() *Model {
-			m := withResults(inSection(tabSearch)())
-			searchOf(m).sub = searchSubInput
-			searchOf(m).enterInsertMode()
+			searchOf(m).focusInput()
 			return m
 		}}},
 		{name: "search results", selfKey: "3", variants: []func() *Model{func() *Model {
 			m := withResults(inSection(tabSearch)())
-			searchOf(m).sub = searchSubResults
-			searchOf(m).enterNormalMode()
+			searchOf(m).focusResults()
 			return m
 		}}},
 		{name: "stats", selfKey: "4", variants: []func() *Model{func() *Model {
@@ -1913,12 +1774,15 @@ func helpBody(m *Model) string {
 // teaches the other sections' keys: from Reading it names the search keys,
 // dimmed, after the groups that apply.
 func TestHelpModalListsEveryGroupWithTheActiveOnesFirst(t *testing.T) {
+	// Dimming is the difference between a live key and a dead one, so the
+	// two only render differently with a colour profile to render in.
+	withColorProfile(t)
 	m := renderedDashboard(120, 40)
 	m.setTab(tabReading)
 	body := stripANSI(helpBody(m))
 
 	for _, want := range []string{"Actions", "Navigation", "General", "Confirm", "Review", "Timer", "Data",
-		"insert", "cycle mode", "jump to a tab", "undo the last change", "stop timer"} {
+		"cycle mode", "back to the input", "jump to a tab", "undo the last change", "stop timer"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("help body is missing %q:\n%s", want, body)
 		}
@@ -1935,7 +1799,7 @@ func TestHelpModalListsEveryGroupWithTheActiveOnesFirst(t *testing.T) {
 	if !strings.Contains(raw, live) {
 		t.Fatal("a live key should be drawn in the key style")
 	}
-	if strings.Contains(raw, m.st.modalKey.Width(12).Render("i")) {
+	if strings.Contains(raw, m.st.modalKey.Width(12).Render("m")) {
 		t.Fatal("a key the focus does not understand should not be drawn as live")
 	}
 }
@@ -1948,29 +1812,34 @@ func TestOverloadedKeysMatchTheirHelp(t *testing.T) {
 		m.setTab(tabSearch)
 		searchOf(m).results = []model.SearchResult{{ID: 1, Title: "Dune"}}
 		searchOf(m).rebuildResults()
-		searchOf(m).sub = searchSubResults
-		searchOf(m).enterNormalMode()
+		searchOf(m).focusResults()
 		return m
 	}
 
-	// Over the search results h goes back to the input, so the section hint
-	// must not claim it.
+	// Esc and i go back to the input over the results; h and l keep walking
+	// the strip, as they do in every other tab.
 	m := overResults()
 	k := m.activeKeys()
 	rows := stripANSI(helpBody(m))
+	send(t, m, runeKey('i'))
+	if searchOf(m).focus != inputFocused || m.tab != tabSearch {
+		t.Fatalf("i over the results: focus=%v tab=%v, want the input", searchOf(m).focus, m.tab)
+	}
+	m = overResults()
+	send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if searchOf(m).focus != inputFocused {
+		t.Fatalf("Esc over the results: focus=%v, want the input", searchOf(m).focus)
+	}
+	if !slicesContain(k.PrevSection.Keys(), "h") {
+		t.Fatal("h should still walk the strip over the results")
+	}
+	m = overResults()
 	send(t, m, runeKey('h'))
-	if searchOf(m).sub != searchSubInput || m.tab != tabSearch {
-		t.Fatalf("h over the results: searchSub=%v section=%v, want back to the input", searchOf(m).sub, m.tab)
+	if m.tab != tabOku || searchOf(m).focus != resultsFocused {
+		t.Fatalf("h over the results: tab=%v focus=%v, want the previous tab", m.tab, searchOf(m).focus)
 	}
-	for _, key := range k.PrevSection.Keys() {
-		if key == "h" || key == "left" {
-			t.Fatalf("PrevSection still claims %q over the results", key)
-		}
-	}
-	// The Confirm group (dimmed) still lists "h/l pick a button"; it is the
-	// section row that must not claim h here.
-	if !strings.Contains(rows, "Esc/h") || !strings.Contains(rows, "S-Tab/l") || strings.Contains(rows, "h/l           section") {
-		t.Fatalf("results help should say Esc/h goes back and S-Tab goes to the previous section:\n%s", rows)
+	if !strings.Contains(rows, "Esc/i") || !strings.Contains(rows, "h/l") {
+		t.Fatalf("results help should say Esc/i goes back to the input and h/l walk the strip:\n%s", rows)
 	}
 	m = overResults()
 	m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
@@ -2152,8 +2021,7 @@ func TestUndoNeverStealsALetterFromTheSearchInput(t *testing.T) {
 	m.showUndoToast("Moved 'Dune' to Read", undoAction{op: opStatus, bookID: 1,
 		fromStatus: model.StatusRead, toStatus: model.StatusCurrentlyReading})
 	m.setTab(tabSearch)
-	searchOf(m).sub = searchSubInput
-	searchOf(m).enterInsertMode()
+	searchOf(m).focusInput()
 
 	m.Update(runeKey('U'))
 	if searchOf(m).input.Value() != "U" {

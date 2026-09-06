@@ -1,7 +1,7 @@
  oku   1 Reading 3   2 Oku 3  ▸3 Search   4 Stats   5 Timer                                               synced 2m ago 
 ╭─ Search ─────────────────────────────────────╮┏━ Dune ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-│ [NORMAL] [BOOK] / dune                       │┃ Frank Herbert                                                        ┃
-│ BOOK Results (4)                             │┃                                                                      ┃
+│ / dune                                       │┃ Frank Herbert                                                        ┃
+│ [Title]  Author   Genre            4 results │┃                                                                      ┃
 │                                              │┃ Community    ★ 4.31 (1.2K ratings)                                   ┃
 │ │ Dune (412 pages)                           │┃ Pages        412                                                     ┃
 │ │ ★ 4.31 (1.2K ratings) · Frank Herbert      │┃                                                                      ┃
@@ -37,4 +37,4 @@
 │                                              │┃                                                                      ┃
 │                                              │┃                                                                      ┃
 ╰──────────────────────────────────────────────╯┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
- ? help · j/k scroll · Esc back to list · a add as reading · g/w/f/d status · h/l input/next · z density · Esc back     
+ ? help · j/k scroll · Esc back to list · a add as reading · g/w/f/d status · m cycle mode · Esc/i input · h/l tab …    

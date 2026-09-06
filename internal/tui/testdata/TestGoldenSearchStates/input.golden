@@ -1,7 +1,7 @@
  oku   1 Reading 3   2 Oku 3  ▸3 Search   4 Stats   5 Timer                                               synced 2m ago 
 ┏━ Search ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓╭─ Details ────────────────────────────────────────────────────────────╮
-┃ [INSERT] [BOOK] / dune                       ┃│                                                                      │
-┃ BOOK Results (4)                             ┃│    ____  __ __  __  __                                               │
+┃ / dune                                       ┃│                                                                      │
+┃ [Title]  Author   Genre            4 results ┃│    ____  __ __  __  __                                               │
 ┃                                              ┃│   / __ \/ //_/ / / / /                                               │
 ┃ │ Dune (412 pages)                           ┃│  / / / / ,<   / / / /                                                │
 ┃ │ ★ 4.31 (1.2K ratings) · Frank Herbert      ┃│ / /_/ / /| | / /_/ /                                                 │
@@ -37,4 +37,4 @@
 ┃                                              ┃│                                                                      │
 ┃                                              ┃│                                                                      │
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛╰──────────────────────────────────────────────────────────────────────╯
- ↵ search · Esc normal                                                                                                  
+ ↵ search · C-t cycle mode · ↓ results · Esc back                                                                       

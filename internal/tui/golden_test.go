@@ -68,9 +68,7 @@ func withResults(m *Model) {
 	s.lastQuery, s.lastMode = "dune", "book"
 	s.input.SetValue("dune")
 	s.rebuildResults()
-	s.refreshTitle()
-	s.sub = searchSubResults
-	s.enterNormalMode()
+	s.focusResults()
 }
 
 // withRunningTimer puts a timer in the header.
@@ -106,17 +104,13 @@ func TestGoldenTabs(t *testing.T) {
 	}
 }
 
-// TestGoldenSearchStates covers the two search focuses B2 keeps from today's
-// state machine; PR-C replaces them.
+// TestGoldenSearchStates covers the two states of the Search tab, plus the
+// tab as it is first reached: nothing searched for yet.
 func TestGoldenSearchStates(t *testing.T) {
 	cases := map[string]goldenOpt{
-		"normal": func(m *Model) {
-			s := searchOf(m)
-			s.sub = searchSubInput
-			s.enterNormalMode()
-		},
-		"insert": func(m *Model) { searchOf(m).focusInput() },
-		"empty":  func(*Model) {},
+		"input":   func(m *Model) { searchOf(m).focusInput() },
+		"results": func(m *Model) { searchOf(m).focusResults() },
+		"empty":   func(*Model) {},
 	}
 	for name, opt := range cases {
 		t.Run(name, func(t *testing.T) {
