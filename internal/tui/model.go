@@ -211,7 +211,7 @@ func (m *Model) rootKey(msg tea.KeyMsg, k keyMap) (tea.Cmd, bool) {
 		return request(reqUndo{}), true
 	case key.Matches(msg, k.TabJump):
 		if t, ok := tabForKey(msg.String()); ok {
-			return m.setTab(t), true
+			return request(reqSwitchTab{to: t, abs: true}), true
 		}
 	case key.Matches(msg, k.Details):
 		// Enter used to move the book to another shelf, so a stray keypress
@@ -437,9 +437,6 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 			return m.setTab(r.to)
 		}
 		return m.setTab((m.tab + tab(r.step) + tabCount) % tabCount)
-
-	case reqFocus:
-		return m.setFocus(r.to)
 
 	case reqOpenModal:
 		m.push(r.m)

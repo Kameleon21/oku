@@ -214,9 +214,6 @@ type reqSwitchTab struct {
 	step int
 }
 
-// reqFocus moves the keyboard between the content and the detail pane.
-type reqFocus struct{ to focus }
-
 // reqToast puts a message in the status bar.
 type reqToast struct {
 	level toastLevel
