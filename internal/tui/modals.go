@@ -196,6 +196,16 @@ func (p *pageModal) Update(msg tea.Msg) (bool, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		k := keysFor(p)
+		if p.submitting {
+			// Read-only until the save reports back — including a refusal,
+			// which the root hands back as this prompt's own failed result.
+			// Cancelling drops the prompt; the pending result is then
+			// reported like any other.
+			if key.Matches(msg, k.Back) {
+				return true, nil
+			}
+			return false, nil
+		}
 		switch {
 		case key.Matches(msg, k.Back):
 			return true, nil
@@ -204,10 +214,6 @@ func (p *pageModal) Update(msg tea.Msg) (bool, tea.Cmd) {
 			if raw == "" {
 				return false, request(reqToast{toastError, "page value cannot be empty"})
 			}
-			// Enter stays live while a save is out: the root refuses a page
-			// update started over one already in flight, and a prompt that
-			// locked itself on the refused press would have nothing left to
-			// unlock it.
 			p.submitting, p.err = true, ""
 			return false, request(reqSetPage{
 				bookID: p.bookID, title: p.title, prevPage: p.current, raw: raw, token: p.token,
@@ -258,7 +264,10 @@ func (p *pageModal) View(lay layout, st styles) string {
 func (p *pageModal) Keys(k *keyMap) {
 	k.Back.SetHelp("Esc", "cancel")
 	k.Select.SetHelp("↵", "save")
-	enable(&k.Back, &k.Select)
+	enable(&k.Back)
+	if !p.submitting {
+		enable(&k.Select)
+	}
 	k.short = []key.Binding{k.Select, k.Back}
 }
 

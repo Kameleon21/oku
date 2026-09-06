@@ -231,6 +231,44 @@ func TestSearchStateMachine(t *testing.T) {
 			},
 		},
 		{
+			name:    "/ over the results goes back to the input",
+			arrange: func(t *testing.T) *Model { return searchModel(t, tabSearch, true) },
+			key:     runeKey('/'),
+			want:    func(t *testing.T, m *Model) { wantState(t, m, tabSearch, inputFocused) },
+		},
+		{
+			name:    "s over the results syncs",
+			arrange: func(t *testing.T) *Model { return searchModel(t, tabSearch, true) },
+			key:     runeKey('s'),
+			want: func(t *testing.T, m *Model) {
+				if !m.syncing {
+					t.Fatal("s should start a sync, as it does in every other tab")
+				}
+			},
+		},
+		{
+			name:    "i from a focused detail pane brings the keyboard back with it",
+			arrange: func(t *testing.T) *Model { return inDetail(t, searchModel(t, tabSearch, true)) },
+			key:     runeKey('i'),
+			want: func(t *testing.T, m *Model) {
+				wantState(t, m, tabSearch, inputFocused)
+				if m.focus != focusContent {
+					t.Fatalf("focus = %v, want the content pane: the input has the keyboard", m.focus)
+				}
+			},
+		},
+		{
+			name:    "Esc from a focused detail pane goes back to the results",
+			arrange: func(t *testing.T) *Model { return inDetail(t, searchModel(t, tabSearch, true)) },
+			key:     tea.KeyMsg{Type: tea.KeyEsc},
+			want: func(t *testing.T, m *Model) {
+				wantState(t, m, tabSearch, resultsFocused)
+				if m.focus != focusContent {
+					t.Fatalf("focus = %v, want the results", m.focus)
+				}
+			},
+		},
+		{
 			name:    "↵ over the results opens the detail pane",
 			arrange: func(t *testing.T) *Model { return searchModel(t, tabSearch, true) },
 			key:     tea.KeyMsg{Type: tea.KeyEnter},
@@ -249,6 +287,17 @@ func TestSearchStateMachine(t *testing.T) {
 			tt.want(t, m)
 		})
 	}
+}
+
+// inDetail presses Enter over the results, which moves the keyboard to the
+// detail pane.
+func inDetail(t *testing.T, m *Model) *Model {
+	t.Helper()
+	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.focus != focusDetail {
+		t.Fatal("Enter over a result should focus the detail pane")
+	}
+	return m
 }
 
 // inInput presses / to put the cursor in the search input, from wherever the
@@ -272,6 +321,39 @@ func wantState(t *testing.T, m *Model, tb tab, f searchFocus) {
 	}
 	if capturing := searchOf(m).CapturesKeys(); capturing != (f == inputFocused && m.tab == tabSearch) {
 		t.Fatalf("CapturesKeys = %v in state %v", capturing, f)
+	}
+}
+
+// TestSearchInputNeverLeavesTheFocusOnTheDetailPane: the pane that has the
+// keyboard is the pane that carries the focus. Typing into an input while
+// the detail pane held the focus emptied the selection under it — and below
+// 100 columns the detail pane has the whole width, so the results being
+// typed into were not on screen at all.
+func TestSearchInputNeverLeavesTheFocusOnTheDetailPane(t *testing.T) {
+	for _, size := range [][2]int{{120, 40}, {80, 24}} {
+		for _, key := range []tea.KeyMsg{runeKey('i'), runeKey('/')} {
+			m := searchModel(t, tabSearch, true)
+			m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+			inDetail(t, m)
+			send(t, m, key)
+
+			if searchOf(m).focus != inputFocused {
+				t.Fatalf("%dx%d %q: search focus = %v, want the input", size[0], size[1], key, searchOf(m).focus)
+			}
+			if m.focus != focusContent {
+				t.Fatalf("%dx%d %q: focus = %v, want the pane the input is in", size[0], size[1], key, m.focus)
+			}
+			if m.lay.DetailOnly {
+				t.Fatalf("%dx%d %q: the detail pane still has the width the input is drawn in", size[0], size[1], key)
+			}
+			// And Esc out of the input is the plain one: back to the tab
+			// it was reached from, with the focus still on a pane that has
+			// something in it.
+			send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+			if m.tab != tabReading || m.focus != focusContent {
+				t.Fatalf("%dx%d %q: Esc left tab=%v focus=%v, want the tab it came from", size[0], size[1], key, m.tab, m.focus)
+			}
+		}
 	}
 }
 

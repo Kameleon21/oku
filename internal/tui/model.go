@@ -6,6 +6,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -198,7 +199,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
-	return m, m.section().Update(keyMsg)
+
+	cmd := m.section().Update(keyMsg)
+	// A key that has just put the cursor in a text input takes the focus
+	// with it. Without this the detail pane keeps the thick border while
+	// the input owns the keyboard: the selection empties under it, so the
+	// pane blanks, and on a terminal too narrow to split the list being
+	// typed into is not drawn at all. It is enforced here rather than in
+	// the section because the section cannot see the focus, and every way
+	// into an input has to obey it.
+	if m.section().CapturesKeys() && m.focus == focusDetail {
+		cmd = tea.Batch(cmd, m.setFocus(focusContent))
+	}
+	return m, cmd
 }
 
 // rootKey handles the keys every tab shares. Like the sections, it only
@@ -502,7 +515,7 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 
 	case reqSetPage:
 		if m.isLoading() {
-			return m.showToast(toastWarn, inFlightNotice)
+			return m.refuse(opProgress, r.token)
 		}
 		return m.beginLoading(stamped(updateProgressCmd(m.ctx, m.app, r.bookID, r.title, r.prevPage, r.raw), r.token))
 
@@ -516,6 +529,11 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 		return m.beginLoading(change)
 
 	case reqReview:
+		if m.isLoading() {
+			// The same guard the page prompt has: both modals go read-only
+			// while they save, so both need the refusal to reach them.
+			return m.refuse(opReview, r.token)
+		}
 		toastCmd := m.showToast(toastInfo, reviewSavePendingMessage(r.review))
 		save := m.beginLoading(stamped(submitReviewRatingCmd(m.ctx, m.app, r.bookID, r.rating, r.review), r.token))
 		return tea.Batch(save, toastCmd)
@@ -575,6 +593,17 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 		return m.beginLoading(stopTimerCmd(m.app))
 	}
 	return nil
+}
+
+// refuse answers a modal that asked to save while something else is still
+// running. The modal is drawn over a blank screen, so the toast behind it
+// cannot be read: the refusal is handed to the modal as its own failed
+// result, which is the path that already shows a reason inside the panel.
+// It is not an operation finishing, so it goes out as a broadcast and
+// leaves the in-flight count alone.
+func (m *Model) refuse(op opKind, token int) tea.Cmd {
+	cmd := m.broadcast(opDoneMsg{op: op, seq: token, err: errors.New(inFlightNotice)})
+	return tea.Batch(cmd, m.showToast(toastWarn, inFlightNotice))
 }
 
 // timerPickIndex is the book the picker opens on: prefer when the Reading

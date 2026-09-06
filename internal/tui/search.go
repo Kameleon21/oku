@@ -342,14 +342,17 @@ func (s *searchSection) Keys(k *keyMap) {
 	// has nothing to open, shelve or scroll.
 	k.SearchMode.SetKeys("m")
 	k.SearchMode.SetHelp("m", "cycle mode")
-	enable(&k.Help, &k.SearchInput, &k.SearchMode, &k.NextSection, &k.PrevSection,
-		&k.TabJump, &k.Density)
+	enable(&k.Help, &k.Quit, &k.Search, &k.Sync, &k.SearchInput, &k.SearchMode,
+		&k.NextSection, &k.PrevSection, &k.TabJump, &k.Density)
 	k.short = []key.Binding{
 		k.Help,
 		hintAs("Esc/i", "input", k.SearchInput),
 		k.SearchMode,
 		hint("tab", k.PrevSection, k.NextSection),
 		k.Density,
+		k.Search,
+		hintAs("s", "sync", k.Sync),
+		k.Quit,
 	}
 	if !s.hasResults() {
 		return
@@ -373,6 +376,9 @@ func (s *searchSection) Keys(k *keyMap) {
 		hintAs("Esc/i", "input", k.SearchInput),
 		hint("tab", k.PrevSection, k.NextSection),
 		k.Density,
+		k.Search,
+		hintAs("s", "sync", k.Sync),
+		k.Quit,
 	}
 }
 

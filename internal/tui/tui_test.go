@@ -765,11 +765,82 @@ func TestPageModalEnterIsGuardedWhileInFlight(t *testing.T) {
 	if m.inflight != 1 {
 		t.Fatalf("inflight = %d: enter must not submit a page update while one is in flight", m.inflight)
 	}
-	if pageModalOf(m) == nil {
+	page := pageModalOf(m)
+	if page == nil {
 		t.Fatal("the modal should stay open after a refused submission")
 	}
 	if m.toast.text == "" {
 		t.Fatal("the refused submission should say why")
+	}
+	// The prompt is drawn over a blank screen, so that toast cannot be read:
+	// the refusal has to reach the panel, and it must not leave it saving.
+	if page.submitting {
+		t.Fatal("a refused submission should not leave the prompt saving for ever")
+	}
+	if !strings.Contains(page.err, inFlightNotice) {
+		t.Fatalf("prompt error = %q, want the reason it was refused", page.err)
+	}
+	if page.input.Value() != "120" {
+		t.Fatalf("input = %q, want the typed page kept", page.input.Value())
+	}
+}
+
+// TestPageModalIsReadOnlyWhileSaving is the review modal's rule for the page
+// prompt: the fields stop taking keys until the save reports back, so a
+// second Enter cannot start a second update, and Esc still cancels.
+func TestPageModalIsReadOnlyWhileSaving(t *testing.T) {
+	m := newTestModel()
+	m.shared.loaded = true
+	m.push(newPageModal(m.shared, m.st, model.UserBook{Book: model.Book{ID: 1, Title: "Dune"}}))
+	page := pageModalOf(m)
+	page.input.SetValue("120")
+
+	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if !page.submitting || m.inflight != 1 {
+		t.Fatalf("submitting=%v inflight=%d, want the save started", page.submitting, m.inflight)
+	}
+
+	send(t, m, runeKey('9'))
+	if page.input.Value() != "120" {
+		t.Fatalf("input = %q, want it read-only while saving", page.input.Value())
+	}
+	send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.inflight != 1 {
+		t.Fatalf("inflight = %d, want the second Enter to have started nothing", m.inflight)
+	}
+
+	send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.topModal() != nil {
+		t.Fatalf("top modal = %T, want Esc to cancel out of a saving prompt", m.topModal())
+	}
+}
+
+// TestReviewSaveIsGuardedWhileInFlight gives the review modal the page
+// prompt's guard: a save started over another operation is refused, and the
+// reason lands in the panel rather than in a status bar behind it.
+func TestReviewSaveIsGuardedWhileInFlight(t *testing.T) {
+	m := newTestModel()
+	m.shared.loaded = true
+	m.setTab(tabReading)
+	setLibrary(m, []model.UserBook{{Book: model.Book{ID: 1, Title: "Dune"}}}, nil)
+
+	send(t, m, runeKey('+')) // a progress update in flight
+	review := openReview(m, m.shared.reading[0])
+	review.rating.SetValue("4")
+
+	send(t, m, tea.KeyMsg{Type: tea.KeyCtrlS})
+
+	if m.inflight != 1 {
+		t.Fatalf("inflight = %d: the save must not start over another operation", m.inflight)
+	}
+	if m.topModal() != review {
+		t.Fatalf("top modal = %T, want the review modal still open", m.topModal())
+	}
+	if review.submitting {
+		t.Fatal("a refused save should not leave the modal saving for ever")
+	}
+	if !strings.Contains(review.err, inFlightNotice) {
+		t.Fatalf("modal error = %q, want the reason it was refused", review.err)
 	}
 }
 

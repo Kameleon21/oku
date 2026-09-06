@@ -98,7 +98,14 @@ func (s *statsSection) build() {
 	}
 	s.key = k
 	offset := s.vp.YOffset
+	s.vp.Height = max(1, s.h)
 	s.vp.SetContent(s.render(s.w))
+	if s.vp.TotalLineCount() > s.vp.Height {
+		// The badge takes the pane's last row for itself. Stamped over the
+		// page it would cover whatever chart happened to be on that row,
+		// wherever the reader had scrolled to.
+		s.vp.Height = max(1, s.h-1)
+	}
 	s.vp.SetYOffset(min(offset, max(0, s.vp.TotalLineCount()-s.vp.Height)))
 }
 
@@ -111,6 +118,8 @@ func (s *statsSection) View(w, h int) string {
 		s.Resize(w, h)
 	}
 	s.build()
+	// The viewport is a row shorter than the pane when the page overflows,
+	// so the row the badge is stamped on is the empty one fitBlock adds.
 	out := fitBlock(s.vp.View(), w, h)
 	if total := s.vp.TotalLineCount(); total > s.vp.Height {
 		last := min(total, s.vp.YOffset+s.vp.Height)
