@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -21,6 +22,7 @@ type keyMap struct {
 	// Everywhere.
 	Quit      key.Binding
 	ForceQuit key.Binding // ctrl+c: works in every mode, never advertised
+	Theme     key.Binding
 	Help      key.Binding
 	Back      key.Binding // esc: back, cancel, close - whatever fits the focus
 	Undo      key.Binding
@@ -86,6 +88,7 @@ func newKeyMap() keyMap {
 	return keyMap{
 		Quit:      bind("q", "quit", "q"),
 		ForceQuit: bind("ctrl+c", "quit", "ctrl+c"),
+		Theme:     bind("T", "choose theme", "T"),
 		Help:      bind("?", "help", "?"),
 		Back:      bind("Esc", "back", "esc"),
 		Undo:      bind("U", "undo the last change", "U"),
@@ -250,7 +253,7 @@ func (k keyMap) helpGroups() []helpGroup {
 			k.ReviewSave,
 			hint("switch field", k.ReviewNextField, k.ReviewPrevField),
 		}},
-		{"General", []key.Binding{k.Help, k.Undo, k.Quit}},
+		{"General", []key.Binding{k.Theme, k.Help, k.Undo, k.Quit}},
 	}
 }
 
@@ -279,6 +282,10 @@ func (m *Model) sectionKeys(k *keyMap) {
 		enable(&k.Undo)
 	}
 	m.section().Keys(k)
+	if !m.section().CapturesKeys() {
+		enable(&k.Theme)
+		k.short = slices.Insert(k.short, min(1, len(k.short)), k.Theme)
+	}
 	if m.focus == focusDetail {
 		m.detail.Keys(k)
 	}
