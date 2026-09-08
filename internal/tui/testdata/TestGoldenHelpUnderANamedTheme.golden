@@ -1,0 +1,24 @@
+ oku  ▸1 Reading 3   2 Oku 3   3 Search   4 Stats   5 Timer       synced 2m ago 
+┏━ Reading (3) ╭────────────────────────────────────────────────╮━━━━━━━━━━━━━━┓
+┃ │ The Communi│                                                │              ┃
+┃ │ Karl Marx, │  Help · catppuccin-mocha                       │              ┃
+┃   Money      │                                                │              ┃
+┃   David McWil│  Navigation                                    │              ┃
+┃   Software Ar│    j/k           navigate                      │              ┃
+┃   Neal Ford, │    1-5           jump to a tab                 │0/416 ░░░░░░… ┃
+┃              │    h/l           tab                           │              ┃
+┃              │    Tab/S-Tab     tab (alias)                   │              ┃
+┃              │    /             search                        │              ┃
+┃              │    Esc           back                          │              ┃
+┃              │    Esc/i         back to the input             │              ┃
+┃              │    g             top                           │              ┃
+┃              │    G             bottom                        │              ┃
+┃              │    C-u/C-d       half page                     │              ┃
+┃              │                                                │              ┃
+┃              │  Actions                                       │              ┃
+┃              │    ↵             detail                        │              ┃
+┃              │    a             add as reading                │              ┃
+┃              │  j/k scroll · ? or esc close   oku v1.12.0     │              ┃
+┃              │                                                │              ┃
+┗━━━━━━━━━━━━━━╰────────────────────────────────────────────────╯━━━━━━━━━━━━━━┛
+ j/k scroll · Esc close                                                         

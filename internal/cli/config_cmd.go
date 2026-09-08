@@ -10,6 +10,19 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// underConfigCmd reports whether cmd is `oku config` or one of its
+// subcommands. Those are the commands a `theme` value the loader rejects must
+// not hold up: `config show` and `config edit` are how a bad value is found,
+// and `config theme` is what replaces it.
+func underConfigCmd(cmd *cobra.Command) bool {
+	for c := cmd; c != nil; c = c.Parent() {
+		if c.Name() == "config" {
+			return true
+		}
+	}
+	return false
+}
+
 func newConfigCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
@@ -17,6 +30,7 @@ func newConfigCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newConfigEditCmd())
 	cmd.AddCommand(newConfigShowCmd())
+	cmd.AddCommand(newConfigThemeCmd())
 	return cmd
 }
 
@@ -36,7 +50,7 @@ func newConfigEditCmd() *cobra.Command {
 
 			// Create the file if it doesn't exist.
 			if _, err := os.Stat(path); os.IsNotExist(err) {
-				if err := os.WriteFile(path, []byte("# Oku config\n# editor = \"nvim\"\n# use_fzf = false\n# default_list = \"reading\"\n"), 0o644); err != nil {
+				if err := os.WriteFile(path, []byte("# Oku config\n# editor = \"nvim\"\n# use_fzf = false\n# default_list = \"reading\"\n# theme = \"auto\"  # auto, dark, light, or a named palette: oku config theme\n"), 0o644); err != nil {
 					return err
 				}
 			}
@@ -94,6 +108,7 @@ func newConfigShowCmd() *cobra.Command {
 			fmt.Printf("Editor:      %s\n", resolveEditor(cfg.Editor, os.Getenv))
 			fmt.Printf("Use fzf:     %v\n", cfg.UseFzf)
 			fmt.Printf("Default list: %s\n", cfg.DefaultList)
+			fmt.Printf("Theme:       %s\n", describeTheme(cfg.Theme))
 			return nil
 		},
 	}

@@ -28,13 +28,17 @@ func newRootCmd(version string) *cobra.Command {
 			if _, err := tui.ParseDensity(outputView); err != nil {
 				return err
 			}
-			// The config key only overrides what the terminal reports about
-			// its background, for the TUI and the coloured CLI output alike.
-			// A config that does not load is left for the command to report
-			// (or, for `config edit`, to tolerate), so only the theme value
-			// itself is checked here.
+			// The config key picks the palette the TUI and the coloured CLI
+			// output draw with. A config that does not parse is left for the
+			// command to report (`config show`) or to tolerate (`config
+			// edit`), so only the theme value itself is checked here.
 			if cfg, err := config.Load(); err == nil {
-				return tui.ApplyThemeSetting(cfg.Theme)
+				// `oku config` is how a bad value is found and replaced, so
+				// none of it is held up by one; every other command draws
+				// with the palette and cannot start without it.
+				if err := tui.ApplyThemeSetting(cfg.Theme); err != nil && !underConfigCmd(cmd) {
+					return fmt.Errorf("config: %w", err)
+				}
 			}
 			return nil
 		},

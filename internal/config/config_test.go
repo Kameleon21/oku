@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -222,5 +223,157 @@ func TestThemeDefaultsToAutoAndLoadsFromFile(t *testing.T) {
 	// The other keys keep their defaults when the file leaves them out.
 	if cfg.DefaultList != "reading" {
 		t.Fatalf("cfg.DefaultList = %q, want the default", cfg.DefaultList)
+	}
+}
+
+// TestSetKey covers the rewrite `oku config theme` writes with: an existing
+// assignment is replaced in place, a missing one is appended, and comments —
+// including a commented-out example of the key itself — survive.
+func TestSetKey(t *testing.T) {
+	cases := []struct {
+		name string
+		doc  string
+		want string
+	}{
+		{
+			name: "empty file",
+			doc:  "",
+			want: "theme = \"nord\"\n",
+		},
+		{
+			name: "appended after other keys",
+			doc:  "editor = \"nvim\"\n",
+			want: "editor = \"nvim\"\ntheme = \"nord\"\n",
+		},
+		{
+			name: "replaced in place",
+			doc:  "# Oku config\ntheme = \"light\"\nuse_fzf = true\n",
+			want: "# Oku config\ntheme = \"nord\"\nuse_fzf = true\n",
+		},
+		{
+			name: "a commented example is left alone",
+			doc:  "# theme = \"auto\"\neditor = \"vi\"\n",
+			want: "# theme = \"auto\"\neditor = \"vi\"\ntheme = \"nord\"\n",
+		},
+		{
+			name: "no trailing newline",
+			doc:  "editor = \"vi\"",
+			want: "editor = \"vi\"\ntheme = \"nord\"\n",
+		},
+		{
+			name: "a key that only starts the same is not it",
+			doc:  "theme_extra = \"x\"\n",
+			want: "theme_extra = \"x\"\ntheme = \"nord\"\n",
+		},
+		{
+			name: "an inline comment survives",
+			doc:  "theme = \"auto\" # auto | dark | light\n",
+			want: "theme = \"nord\" # auto | dark | light\n",
+		},
+		{
+			name: "the line's own spacing survives",
+			doc:  "theme=\"x\"\n",
+			want: "theme=\"nord\"\n",
+		},
+		{
+			name: "a bare value and its comment",
+			doc:  "theme = auto  # why\n",
+			want: "theme = \"nord\"  # why\n",
+		},
+		{
+			name: "a hash inside the value is not a comment",
+			doc:  "theme = \"a#b\" # real\n",
+			want: "theme = \"nord\" # real\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := setKey(tc.doc, "theme", "nord"); got != tc.want {
+				t.Fatalf("setKey(%q) = %q, want %q", tc.doc, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSetThemeRoundTrip: what SetTheme writes is what Load reads back, and
+// the keys that were already in the file are still there.
+func TestSetThemeRoundTrip(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", home)
+	path := filepath.Join(home, "oku", "config.toml")
+	mkdirAll(t, filepath.Dir(path))
+	if err := os.WriteFile(path, []byte("# Oku config\neditor = \"nvim\"\ntheme = \"auto\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SetTheme("gruvbox-dark"); err != nil {
+		t.Fatalf("SetTheme() error = %v", err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Theme != "gruvbox-dark" {
+		t.Fatalf("cfg.Theme = %q, want gruvbox-dark", cfg.Theme)
+	}
+	if cfg.Editor != "nvim" {
+		t.Fatalf("cfg.Editor = %q: SetTheme dropped another key", cfg.Editor)
+	}
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(written), "# Oku config") {
+		t.Fatalf("SetTheme dropped the file's comments: %q", written)
+	}
+}
+
+// TestSetThemeCreatesTheFile: a user who has never written a config still
+// gets one.
+func TestSetThemeCreatesTheFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", home)
+
+	if err := SetTheme("nord"); err != nil {
+		t.Fatalf("SetTheme() error = %v", err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Theme != "nord" {
+		t.Fatalf("cfg.Theme = %q, want nord", cfg.Theme)
+	}
+}
+
+// TestSetThemeKeepsTheFileMode: the rewrite renames a new file over the old
+// one, which must not hand the config a mode the user did not choose.
+func TestSetThemeKeepsTheFileMode(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", home)
+	path := filepath.Join(home, "oku", "config.toml")
+	mkdirAll(t, filepath.Dir(path))
+	if err := os.WriteFile(path, []byte("theme = \"auto\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SetTheme("nord"); err != nil {
+		t.Fatalf("SetTheme() error = %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("mode = %o, want 600", got)
+	}
+
+	// Nothing is left beside it: the temp file is renamed, not abandoned.
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("config dir holds %d entries, want just the config", len(entries))
 	}
 }

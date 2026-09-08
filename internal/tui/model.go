@@ -112,13 +112,14 @@ func New(ctx context.Context, a *app.App, density Density, version string) *Mode
 	}
 
 	// The palette needs an answer lipgloss v2 no longer gives itself. The
-	// `theme` config key pins one; otherwise the dashboard draws dark until
-	// the terminal replies to Init's RequestBackgroundColor.
+	// `theme` config key pins one — a background, or a whole named palette;
+	// otherwise the dashboard draws dark until the terminal replies to
+	// Init's RequestBackgroundColor.
 	isDark, pinned := PinnedDark()
 	if !pinned {
 		isDark = true
 	}
-	st := newStyles(NewTheme(isDark))
+	st := newStyles(ActiveTheme(isDark))
 
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(st.spinner))
 
@@ -176,7 +177,7 @@ func (m *Model) applyBackground(isDark bool) tea.Cmd {
 		return nil
 	}
 	m.isDark = isDark
-	m.st = newStyles(NewTheme(isDark))
+	m.st = newStyles(ActiveTheme(isDark))
 	m.help = newHelp(m.st)
 	m.shared.spin.Style = m.st.spinner
 	return m.broadcast(stylesChangedMsg{st: m.st})

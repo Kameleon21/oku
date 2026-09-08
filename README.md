@@ -10,7 +10,7 @@
 
 Your [Hardcover](https://hardcover.app) library in your terminal. Browse your shelves, find your next book, and track your reading with a keyboard-driven dashboard or quick CLI commands.
 
-![Oku dashboard, sample reading shelves, statistics, and timer picker](oku-demo.gif)
+![Oku dashboard in Catppuccin Mocha and Nord: theme preview, sample reading shelves, detail pane, statistics, timer picker and help](oku-demo.gif)
 
 *The recording uses fictional books and sample reading data. [Recording instructions](docs/demo/README.md).*
 
@@ -129,11 +129,43 @@ installations may continue using the legacy `~/.config/oku/config.toml` file.
 editor = "nvim"
 use_fzf = false
 default_list = "reading"
-theme = "auto" # auto | dark | light
+theme = "auto" # auto | dark | light | a named palette
 ```
 
-The dashboard and colored CLI output adapt to light and dark terminals.
-Set `theme` explicitly if your terminal reports its background incorrectly.
+### Themes
+
+The dashboard and colored CLI output adapt to light and dark terminals. Set
+`theme` explicitly if your terminal reports its background incorrectly, or name
+a palette to use it instead of the built-in one:
+
+| `theme` | What you get |
+| --- | --- |
+| `auto` (default) | the built-in palette, for whichever background the terminal reports |
+| `dark`, `light` | the built-in palette, pinned to that background |
+| `nord` | Nord |
+| `tokyo-night` | Tokyo Night (night) |
+| `dracula` | Dracula |
+| `gruvbox-dark`, `gruvbox-light` | Gruvbox |
+| `solarized-dark`, `solarized-light` | Solarized |
+| `catppuccin-mocha` | Catppuccin Mocha |
+
+Names are matched case-insensitively and an underscore reads as a hyphen, so
+`Tokyo_Night` works too. A named palette pins the background it was drawn for,
+so the terminal is not asked.
+
+```sh
+oku config theme                # list the values, marking the one in use
+oku config theme --preview      # draw a swatch of every palette
+oku config theme nord --preview # draw just that one
+oku config theme nord           # write it to the config file
+```
+
+When a palette is named, the dashboard's help modal titles itself with it
+(`Help · nord`), so a screenshot says which scheme it was taken in. A `theme`
+value that is not one of these stops the coloured commands from starting, and
+is reported by `oku config show`; `oku config` itself always runs, so the value
+can be found and replaced.
+
 `NO_COLOR` is supported; borders and a `▸` marker also indicate focus.
 
 Oku caches library data in SQLite and refreshes it automatically. Run `oku sync`

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -14,8 +15,10 @@ type Config struct {
 	Editor      string `toml:"editor"`
 	UseFzf      bool   `toml:"use_fzf"`
 	DefaultList string `toml:"default_list"`
-	// Theme pins the TUI palette to a "dark" or "light" terminal background;
-	// "auto" (the default) lets the terminal report it.
+	// Theme picks the palette the TUI and the coloured CLI output draw with:
+	// "auto" (the default) lets the terminal report its background, "dark"
+	// and "light" pin it, and a named palette ("nord", "dracula", …) replaces
+	// the built-in one. `oku config theme` lists them.
 	Theme string `toml:"theme"`
 }
 
@@ -170,4 +173,116 @@ func EnsureConfigDir() error {
 		return err
 	}
 	return os.MkdirAll(filepath.Dir(path), 0o755)
+}
+
+// SetTheme writes the `theme` key to the config file. The file is rewritten
+// line by line rather than re-encoded from a Config, so a hand-written config
+// keeps its comments, its key order and any key this build does not know
+// about. name is one of the values the TUI accepts, validated by the caller.
+func SetTheme(name string) error {
+	if err := EnsureConfigDir(); err != nil {
+		return err
+	}
+	path, err := FilePath()
+	if err != nil {
+		return err
+	}
+	existing, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return writeFileAtomic(path, []byte(setKey(string(existing), "theme", name)))
+}
+
+// writeFileAtomic replaces a file by writing its successor beside it and
+// renaming over it, so an interrupted write cannot leave the config
+// truncated. The original's mode is kept; a file that did not exist yet is
+// created with the same 0o644 a config written by hand would have.
+func writeFileAtomic(path string, data []byte) error {
+	mode := os.FileMode(0o644)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
+}
+
+// setKey replaces the value of a top-level key in a TOML document, or appends
+// the key when the document does not set it. Only the config's own flat
+// `key = "value"` shape is handled, which is the whole of oku's config: a key
+// inside a table would need the table tracked, and there are none.
+func setKey(doc, key, value string) string {
+	quoted := fmt.Sprintf("%q", value)
+
+	lines := strings.Split(doc, "\n")
+	for i, line := range lines {
+		// A commented-out key is left alone: it is documentation, and the
+		// real assignment goes after it.
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		name, _, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(name) != key {
+			continue
+		}
+		// Only the value token is replaced, so the line's own spacing and
+		// anything after the value — an inline `# comment`, typically —
+		// survive the rewrite.
+		start := len(name) + len("=")
+		for start < len(line) && (line[start] == ' ' || line[start] == '\t') {
+			start++
+		}
+		lines[i] = line[:start] + quoted + line[valueEnd(line, start):]
+		return strings.Join(lines, "\n")
+	}
+
+	out := strings.TrimRight(doc, "\n")
+	if out != "" {
+		out += "\n"
+	}
+	return out + key + " = " + quoted + "\n"
+}
+
+// valueEnd is the index just past the value that starts at start: the closing
+// quote of a quoted one, or the run up to an inline comment for a bare one.
+func valueEnd(line string, start int) int {
+	if start < len(line) && (line[start] == '"' || line[start] == '\'') {
+		quote := line[start]
+		for i := start + 1; i < len(line); i++ {
+			// Only a basic string escapes its quote; a literal one cannot
+			// contain the quote at all.
+			if line[i] == '\\' && quote == '"' {
+				i++
+				continue
+			}
+			if line[i] == quote {
+				return i + 1
+			}
+		}
+		return len(line)
+	}
+	rest := line[start:]
+	if hash := strings.IndexByte(rest, '#'); hash >= 0 {
+		rest = rest[:hash]
+	}
+	return start + len(strings.TrimRight(rest, " \t"))
 }

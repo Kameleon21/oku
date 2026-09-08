@@ -786,8 +786,18 @@ func (h *helpModal) View(_ layout, st styles) string {
 	if v := strings.TrimSpace(h.version); v != "" {
 		footer += "   oku " + v
 	}
+	// The palette goes in the title rather than the footer: the footer plus
+	// the longest palette name is wider than the panel, and a wrapped footer
+	// would cost the body a row helpModalChromeRows has not budgeted for.
+	// It is only named when the `theme` config key named one — "auto",
+	// "dark" and "light" are backgrounds rather than schemes, and have
+	// nothing to tell the reader here.
+	title := "Help"
+	if name := ActiveThemeName(); name != "" {
+		title += " · " + name
+	}
 	return renderModalPanel(
-		"Help",
+		title,
 		h.rows()+"\n"+st.modalDim.Render(footer),
 		helpModalWidth,
 		st,

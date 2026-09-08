@@ -1,9 +1,7 @@
 package tui
 
 import (
-	"fmt"
 	"image/color"
-	"strings"
 
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
@@ -304,24 +302,53 @@ func newStyles(th Theme) styles {
 // nil for "auto", which leaves the terminal to be asked.
 var pinnedDark *bool
 
+// pinnedPalette is the named palette the `theme` config key chose, nil for
+// "auto", "dark" and "light", which pick a background rather than a palette.
+var pinnedPalette *NamedTheme
+
 // ApplyThemeSetting honours the `theme` config key. "auto" (or empty) leaves
 // the background to be detected — the dashboard asks the terminal for it and
 // the CLI queries it once at startup; "dark" and "light" pin it, for terminals
-// that do not answer the query or answer it wrongly.
+// that do not answer the query or answer it wrongly. Any of the named
+// palettes (see NamedThemes) pins the whole palette, and with it the
+// background the palette was drawn for.
 func ApplyThemeSetting(setting string) error {
-	switch strings.ToLower(strings.TrimSpace(setting)) {
-	case "", "auto":
-		pinnedDark = nil
-	case "dark":
-		v := true
-		pinnedDark = &v
-	case "light":
-		v := false
-		pinnedDark = &v
+	name, err := ResolveThemeSetting(setting)
+	if err != nil {
+		return err
+	}
+	switch name {
+	case "auto":
+		pinnedDark, pinnedPalette = nil, nil
+	case "dark", "light":
+		v := name == "dark"
+		pinnedDark, pinnedPalette = &v, nil
 	default:
-		return fmt.Errorf("invalid theme %q in config (valid: auto, dark, light)", setting)
+		nt, _ := lookupNamedTheme(name)
+		v := nt.IsDark
+		pinnedDark, pinnedPalette = &v, &nt
 	}
 	return nil
+}
+
+// ActiveTheme is the palette to draw with: the named one the `theme` config
+// key chose, or the built-in palette resolved for the background isDark. It
+// is what the dashboard and the CLI build their styles from.
+func ActiveTheme(isDark bool) Theme {
+	if pinnedPalette != nil {
+		return pinnedPalette.Theme
+	}
+	return NewTheme(isDark)
+}
+
+// ActiveThemeName is the name of the palette in force, empty unless the
+// `theme` config key named one. The help modal shows it, so a reader can
+// tell which scheme they are looking at.
+func ActiveThemeName() string {
+	if pinnedPalette == nil {
+		return ""
+	}
+	return pinnedPalette.Name
 }
 
 // PinnedDark reports the background the `theme` config key pinned, if it

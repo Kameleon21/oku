@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/Kameleon21/oku/internal/model"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/exp/golden"
@@ -148,6 +149,43 @@ func TestGoldenModals(t *testing.T) {
 	}
 }
 
+// TestGoldenHelpUnderANamedTheme is the widest and tallest the help modal
+// gets: the longest palette name in the title, a released version in the
+// footer, and the shortest terminal the dashboard is drawn on. Neither line
+// may wrap — a wrapped one costs the body a row helpModalChromeRows has not
+// budgeted for, and the panel then outgrows the screen.
+func TestGoldenHelpUnderANamedTheme(t *testing.T) {
+	longest := ""
+	for _, nt := range NamedThemes() {
+		if len(nt.Name) > len(longest) {
+			longest = nt.Name
+		}
+	}
+	if err := ApplyThemeSetting(longest); err != nil {
+		t.Fatalf("ApplyThemeSetting(%s) error = %v", longest, err)
+	}
+	t.Cleanup(func() { _ = ApplyThemeSetting("auto") })
+
+	m := newGoldenModel(t, 80, 24, tabReading, func(m *Model) {
+		m.version = "v1.12.0"
+		m.openHelp()
+	})
+
+	help := m.topModal().(*helpModal)
+	panel := help.View(m.lay, m.st)
+	if got := lipgloss.Width(panel); got != helpModalWidth {
+		t.Fatalf("panel width = %d, want %d", got, helpModalWidth)
+	}
+	// Every row the chrome budget did not account for is a wrapped line.
+	if got, want := lipgloss.Height(panel), help.vp.Height()+helpModalChromeRows; got != want {
+		t.Fatalf("panel height = %d, want %d: a line wrapped", got, want)
+	}
+	if got := lipgloss.Height(panel); got > m.lay.H-helpModalMarginRows {
+		t.Fatalf("panel height = %d, want at most %d", got, m.lay.H-helpModalMarginRows)
+	}
+	golden.RequireEqual(t, []byte(frameAt(m, layoutProfile)))
+}
+
 // TestGoldenHeaderStates covers the header's own decisions: the running
 // timer, and what it drops as the terminal narrows.
 func TestGoldenHeaderStates(t *testing.T) {
@@ -182,6 +220,23 @@ func TestGoldenColour(t *testing.T) {
 	for name, dark := range map[string]bool{"dark": true, "light": false} {
 		t.Run(name, func(t *testing.T) {
 			m := newGoldenModel(t, 120, 40, tabReading, withBackground(dark))
+			golden.RequireEqual(t, []byte(frameAt(m, colorprofile.TrueColor)))
+		})
+	}
+
+	// One frame per named palette, so a change to any of them shows up as a
+	// diff and a reviewer can read the hexes out of the frame. The palette is
+	// chosen the way the config key chooses it — before the model is built,
+	// which is when lipgloss v2 resolves the colours — and the terminal is
+	// never asked, so no background message is fed in.
+	for _, nt := range NamedThemes() {
+		t.Run(nt.Name, func(t *testing.T) {
+			if err := ApplyThemeSetting(nt.Name); err != nil {
+				t.Fatalf("ApplyThemeSetting(%s) error = %v", nt.Name, err)
+			}
+			t.Cleanup(func() { _ = ApplyThemeSetting("auto") })
+
+			m := newGoldenModel(t, 120, 40, tabReading)
 			golden.RequireEqual(t, []byte(frameAt(m, colorprofile.TrueColor)))
 		})
 	}
