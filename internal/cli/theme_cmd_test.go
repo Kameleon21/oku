@@ -13,6 +13,7 @@ import (
 // TestListAndPreviewNameEveryTheme: both listings have to show every value
 // the config key takes, or a reader cannot pick the one they want.
 func TestListAndPreviewNameEveryTheme(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Cleanup(func() { _ = tui.ApplyThemeSetting("auto") })
 
 	for _, tc := range []struct {
@@ -115,5 +116,78 @@ func TestDescribeTheme(t *testing.T) {
 		if got := describeTheme(setting); !strings.HasPrefix(got, want) {
 			t.Fatalf("describeTheme(%q) = %q, want it to start with %q", setting, got, want)
 		}
+	}
+}
+
+// TestPreviewOneTheme: `oku config theme nord --preview` draws that palette
+// rather than setting it or drawing all of them.
+func TestPreviewOneTheme(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	buf := captureOutput(t, "TERM=xterm-256color")
+	if err := previewTheme("Nord"); err != nil {
+		t.Fatalf("previewTheme: %v", err)
+	}
+	got := buf.String()
+	if !strings.Contains(got, "nord") {
+		t.Fatalf("preview does not draw nord:\n%s", got)
+	}
+	for _, other := range []string{"dracula", "tokyo-night", "dark ", "light "} {
+		if strings.Contains(got, other) {
+			t.Fatalf("preview of nord also drew %q:\n%s", other, got)
+		}
+	}
+
+	// Nothing is written: --preview is a look, not a choice.
+	path, err := config.FilePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("--preview wrote %s", filepath.Base(path))
+	}
+
+	// An unknown name is still refused.
+	if err := previewTheme("gruvbox"); err == nil {
+		t.Fatal("previewTheme(gruvbox) = nil, want an error")
+	}
+
+	// "auto" is not a palette: it draws the two sides it chooses between.
+	buf = captureOutput(t, "TERM=xterm-256color")
+	if err := previewTheme("auto"); err != nil {
+		t.Fatalf("previewTheme(auto): %v", err)
+	}
+	got = buf.String()
+	if !strings.Contains(got, "dark ") || !strings.Contains(got, "light ") {
+		t.Fatalf("preview of auto does not draw both sides:\n%s", got)
+	}
+	if strings.Contains(got, "nord") {
+		t.Fatalf("preview of auto also drew a named palette:\n%s", got)
+	}
+}
+
+// TestListMarksAnUnsetCurrent: with a value that is not a theme the listing
+// has nothing to mark, so it says what the config holds instead of looking
+// like the default is in force.
+func TestListMarksAnUnsetCurrent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, "oku"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "oku", "config.toml"), []byte("theme = \"bogus\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	buf := captureOutput(t, "TERM=xterm-256color")
+	if err := listThemes(); err != nil {
+		t.Fatalf("listThemes: %v", err)
+	}
+	got := buf.String()
+	if !strings.Contains(got, `current: "bogus" (not a theme)`) {
+		t.Fatalf("listing does not report the bad value:\n%s", got)
+	}
+	if strings.Contains(got, "* ") {
+		t.Fatalf("listing marked a theme none of which is in use:\n%s", got)
 	}
 }

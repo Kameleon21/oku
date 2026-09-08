@@ -10,12 +10,17 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// isConfigThemeCmd reports whether cmd is `oku config theme`, the one
-// command that has to run with a `theme` value the loader rejects: it is what
-// replaces it.
-func isConfigThemeCmd(cmd *cobra.Command) bool {
-	return cmd != nil && cmd.Name() == "theme" &&
-		cmd.Parent() != nil && cmd.Parent().Name() == "config"
+// underConfigCmd reports whether cmd is `oku config` or one of its
+// subcommands. Those are the commands a `theme` value the loader rejects must
+// not hold up: `config show` and `config edit` are how a bad value is found,
+// and `config theme` is what replaces it.
+func underConfigCmd(cmd *cobra.Command) bool {
+	for c := cmd; c != nil; c = c.Parent() {
+		if c.Name() == "config" {
+			return true
+		}
+	}
+	return false
 }
 
 func newConfigCmd() *cobra.Command {

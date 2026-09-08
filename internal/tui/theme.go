@@ -1,9 +1,7 @@
 package tui
 
 import (
-	"fmt"
 	"image/color"
-	"strings"
 
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
@@ -315,20 +313,18 @@ var pinnedPalette *NamedTheme
 // palettes (see NamedThemes) pins the whole palette, and with it the
 // background the palette was drawn for.
 func ApplyThemeSetting(setting string) error {
-	switch name := normalizeThemeName(setting); name {
-	case "", "auto":
+	name, err := ResolveThemeSetting(setting)
+	if err != nil {
+		return err
+	}
+	switch name {
+	case "auto":
 		pinnedDark, pinnedPalette = nil, nil
-	case "dark":
-		v := true
-		pinnedDark, pinnedPalette = &v, nil
-	case "light":
-		v := false
+	case "dark", "light":
+		v := name == "dark"
 		pinnedDark, pinnedPalette = &v, nil
 	default:
-		nt, ok := lookupNamedTheme(name)
-		if !ok {
-			return fmt.Errorf("invalid theme %q in config (valid: %s)", setting, strings.Join(ThemeSettings(), ", "))
-		}
+		nt, _ := lookupNamedTheme(name)
 		v := nt.IsDark
 		pinnedDark, pinnedPalette = &v, &nt
 	}

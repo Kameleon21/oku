@@ -154,10 +154,17 @@ Names are matched case-insensitively and an underscore reads as a hyphen, so
 so the terminal is not asked.
 
 ```sh
-oku config theme              # list the values, marking the one in use
-oku config theme --preview    # draw a swatch of every palette
-oku config theme nord         # write it to the config file
+oku config theme                # list the values, marking the one in use
+oku config theme --preview      # draw a swatch of every palette
+oku config theme nord --preview # draw just that one
+oku config theme nord           # write it to the config file
 ```
+
+When a palette is named, the dashboard's help modal titles itself with it
+(`Help · nord`), so a screenshot says which scheme it was taken in. A `theme`
+value that is not one of these stops the coloured commands from starting, and
+is reported by `oku config show`; `oku config` itself always runs, so the value
+can be found and replaced.
 
 `NO_COLOR` is supported; borders and a `▸` marker also indicate focus.
 

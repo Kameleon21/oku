@@ -265,6 +265,26 @@ func TestSetKey(t *testing.T) {
 			doc:  "theme_extra = \"x\"\n",
 			want: "theme_extra = \"x\"\ntheme = \"nord\"\n",
 		},
+		{
+			name: "an inline comment survives",
+			doc:  "theme = \"auto\" # auto | dark | light\n",
+			want: "theme = \"nord\" # auto | dark | light\n",
+		},
+		{
+			name: "the line's own spacing survives",
+			doc:  "theme=\"x\"\n",
+			want: "theme=\"nord\"\n",
+		},
+		{
+			name: "a bare value and its comment",
+			doc:  "theme = auto  # why\n",
+			want: "theme = \"nord\"  # why\n",
+		},
+		{
+			name: "a hash inside the value is not a comment",
+			doc:  "theme = \"a#b\" # real\n",
+			want: "theme = \"nord\" # real\n",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -323,5 +343,37 @@ func TestSetThemeCreatesTheFile(t *testing.T) {
 	}
 	if cfg.Theme != "nord" {
 		t.Fatalf("cfg.Theme = %q, want nord", cfg.Theme)
+	}
+}
+
+// TestSetThemeKeepsTheFileMode: the rewrite renames a new file over the old
+// one, which must not hand the config a mode the user did not choose.
+func TestSetThemeKeepsTheFileMode(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", home)
+	path := filepath.Join(home, "oku", "config.toml")
+	mkdirAll(t, filepath.Dir(path))
+	if err := os.WriteFile(path, []byte("theme = \"auto\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SetTheme("nord"); err != nil {
+		t.Fatalf("SetTheme() error = %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("mode = %o, want 600", got)
+	}
+
+	// Nothing is left beside it: the temp file is renamed, not abandoned.
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("config dir holds %d entries, want just the config", len(entries))
 	}
 }

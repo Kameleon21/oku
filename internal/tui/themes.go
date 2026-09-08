@@ -1,8 +1,8 @@
 package tui
 
 import (
+	"fmt"
 	"image/color"
-	"sort"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -283,6 +283,24 @@ func normalizeThemeName(setting string) string {
 	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(setting)), "_", "-")
 }
 
+// ResolveThemeSetting checks a `theme` value and answers with its canonical
+// spelling: one of "auto", "dark", "light" or a named palette. Empty resolves
+// to "auto". Nothing is applied — the CLI resolves a name to write it or to
+// describe it, and ApplyThemeSetting resolves it to pin it.
+func ResolveThemeSetting(setting string) (string, error) {
+	switch name := normalizeThemeName(setting); name {
+	case "", "auto":
+		return "auto", nil
+	case "dark", "light":
+		return name, nil
+	default:
+		if _, ok := lookupNamedTheme(name); !ok {
+			return "", fmt.Errorf("invalid theme %q (valid: %s)", setting, strings.Join(ThemeSettings(), ", "))
+		}
+		return name, nil
+	}
+}
+
 // NamedThemes is every named palette, in listing order.
 func NamedThemes() []NamedTheme {
 	out := make([]NamedTheme, len(namedThemes))
@@ -301,14 +319,14 @@ func lookupNamedTheme(name string) (NamedTheme, bool) {
 }
 
 // ThemeSettings is every value the `theme` config key accepts, the three
-// background settings first and the palettes after them, sorted — this is
-// the list an invalid value is reported against and the one `oku config
-// theme` prints.
+// background settings first and the palettes after them in declaration
+// order — this is the list an invalid value is reported against and the one
+// `oku config theme` prints and previews.
 func ThemeSettings() []string {
-	names := make([]string, 0, len(namedThemes))
+	names := make([]string, 0, 3+len(namedThemes))
+	names = append(names, "auto", "dark", "light")
 	for _, nt := range namedThemes {
 		names = append(names, nt.Name)
 	}
-	sort.Strings(names)
-	return append([]string{"auto", "dark", "light"}, names...)
+	return names
 }
