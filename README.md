@@ -10,7 +10,7 @@
 
 Your [Hardcover](https://hardcover.app) library in your terminal. Browse your shelves, find your next book, and track your reading with a keyboard-driven dashboard or quick CLI commands.
 
-![Oku dashboard, sample reading shelves, statistics, and timer picker](oku-demo.gif)
+![Oku dashboard in Catppuccin Mocha and Nord: theme preview, sample reading shelves, detail pane, statistics, timer picker and help](oku-demo.gif)
 
 *The recording uses fictional books and sample reading data. [Recording instructions](docs/demo/README.md).*
 

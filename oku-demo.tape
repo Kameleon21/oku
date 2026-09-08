@@ -3,10 +3,20 @@ Output oku-demo.mp4
 Set FontSize 18
 Set Width 1400
 Set Height 1000
-Set Theme "GruvboxDark"
+Set Theme "Catppuccin Mocha"
 Set TypingSpeed 65ms
 Set Padding 20
 Set Framerate 15
+
+# The palettes, one swatch row each, on their own surfaces.
+Type "oku config theme --preview"
+Enter
+Sleep 4s
+
+# Naming one writes it to the config; the dashboard draws with it from the next start.
+Type "oku config theme catppuccin-mocha"
+Enter
+Sleep 2s
 
 Type "oku"
 Enter
@@ -46,6 +56,28 @@ Sleep 1s
 Escape
 Sleep 1s
 
-# End on the reading library.
+# The help modal names the palette in its title.
+Type "?"
+Sleep 2.5s
+Escape
+Sleep 1s
+
+# Back to the reading library, then out.
 Type "hhhh"
+Sleep 2s
+Type "q"
+Sleep 1s
+
+# The same dashboard in Nord.
+Type "oku config theme nord"
+Enter
+Sleep 1.5s
+Type "oku"
+Enter
 Sleep 3s
+Type "l"
+Sleep 2s
+Type "ll"
+Sleep 4s
+Type "q"
+Sleep 1s
