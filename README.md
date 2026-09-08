@@ -134,6 +134,11 @@ theme = "auto" # auto | dark | light | a named palette
 
 ### Themes
 
+Press `T` in the dashboard to choose a theme. Type to filter the list, use
+`↑`/`↓` (or `Ctrl+n`/`Ctrl+p`, `Tab`/`Shift+Tab`) to preview it live, then
+press `Enter` to save it for future runs. `Esc` restores your previous theme.
+While typing in a search or filter field, leave the field first with `Esc`.
+
 The dashboard and colored CLI output adapt to light and dark terminals. Set
 `theme` explicitly if your terminal reports its background incorrectly, or name
 a palette to use it instead of the built-in one:

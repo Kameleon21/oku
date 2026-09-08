@@ -49,9 +49,11 @@ type Model struct {
 	st styles
 	// isDark is the background the palette was built for, and themePinned
 	// says the `theme` config key answered for it — in which case the
-	// terminal is never asked and its answer, if one arrives, is ignored.
-	isDark      bool
-	themePinned bool
+	// terminal reports are remembered without changing the pinned palette.
+	// terminalDark restores the detected background when switching to auto.
+	isDark       bool
+	themePinned  bool
+	terminalDark bool
 
 	shared *shared
 
@@ -130,16 +132,17 @@ func New(ctx context.Context, a *app.App, density Density, version string) *Mode
 	}
 
 	m := &Model{
-		app:         a,
-		ctx:         ctx,
-		version:     version,
-		st:          st,
-		isDark:      isDark,
-		themePinned: pinned,
-		shared:      sh,
-		tab:         tabReading,
-		detail:      newDetailPane(sh, st),
-		help:        newHelp(st),
+		app:          a,
+		ctx:          ctx,
+		version:      version,
+		st:           st,
+		isDark:       isDark,
+		themePinned:  pinned,
+		terminalDark: true,
+		shared:       sh,
+		tab:          tabReading,
+		detail:       newDetailPane(sh, st),
+		help:         newHelp(st),
 		// Init starts the cached-library and local-data loads, so two
 		// commands are already in flight.
 		inflight: 2,
@@ -173,6 +176,7 @@ func newHelp(st styles) help.Model {
 // so every style, every list delegate and every memoised page has to be
 // rebuilt — which is what stylesChangedMsg asks the sections to do.
 func (m *Model) applyBackground(isDark bool) tea.Cmd {
+	m.terminalDark = isDark
 	if m.themePinned || isDark == m.isDark {
 		return nil
 	}
@@ -260,6 +264,8 @@ func (m *Model) rootKey(msg tea.KeyPressMsg, k keyMap) (tea.Cmd, bool) {
 	switch {
 	case key.Matches(msg, k.Quit):
 		return tea.Quit, true
+	case key.Matches(msg, k.Theme):
+		return m.openThemePicker(), true
 	case key.Matches(msg, k.Help):
 		return m.openHelp(), true
 	case key.Matches(msg, k.Undo):
