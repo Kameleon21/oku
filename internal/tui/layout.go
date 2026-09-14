@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -95,10 +96,34 @@ func (m *Model) fitToScreen(frame string) string {
 		return frame
 	}
 	return lipgloss.NewStyle().
+		Width(m.lay.W).
 		MaxWidth(m.lay.W).
 		Height(m.lay.H).
 		MaxHeight(m.lay.H).
 		Render(frame)
+}
+
+// fillColors supplies the base foreground and background, including spaces
+// after ANSI resets, while preserving explicit colors on panels and buttons.
+// Working with cells keeps nested styles and hyperlinks intact and avoids
+// changing the terminal defaults that auto detection still needs to query.
+func fillColors(s string, fg, bg color.Color) string {
+	canvas := lipgloss.NewCanvas(lipgloss.Width(s), lipgloss.Height(s)).Compose(lipgloss.NewLayer(s))
+	for y := 0; y < canvas.Height(); y++ {
+		for x := 0; x < canvas.Width(); x++ {
+			cell := canvas.CellAt(x, y)
+			if cell == nil || cell.Width == 0 {
+				continue
+			}
+			if cell.Style.Bg == nil {
+				cell.Style.Bg = bg
+			}
+			if cell.Style.Fg == nil {
+				cell.Style.Fg = fg
+			}
+		}
+	}
+	return canvas.Render()
 }
 
 // ── Panes ──────────────────────────────────────────────────────────────────

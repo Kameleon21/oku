@@ -87,7 +87,7 @@ func (m *Model) header(lay layout) string {
 
 	gap := max(headerGap, w-lipgloss.Width(left)-lipgloss.Width(strip)-lipgloss.Width(right)-1)
 	row := left + strip + st.headerFill.Render(strings.Repeat(" ", gap)) + right
-	return st.headerBar.Width(w).MaxHeight(1).Render(ansi.Truncate(row, w-1, ""))
+	return fillColors(st.headerBar.Width(w).MaxHeight(1).Render(ansi.Truncate(row, w-1, "")), st.th.Text, st.th.Surface)
 }
 
 // tabStrip is the numbered strip: every tab, its count when it has one, and

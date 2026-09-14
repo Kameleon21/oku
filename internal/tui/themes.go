@@ -60,6 +60,7 @@ var namedThemes = []NamedTheme{
 			TextDim:       hex("#81A1C1"), // nord9
 			Border:        hex("#434C5E"), // nord2
 			BorderFocused: hex("#88C0D0"), // nord8
+			Background:    hex("#2E3440"),
 			Surface:       hex("#3B4252"), // nord1
 			Success:       hex("#A3BE8C"), // nord14
 			Warning:       hex("#EBCB8B"), // nord13
@@ -87,6 +88,7 @@ var namedThemes = []NamedTheme{
 			TextDim:       hex("#737aa2"), // dark5
 			Border:        hex("#414868"), // terminal_black
 			BorderFocused: hex("#7aa2f7"), // blue
+			Background:    hex("#1a1b26"),
 			Surface:       hex("#292e42"), // bg_highlight
 			Success:       hex("#9ece6a"), // green
 			Warning:       hex("#e0af68"), // yellow
@@ -121,6 +123,7 @@ var namedThemes = []NamedTheme{
 			TextDim:       hex("#6272A4"), // Comment
 			Border:        hex("#44475A"), // Current Line
 			BorderFocused: hex("#BD93F9"), // Purple
+			Background:    hex("#282A36"),
 			Surface:       hex("#282A36"), // Background
 			Success:       hex("#50FA7B"), // Green
 			Warning:       hex("#F1FA8C"), // Yellow
@@ -147,6 +150,7 @@ var namedThemes = []NamedTheme{
 			TextDim:       hex("#a89984"), // fg4
 			Border:        hex("#504945"), // bg2
 			BorderFocused: hex("#fe8019"), // bright orange
+			Background:    hex("#282828"),
 			Surface:       hex("#3c3836"), // bg1
 			Success:       hex("#b8bb26"), // bright green
 			Warning:       hex("#fabd2f"), // bright yellow
@@ -175,6 +179,7 @@ var namedThemes = []NamedTheme{
 			TextDim:       hex("#7c6f64"), // fg4
 			Border:        hex("#bdae93"), // bg3
 			BorderFocused: hex("#af3a03"), // faded orange
+			Background:    hex("#fbf1c7"),
 			Surface:       hex("#ebdbb2"), // bg1
 			Success:       hex("#79740e"), // faded green
 			Warning:       hex("#b57614"), // faded yellow
@@ -202,6 +207,7 @@ var namedThemes = []NamedTheme{
 			TextDim:       hex("#657b83"), // base00
 			Border:        hex("#586e75"), // base01
 			BorderFocused: hex("#268bd2"), // blue
+			Background:    hex("#002b36"),
 			Surface:       hex("#073642"), // base02, background highlight
 			Success:       hex("#859900"), // green
 			Warning:       hex("#b58900"), // yellow
@@ -235,6 +241,7 @@ var namedThemes = []NamedTheme{
 			TextDim:       hex("#657b83"), // base00
 			Border:        hex("#93a1a1"), // base1
 			BorderFocused: hex("#268bd2"), // blue
+			Background:    hex("#fdf6e3"),
 			Surface:       hex("#eee8d5"), // base2, background highlight
 			Success:       hex("#859900"), // green
 			Warning:       hex("#b58900"), // yellow
@@ -262,6 +269,7 @@ var namedThemes = []NamedTheme{
 			TextDim:       hex("#a6adc8"), // subtext0
 			Border:        hex("#45475a"), // surface1
 			BorderFocused: hex("#cba6f7"), // mauve
+			Background:    hex("#1e1e2e"),
 			Surface:       hex("#313244"), // surface0
 			Success:       hex("#a6e3a1"), // green
 			Warning:       hex("#f9e2af"), // yellow

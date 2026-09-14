@@ -54,12 +54,12 @@ func TestNamedThemeRoles(t *testing.T) {
 				"Accent": th.Accent, "Heading": th.Heading, "Text": th.Text,
 				"TextMuted": th.TextMuted, "TextDim": th.TextDim,
 				"Border": th.Border, "BorderFocused": th.BorderFocused,
-				"Surface": th.Surface, "Success": th.Success,
+				"Background": th.Background, "Surface": th.Surface, "Success": th.Success,
 				"Warning": th.Warning, "Error": th.Error,
 				"Heat1": th.Heat1, "Heat2": th.Heat2, "Heat3": th.Heat3, "Heat4": th.Heat4,
 			}
-			if len(roles) != 15 {
-				t.Fatalf("the role table lists %d roles, want the Theme's 15", len(roles))
+			if len(roles) != 16 {
+				t.Fatalf("the role table lists %d roles, want the Theme's 16", len(roles))
 			}
 			for name, c := range roles {
 				if c == nil {
@@ -82,8 +82,10 @@ func TestNamedThemeRoles(t *testing.T) {
 				{"TextDim", th.TextDim, minTextDimContrast},
 				{"Accent", th.Accent, minAccentContrast},
 			} {
-				if got := contrastRatio(c.fg, th.Surface); got < c.min {
-					t.Errorf("%s on Surface = %.2f:1, want >= %.1f:1", c.role, got, c.min)
+				for name, bg := range map[string]color.Color{"Background": th.Background, "Surface": th.Surface} {
+					if got := contrastRatio(c.fg, bg); got < c.min {
+						t.Errorf("%s on %s = %.2f:1, want >= %.1f:1", c.role, name, got, c.min)
+					}
 				}
 			}
 		})

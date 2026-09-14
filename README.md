@@ -10,7 +10,7 @@
 
 Your [Hardcover](https://hardcover.app) library in your terminal. Browse your shelves, find your next book, and track your reading with a keyboard-driven dashboard or quick CLI commands.
 
-![Oku dashboard in Catppuccin Mocha and Nord: theme preview, sample reading shelves, detail pane, statistics, timer picker and help](oku-demo.gif)
+![Oku TUI: browse books and statistics, then preview and apply Nord, Solarized Light and Catppuccin Mocha in the built-in theme picker](oku-demo.gif)
 
 *The recording uses fictional books and sample reading data. [Recording instructions](docs/demo/README.md).*
 
@@ -146,7 +146,7 @@ a palette to use it instead of the built-in one:
 | `theme` | What you get |
 | --- | --- |
 | `auto` (default) | the built-in palette, for whichever background the terminal reports |
-| `dark`, `light` | the built-in palette, pinned to that background |
+| `dark`, `light` | the built-in palette with a dark or light dashboard background |
 | `nord` | Nord |
 | `tokyo-night` | Tokyo Night (night) |
 | `dracula` | Dracula |
@@ -155,8 +155,10 @@ a palette to use it instead of the built-in one:
 | `catppuccin-mocha` | Catppuccin Mocha |
 
 Names are matched case-insensitively and an underscore reads as a hyphen, so
-`Tokyo_Night` works too. A named palette pins the background it was drawn for,
-so the terminal is not asked.
+`Tokyo_Night` works too. Named palettes include their own dashboard background,
+which changes along with the text and panels during live preview. `auto` keeps
+your terminal's background. Themes color Oku's screen without changing your
+terminal's color settings.
 
 ```sh
 oku config theme                # list the values, marking the one in use
