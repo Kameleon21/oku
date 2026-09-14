@@ -1711,6 +1711,7 @@ func TestThemeResolvesDistinctColoursForLightAndDark(t *testing.T) {
 		"text": {light.Text, dark.Text}, "textMuted": {light.TextMuted, dark.TextMuted},
 		"textDim": {light.TextDim, dark.TextDim}, "border": {light.Border, dark.Border},
 		"borderFocused": {light.BorderFocused, dark.BorderFocused},
+		"background":    {light.Background, dark.Background},
 		"surface":       {light.Surface, dark.Surface}, "success": {light.Success, dark.Success},
 		"warning": {light.Warning, dark.Warning}, "error": {light.Error, dark.Error},
 		"heat1": {light.Heat1, dark.Heat1}, "heat2": {light.Heat2, dark.Heat2},

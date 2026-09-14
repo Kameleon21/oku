@@ -26,6 +26,7 @@ type Theme struct {
 	TextDim       color.Color // hints, counts, subtle text
 	Border        color.Color // unfocused borders, empty tracks
 	BorderFocused color.Color // focused borders
+	Background    color.Color // dashboard background for explicit themes
 	Surface       color.Color // status bar and modal background
 	Success       color.Color // done, progress filled
 	Warning       color.Color // wait, retry
@@ -54,6 +55,7 @@ func NewTheme(isDark bool) Theme {
 		TextDim:       c("245", "243"),
 		Border:        c("250", "238"),
 		BorderFocused: c("130", "179"),
+		Background:    c("231", "234"),
 		Surface:       c("254", "236"),
 		Success:       c("64", "107"),
 		Warning:       c("166", "215"),
@@ -115,8 +117,7 @@ type styles struct {
 	tabIdle      lipgloss.Style
 	tabCount     lipgloss.Style
 
-	// The footer's toast, which sits on the terminal's own background rather
-	// than on a bar of its own.
+	// The footer's toast sits on the dashboard background.
 	toastInfo    lipgloss.Style
 	toastSuccess lipgloss.Style
 	toastWarn    lipgloss.Style
@@ -173,7 +174,7 @@ type styles struct {
 	heat4 lipgloss.Style
 }
 
-// newStyles derives every style from th. It is called once per Model.
+// newStyles derives every style from th at startup and when themes change.
 func newStyles(th Theme) styles {
 	headerFill := lipgloss.NewStyle().Background(th.Surface)
 	modalBg := lipgloss.NewStyle().Background(th.Surface)

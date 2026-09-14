@@ -7,88 +7,79 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Kameleon21/oku/internal/config"
 )
 
-// TestDemoTapeKeysStillNavigate replays the recording's key sequences against
-// the dashboard, so a keymap change cannot quietly turn the demo into a
-// recording of something else. The keys are read out of oku-demo.tape
-// itself; the expectations below are what each of them should reach.
-//
-// The tape starts the dashboard twice, once per palette it shows, and each
-// start is replayed against a fresh model.
-//
-// The one that needs watching is "ll": entering the Search tab must not
-// leave a text input holding the keyboard, or the second l would be typed
-// into the query instead of moving on to Stats.
+// TestDemoTapeKeysStillNavigate replays the actual tape against the model,
+// including live theme previews and saves, so the recording cannot silently
+// type theme names into Search or leave a picker open.
 func TestDemoTapeKeysStillNavigate(t *testing.T) {
-	type step struct {
-		key   string
-		tab   tab
-		focus focus
-	}
-	want := [][]step{
-		{
-			{"j", tabReading, focusContent},
-			{"j", tabReading, focusContent},
-			{"k", tabReading, focusContent},
-			{"enter", tabReading, focusDetail},
-			{"escape", tabReading, focusContent},
-			{"l", tabOku, focusContent},
-			{"j", tabOku, focusContent},
-			{"l", tabSearch, focusContent},
-			{"l", tabStats, focusContent},
-			{"l", tabTimer, focusContent},
-			{"t", tabTimer, focusContent}, // opens the book picker
-			{"j", tabTimer, focusContent},
-			{"escape", tabTimer, focusContent}, // cancels it
-			{"?", tabTimer, focusContent},      // opens the help modal
-			{"escape", tabTimer, focusContent}, // closes it
-			{"h", tabStats, focusContent},
-			{"h", tabSearch, focusContent},
-			{"h", tabOku, focusContent},
-			{"h", tabReading, focusContent},
-		},
-		{
-			{"l", tabOku, focusContent},
-			{"l", tabSearch, focusContent},
-			{"l", tabStats, focusContent},
-		},
-	}
-
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	old := currentThemeSetting()
+	t.Cleanup(func() { _ = ApplyThemeSetting(old) })
+	_ = ApplyThemeSetting("catppuccin-mocha")
 	sessions := tapeSessions(t)
-	if len(sessions) != len(want) {
-		t.Fatalf("oku-demo.tape starts the dashboard %d times, the test expects %d", len(sessions), len(want))
+	if len(sessions) != 1 {
+		t.Fatalf("want one TUI session, got %d", len(sessions))
 	}
-
-	for s, keys := range sessions {
-		steps := want[s]
-		if len(keys) != len(steps) {
-			t.Fatalf("session %d of oku-demo.tape presses %d keys, the test expects %d:\n%v", s+1, len(keys), len(steps), keys)
+	m := renderedDashboard(115, 36)
+	steps := []struct {
+		keys   string
+		tab    tab
+		focus  focus
+		theme  string
+		picker bool
+	}{
+		{"j", tabReading, focusContent, "catppuccin-mocha", false},
+		{"enter", tabReading, focusDetail, "catppuccin-mocha", false},
+		{"escape", tabReading, focusContent, "catppuccin-mocha", false},
+		{"T", tabReading, focusContent, "catppuccin-mocha", true},
+		{"nord", tabReading, focusContent, "nord", true},
+		{"enter", tabReading, focusContent, "nord", false},
+		{"2", tabOku, focusContent, "nord", false},
+		{"4", tabStats, focusContent, "nord", false},
+		{"T", tabStats, focusContent, "nord", true},
+		{"solarized-light", tabStats, focusContent, "solarized-light", true},
+		{"enter", tabStats, focusContent, "solarized-light", false},
+		{"1", tabReading, focusContent, "solarized-light", false},
+		{"T", tabReading, focusContent, "solarized-light", true},
+		{"mocha", tabReading, focusContent, "catppuccin-mocha", true},
+		{"enter", tabReading, focusContent, "catppuccin-mocha", false},
+		{"k", tabReading, focusContent, "catppuccin-mocha", false},
+	}
+	i := 0
+	for _, step := range steps {
+		keys := []string{step.keys}
+		if step.keys != "enter" && step.keys != "escape" {
+			keys = strings.Split(step.keys, "")
 		}
-
-		m := renderedDashboard(129, 46) // the tape's terminal, near enough
-		for i, step := range steps {
-			if keys[i] != step.key {
-				t.Fatalf("session %d key %d is %q, the test expects %q", s+1, i, keys[i], step.key)
+		for _, key := range keys {
+			if i >= len(sessions[0]) || sessions[0][i] != key {
+				t.Fatalf("tape key %d does not match expected %q", i, key)
 			}
-			send(t, m, tapeKeyMsg(t, step.key))
-
-			if m.tab != step.tab {
-				t.Fatalf("session %d: after key %d (%q) the tape is on tab %v, want %v", s+1, i, step.key, m.tab, step.tab)
-			}
-			if m.focus != step.focus {
-				t.Fatalf("session %d: after key %d (%q) the focus is %v, want %v", s+1, i, step.key, m.focus, step.focus)
-			}
-			if got := searchOf(m).input.Value(); got != "" {
-				t.Fatalf("session %d: after key %d (%q) the search input reads %q: the tape typed into it", s+1, i, step.key, got)
-			}
-			if _, help := m.topModal().(*helpModal); help != (step.key == "?") {
-				t.Fatalf("session %d: after key %d (%q) the help modal is open: %v", s+1, i, step.key, help)
+			send(t, m, tapeKeyMsg(t, key))
+			i++
+		}
+		if m.tab != step.tab || m.focus != step.focus || currentThemeSetting() != step.theme {
+			t.Fatalf("after %q: tab=%v focus=%v theme=%s", step.keys, m.tab, m.focus, currentThemeSetting())
+		}
+		_, picker := m.topModal().(*themePicker)
+		if picker != step.picker {
+			t.Fatalf("after %q: theme picker open=%v, want %v", step.keys, picker, step.picker)
+		}
+		if searchOf(m).input.Value() != "" {
+			t.Fatal("the tape typed into Search")
+		}
+		if step.keys == "enter" && !step.picker {
+			cfg, err := config.Load()
+			// The first Enter opens book details, before any theme is saved.
+			if m.focus != focusDetail && (err != nil || cfg.Theme != step.theme) {
+				t.Fatalf("theme was not saved: config=%+v err=%v", cfg, err)
 			}
 		}
-		if m.topModal() != nil {
-			t.Fatalf("session %d: the tape's last Escape should have left no modal open", s+1)
-		}
+	}
+	if i != len(sessions[0]) {
+		t.Fatalf("tape has %d unverified keys", len(sessions[0])-i)
 	}
 }
 

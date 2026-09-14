@@ -1,83 +1,65 @@
 Output oku-demo.gif
 Output oku-demo.mp4
 Set FontSize 18
-Set Width 1400
-Set Height 1000
+Set Width 1280
+Set Height 800
 Set Theme "Catppuccin Mocha"
-Set TypingSpeed 65ms
-Set Padding 20
+Set TypingSpeed 90ms
+Set Padding 16
 Set Framerate 15
+Env NO_COLOR ""
+Env COLORTERM "truecolor"
+Env CLICOLOR "1"
 
-# The palettes, one swatch row each, on their own surfaces.
-Type "oku config theme --preview"
-Enter
-Sleep 4s
-
-# Naming one writes it to the config; the dashboard draws with it from the next start.
-Type "oku config theme catppuccin-mocha"
-Enter
-Sleep 2s
-
+# Start inside the app. Setup and the shell are outside the recording.
+Hide
 Type "oku"
 Enter
-Sleep 3s
-
-# Browse the sample reading library. The detail pane follows the cursor.
-Type "j"
-Sleep 1s
-Type "j"
-Sleep 1s
-Type "k"
-Sleep 1s
-
-# Enter moves the keyboard into the detail pane; Escape brings it back.
-Enter
 Sleep 2s
-Escape
-Sleep 1s
-
-# Want-to-read shelf: tab 2.
-Type "l"
-Sleep 2s
-Type "j"
-Sleep 1s
-
-# Past the Search tab (3) to the statistics (4); no live search is made.
-Type "ll"
-Sleep 4s
-
-# The Timer tab (5): open its local book picker, then cancel.
-Type "l"
-Sleep 2s
-Type "t"
-Sleep 2s
-Type "j"
-Sleep 1s
-Escape
-Sleep 1s
-
-# The help modal names the palette in its title.
-Type "?"
+Show
 Sleep 2.5s
-Escape
-Sleep 1s
 
-# Back to the reading library, then out.
-Type "hhhh"
-Sleep 2s
-Type "q"
-Sleep 1s
-
-# The same dashboard in Nord.
-Type "oku config theme nord"
-Enter
+# Browse a book and its detail pane.
+Type "j"
 Sleep 1.5s
-Type "oku"
 Enter
-Sleep 3s
-Type "l"
 Sleep 2s
-Type "ll"
-Sleep 4s
-Type "q"
+Escape
+
+# Open the in-app theme picker and preview Nord live, then apply it.
+Type "T"
+Sleep 1.5s
+Type "nord"
+Sleep 2.5s
+Enter
+Sleep 2s
+
+# The want-to-read shelf and reading statistics, still in Nord.
+Type "2"
+Sleep 2s
+Type "4"
+Sleep 3s
+
+# Show a light background changing live inside the TUI.
+Type "T"
 Sleep 1s
+Type "solarized-light"
+Sleep 2.5s
+Enter
+Sleep 2s
+
+# Return to Reading and restore Mocha through the same picker.
+Type "1"
+Sleep 1.5s
+Type "T"
+Type "mocha"
+Sleep 1.5s
+Enter
+Sleep 2.5s
+
+# End on the opening view for a quiet loop; keep the shell out of frame.
+Type "k"
+Sleep 1.5s
+Hide
+Type "q"
+Sleep 500ms

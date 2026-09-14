@@ -832,7 +832,11 @@ func (m *Model) openHelp() tea.Cmd {
 // on every frame.
 func (m *Model) View() tea.View {
 	frame, cur := m.render()
-	v := tea.NewView(m.fitToScreen(frame))
+	frame = m.fitToScreen(frame)
+	if m.themePinned {
+		frame = fillColors(frame, m.st.th.Text, m.st.th.Background)
+	}
+	v := tea.NewView(frame)
 	v.AltScreen = true
 	v.Cursor = cur
 	return v
