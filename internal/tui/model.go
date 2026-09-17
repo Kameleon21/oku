@@ -278,7 +278,7 @@ func (m *Model) rootKey(msg tea.KeyPressMsg, k keyMap) (tea.Cmd, bool) {
 		// Enter used to move the book to another shelf, so a stray keypress
 		// silently rewrote the library. It now only moves the keyboard into
 		// the detail pane; g/w/f/d still change the status.
-		return m.setFocus(focusDetail), true
+		return tea.Batch(m.setFocus(focusDetail), request(reqBookDetail{selection: m.section().Selected()})), true
 	case key.Matches(msg, k.Back):
 		if m.focus == focusDetail {
 			return m.setFocus(focusContent), true
@@ -446,6 +446,9 @@ func (m *Model) applyLibraryLoaded(msg libraryLoadedMsg) tea.Cmd {
 	}
 	m.shared.reading = msg.reading
 	m.shared.oku = msg.oku
+	m.shared.paused = msg.paused
+	m.shared.queueOrder = msg.queueOrder
+	app.SortQueue(m.shared.oku, msg.queueOrder)
 	if msg.reconcile {
 		// The pending local mutations are now reflected by the server data.
 		m.dirty = false
@@ -504,6 +507,9 @@ func (m *Model) applyOpDone(msg opDoneMsg) tea.Cmd {
 // handleRequest runs what a section or modal asked for. This is the one
 // place the in-flight guard applies and commands start.
 func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
+	if cmd, ok := m.handleReaderRequest(msg); ok {
+		return cmd
+	}
 	switch r := msg.(type) {
 	case reqToast:
 		return m.showToast(r.level, r.text)

@@ -72,6 +72,7 @@ func newRootCmd(version string) *cobra.Command {
 	cmd.AddCommand(newReviewCmd())
 	cmd.AddCommand(newStatusCmd())
 	cmd.AddCommand(newSyncCmd())
+	cmd.AddCommand(newJournalCmd("note"), newJournalCmd("quote"), newJournalListCmd(), newBookDetailCmd(), newGoalsCmd(), newTrendingCmd(), newExportCmd(), newImportCmd())
 
 	// Local-only commands (no auth required).
 	cmd.AddCommand(newTimerCmd())
@@ -81,6 +82,7 @@ func newRootCmd(version string) *cobra.Command {
 	cmd.AddCommand(newShortcutCmd("reading", "List currently reading books", 2))
 	cmd.AddCommand(newShortcutCmd("oku", "List want-to-read books", 1))
 	cmd.AddCommand(newShortcutCmd("finished", "List finished books", 3))
+	cmd.AddCommand(newShortcutCmd("paused", "List paused books", 4))
 	cmd.AddCommand(newShortcutCmd("dnf", "List did-not-finish books", 5))
 
 	return cmd

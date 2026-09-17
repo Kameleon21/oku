@@ -221,6 +221,12 @@ func (s *searchSection) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 
 	switch {
+	case key.Matches(msg, k.Trending):
+		s.seq++
+		s.loading = true
+		s.loadingQuery = "Trending this week"
+		s.lastQuery = "Trending this week"
+		return request(reqTrending{seq: s.seq})
 	case key.Matches(msg, k.SearchInput):
 		return s.focusInput()
 	case key.Matches(msg, k.SearchMode):
@@ -339,6 +345,9 @@ func (s *searchSection) Resize(w, h int) tea.Cmd {
 }
 
 func (s *searchSection) Keys(k *keyMap) {
+	if s.focus == resultsFocused {
+		enable(&k.Trending)
+	}
 	if s.focus == inputFocused {
 		// The input owns the keyboard here, so every key advertised is one
 		// it does not swallow: no letters, no digits.
