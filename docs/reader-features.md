@@ -47,7 +47,7 @@ oku trending --period month --limit 30 --json
 
 Book detail includes description, headline, community ratings distribution and editions count. Details are cached; `--refresh` reloads them. Dashboard **Enter** loads this information into the scrollable detail pane. Use j/k to scroll and Esc to return.
 
-In Search, leave the input with Esc (or navigate to Search with h/l), then press **D** to browse this week's trending books. Existing detail and add-to-shelf keys work on discovery results. CLI periods are `week`, `month`, `three_month`, `one_year`, and `all`.
+In Search, press **Ctrl+D** while typing to browse this week's trending books. Your query draft is preserved. When the results have focus, **Shift+D** (uppercase D) loads trending; press **i** to return to your draft. Shift+D types a capital D while the text input is active. Existing detail and add-to-shelf keys work on discovery results. CLI periods are `week`, `month`, `three_month`, `one_year`, and `all`.
 
 ## Want-to-read priority
 
