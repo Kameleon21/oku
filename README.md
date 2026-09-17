@@ -113,7 +113,8 @@ Imports preview changes by default, including Goodreads CSV matching by ISBN.
 
 In the dashboard: **n** opens a note/quote editor, **p** pauses a book, **P** toggles
 Reading's paused shelf, **J/K** reorder the Oku queue, **R** refreshes that queue,
-and **D** in Search results loads trending books. Enter loads rich details and your journal.
+and **Ctrl+D** in the Search input (**Shift+D** in results) loads trending books.
+Enter loads rich details and your journal.
 
 See [reader tools](docs/reader-features.md) for commands, privacy, ranking and import behavior.
 

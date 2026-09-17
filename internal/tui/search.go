@@ -197,6 +197,8 @@ func (s *searchSection) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	k := keysFor(s)
 	if s.focus == inputFocused {
 		switch {
+		case key.Matches(msg, k.Trending):
+			return s.discoverTrending()
 		case key.Matches(msg, k.SearchSubmit):
 			return s.submit()
 		case key.Matches(msg, k.SearchMode):
@@ -222,11 +224,7 @@ func (s *searchSection) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 
 	switch {
 	case key.Matches(msg, k.Trending):
-		s.seq++
-		s.loading = true
-		s.loadingQuery = "Trending this week"
-		s.lastQuery = "Trending this week"
-		return request(reqTrending{seq: s.seq})
+		return s.discoverTrending()
 	case key.Matches(msg, k.SearchInput):
 		return s.focusInput()
 	case key.Matches(msg, k.SearchMode):
@@ -246,6 +244,17 @@ func (s *searchSection) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	var cmd tea.Cmd
 	s.list, cmd = s.list.Update(msg)
 	return cmd
+}
+
+// discoverTrending shares the input and results entry points. Keep the query
+// draft intact and give the results focus so loading, empty and failed requests
+// are visible without leaving the user typing into a hidden field.
+func (s *searchSection) discoverTrending() tea.Cmd {
+	s.focusResults()
+	s.seq++
+	s.loading = true
+	s.loadingQuery = "Trending this week"
+	return request(reqTrending{seq: s.seq})
 }
 
 // searchChromeRows is what the pane spends above the results: the input,
@@ -345,12 +354,12 @@ func (s *searchSection) Resize(w, h int) tea.Cmd {
 }
 
 func (s *searchSection) Keys(k *keyMap) {
-	if s.focus == resultsFocused {
-		enable(&k.Trending)
-	}
+	enable(&k.Trending)
 	if s.focus == inputFocused {
 		// The input owns the keyboard here, so every key advertised is one
 		// it does not swallow: no letters, no digits.
+		k.Trending.SetKeys("ctrl+d")
+		k.Trending.SetHelp("C-d", "trending")
 		k.Down.SetKeys("down")
 		k.Down.SetHelp("↓", "results")
 		k.SearchMode.SetKeys("ctrl+t")
@@ -360,7 +369,7 @@ func (s *searchSection) Keys(k *keyMap) {
 		if s.hasResults() {
 			enable(&k.Down)
 		}
-		k.short = []key.Binding{k.SearchSubmit, k.SearchMode, k.Down, k.Back}
+		k.short = []key.Binding{k.SearchSubmit, k.Trending, k.SearchMode, k.Down, k.Back}
 		return
 	}
 
@@ -378,6 +387,7 @@ func (s *searchSection) Keys(k *keyMap) {
 		&k.NextSection, &k.PrevSection, &k.TabJump, &k.Density)
 	k.short = []key.Binding{
 		k.Help,
+		k.Trending,
 		hintAs("Esc/i", "input", k.SearchInput),
 		k.SearchMode,
 		hint("tab", k.PrevSection, k.NextSection),
@@ -400,6 +410,7 @@ func (s *searchSection) Keys(k *keyMap) {
 		&k.SetFinished, &k.SetDNF)
 	k.short = []key.Binding{
 		k.Help,
+		k.Trending,
 		hint("navigate", k.Down, k.Up),
 		k.Details,
 		k.AddReading,
