@@ -28,12 +28,12 @@
 ┃                                  │    f             set finished                  │                                  │
 ┃                                  │    d             did not finish (asks)         │                                  │
 ┃                                  │    x             ignore / remove (asks)        │                                  │
-┃                                  │    m             cycle mode                    │                                  │
-┃                                  │    z             density                       │                                  │
-┃                                  │                                                │                                  │
-┃                                  │  Timer                                         │                                  │
-┃                                  │    t             start timer                   │                                  │
-┃                                  │    s             stop timer                    │                                  │
+┃                                  │    n             note / quote                  │                                  │
+┃                                  │    p             pause book                    │                                  │
+┃                                  │    P             toggle paused shelf           │                                  │
+┃                                  │    K             raise reading priority        │                                  │
+┃                                  │    J             lower reading priority        │                                  │
+┃                                  │    R             refresh reading queue         │                                  │
 ┃                                  │  j/k scroll · ? or esc close   oku test        │                                  │
 ┃                                  │                                                │                                  │
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╰────────────────────────────────────────────────╯──────────────────────────────────╯

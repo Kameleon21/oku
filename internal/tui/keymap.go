@@ -36,12 +36,13 @@ type keyMap struct {
 	HalfPageUp, HalfPageDown key.Binding
 
 	// Library.
-	Details                                              key.Binding
-	ProgressUp, ProgressDown                             key.Binding
-	Update, Rate                                         key.Binding
-	SetReading, SetWant, SetFinished, SetDNF, SetIgnored key.Binding
-	Timer, TimerStop                                     key.Binding
-	Sync, Refresh, Density                               key.Binding
+	Details                                                                  key.Binding
+	ProgressUp, ProgressDown                                                 key.Binding
+	Update, Rate                                                             key.Binding
+	Note, SetPaused, PausedShelf, QueueUp, QueueDown, QueueRefresh, Trending key.Binding
+	SetReading, SetWant, SetFinished, SetDNF, SetIgnored                     key.Binding
+	Timer, TimerStop                                                         key.Binding
+	Sync, Refresh, Density                                                   key.Binding
 
 	// Search.
 	// SearchMode cycles Title/Author/Genre. It answers to different keys in
@@ -109,6 +110,13 @@ func newKeyMap() keyMap {
 		ProgressDown: bind("-", "-10 pages", "-"),
 		Update:       bind("u", "update page", "u"),
 		Rate:         bind("v", "review / rate", "v"),
+		Note:         bind("n", "note / quote", "n"),
+		SetPaused:    bind("p", "pause book", "p"),
+		PausedShelf:  bind("P", "toggle paused shelf", "P"),
+		QueueUp:      bind("K", "raise reading priority", "K"),
+		QueueDown:    bind("J", "lower reading priority", "J"),
+		QueueRefresh: bind("R", "refresh reading queue", "R"),
+		Trending:     bind("D", "discover trending books", "D"),
 		SetReading:   bind("g", "set reading", "g"),
 		SetWant:      bind("w", "set want to read", "w"),
 		SetFinished:  bind("f", "set finished", "f"),
@@ -239,6 +247,7 @@ func (k keyMap) helpGroups() []helpGroup {
 			k.SetFinished,
 			k.SetDNF,
 			k.SetIgnored,
+			k.Note, k.SetPaused, k.PausedShelf, k.QueueUp, k.QueueDown, k.QueueRefresh, k.Trending,
 			k.SearchMode,
 			k.Density,
 		}},

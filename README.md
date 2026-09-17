@@ -104,6 +104,19 @@ searches, `Esc` goes back to the tab you came from. `Esc` or `i` over the
 results puts it back in the query; there `m` cycles the mode and `j`/`k`,
 `Enter` and `a` work as they do in the other lists.
 
+### Journals, goals, discovery and library transfer
+
+Write notes and quotes with `oku note` / `oku quote`, edit reading goals with
+`oku goals set`, inspect rich book details with `oku book`, discover books with
+`oku trending`, and transfer your library with `oku export` / `oku import`.
+Imports preview changes by default, including Goodreads CSV matching by ISBN.
+
+In the dashboard: **n** opens a note/quote editor, **p** pauses a book, **P** toggles
+Reading's paused shelf, **J/K** reorder the Oku queue, **R** refreshes that queue,
+and **D** in Search results loads trending books. Enter loads rich details and your journal.
+
+See [reader tools](docs/reader-features.md) for commands, privacy, ranking and import behavior.
+
 ### Reading timer
 
 Track time spent reading with local sessions:

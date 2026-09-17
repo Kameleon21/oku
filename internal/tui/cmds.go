@@ -22,6 +22,8 @@ const (
 type libraryLoadedMsg struct {
 	reading      []model.UserBook
 	oku          []model.UserBook
+	paused       []model.UserBook
+	queueOrder   []int
 	needsRefresh bool
 	// reconcile marks the background reconcile's own result: only that one
 	// may clear dirty, since any other load can land while it is in flight.
@@ -49,6 +51,7 @@ const (
 	opStatus
 	opReview
 	opSync
+	opJournal
 )
 
 type opDoneMsg struct {
@@ -106,7 +109,15 @@ func loadCachedLibraryCmd(a *app.App) tea.Cmd {
 		if err != nil {
 			return libraryLoadedMsg{err: err}
 		}
-		return libraryLoadedMsg{
+		paused, err := a.Store.ListUserBooks(model.StatusPaused)
+		if err != nil {
+			return libraryLoadedMsg{err: err}
+		}
+		order, err := a.CachedQueueOrder()
+		if err != nil {
+			return libraryLoadedMsg{err: err}
+		}
+		return libraryLoadedMsg{paused: paused, queueOrder: order,
 			reading:      reading,
 			oku:          oku,
 			needsRefresh: readingStale || okuStale,
@@ -127,7 +138,15 @@ func loadLibraryCmd(ctx context.Context, a *app.App, refresh bool) tea.Cmd {
 		if err != nil {
 			return libraryLoadedMsg{err: err}
 		}
-		return libraryLoadedMsg{
+		paused, err := a.Store.ListUserBooks(model.StatusPaused)
+		if err != nil {
+			return libraryLoadedMsg{err: err}
+		}
+		order, err := a.CachedQueueOrder()
+		if err != nil {
+			return libraryLoadedMsg{err: err}
+		}
+		return libraryLoadedMsg{paused: paused, queueOrder: order,
 			reading: reading,
 			oku:     oku,
 		}

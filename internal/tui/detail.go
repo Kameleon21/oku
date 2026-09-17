@@ -188,9 +188,9 @@ func (d *detailPane) View(sel selection, t tab) string {
 func (d *detailPane) render(sel selection, t tab) string {
 	switch {
 	case sel.Book != nil:
-		return renderUserBook(*sel.Book, d.sh.sessions, d.sh.now(), d.w, d.sh.density, d.st)
+		return renderUserBook(*sel.Book, d.sh.sessions, d.sh.now(), d.w, d.sh.density, d.st) + renderRichDetail(d.sh.details[sel.Book.BookID], d.w, d.st) + renderBookJournal(d.sh.journals[sel.Book.BookID], d.w, d.st)
 	case sel.Result != nil:
-		return renderSearchResult(*sel.Result, d.sh.shelf, d.w, d.st)
+		return renderSearchResult(*sel.Result, d.sh.shelf, d.w, d.st) + renderRichDetail(d.sh.details[sel.Result.ID], d.w, d.st)
 	case t == tabSearch:
 		return d.searchEmptyState()
 	default:

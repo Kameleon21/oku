@@ -5,6 +5,7 @@ import (
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
+	"github.com/Kameleon21/oku/internal/api"
 	"github.com/Kameleon21/oku/internal/model"
 )
 
@@ -74,6 +75,10 @@ type selection struct {
 // loop.
 type shared struct {
 	reading, oku []model.UserBook
+	paused       []model.UserBook
+	queueOrder   []int
+	details      map[int]*api.BookDetail
+	journals     map[int][]api.JournalEntry
 	// shelf is every cached user book by book id, across all statuses, so
 	// the search detail can say whether the library already has a result,
 	// and what it was rated.

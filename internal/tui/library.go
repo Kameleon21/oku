@@ -74,7 +74,8 @@ type librarySection struct {
 	tab  tab
 	list list.Model
 	// w is the pane's inner width, which the rows are drawn to.
-	w int
+	w          int
+	showPaused bool
 }
 
 func newLibrarySection(sh *shared, st styles, t tab) *librarySection {
@@ -105,6 +106,9 @@ func newList(st styles) list.Model {
 func (s *librarySection) books() []model.UserBook {
 	if s.tab == tabOku {
 		return s.sh.oku
+	}
+	if s.showPaused {
+		return s.sh.paused
 	}
 	return s.sh.reading
 }
@@ -143,7 +147,29 @@ func (s *librarySection) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		var cmd tea.Cmd
 		s.list, cmd = s.list.Update(msg)
 		return cmd
+	case key.Matches(msg, k.Note):
+		if b := s.selected(); b != nil {
+			return request(reqOpenModal{newJournalModal(s.sh, s.st, *b)})
+		}
+	case key.Matches(msg, k.SetPaused):
+		return s.changeStatus(model.StatusPaused, false)
+	case key.Matches(msg, k.PausedShelf):
+		s.showPaused = !s.showPaused
+		return tea.Batch(s.rebuild(), request(reqPausedShelf{}))
+	case key.Matches(msg, k.QueueUp, k.QueueDown):
+		if b := s.selected(); b != nil {
+			delta := 1
+			if key.Matches(msg, k.QueueUp) {
+				delta = -1
+			}
+			return request(reqQueueMove{b.BookID, delta})
+		}
+	case key.Matches(msg, k.QueueRefresh):
+		return request(reqQueueRefresh{})
 	case key.Matches(msg, k.Refresh):
+		if s.showPaused {
+			return request(reqPausedShelf{})
+		}
 		return request(reqRefresh{})
 	case key.Matches(msg, k.ProgressUp):
 		return s.progress(+10)
@@ -168,7 +194,7 @@ func (s *librarySection) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	case key.Matches(msg, k.SetIgnored):
 		return s.changeStatus(model.StatusIgnored, true)
 	case key.Matches(msg, k.Timer):
-		return request(reqTimerToggle{book: s.selected(), reading: s.tab == tabReading})
+		return request(reqTimerToggle{book: s.selected(), reading: s.tab == tabReading && !s.showPaused})
 	}
 	return nil
 }
@@ -242,12 +268,19 @@ func (s *librarySection) Resize(w, h int) tea.Cmd {
 }
 
 func (s *librarySection) Keys(k *keyMap) {
+	enable(&k.Note, &k.SetPaused)
+	if s.tab == tabReading {
+		enable(&k.PausedShelf)
+	}
+	if s.tab == tabOku {
+		enable(&k.QueueUp, &k.QueueDown, &k.QueueRefresh)
+	}
 	tabHint := hint("tab", k.PrevSection, k.NextSection)
 	k.Up.SetHelp("k", "navigate")
 	k.Down.SetHelp("j", "navigate")
 	if s.sh.timer != nil {
 		k.Timer.SetHelp("t", "stop timer")
-	} else if s.tab != tabReading {
+	} else if s.tab != tabReading || s.showPaused {
 		// The books here are not being read, so t asks which of the ones
 		// that are should be timed.
 		k.Timer.SetHelp("t", "start a timer")
@@ -281,6 +314,9 @@ func (s *librarySection) CapturesKeys() bool { return false }
 func (s *librarySection) Title() string {
 	if s.tab == tabOku {
 		return fmt.Sprintf("Oku (%d)", len(s.books()))
+	}
+	if s.showPaused {
+		return fmt.Sprintf("Paused (%d) · g to resume · P reading", len(s.books()))
 	}
 	return fmt.Sprintf("Reading (%d)", len(s.books()))
 }

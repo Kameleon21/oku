@@ -24,7 +24,7 @@ func (c *Client) InsertUserBook(ctx context.Context, bookID int, statusID int) (
 	req := graphql.NewRequest(q)
 
 	var resp InsertUserBookResponse
-	if err := c.do(ctx, req, &resp); err != nil {
+	if err := c.doMutation(ctx, req, &resp); err != nil {
 		return 0, fmt.Errorf("InsertUserBook: %w", err)
 	}
 
