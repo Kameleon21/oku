@@ -327,7 +327,7 @@ func (c *Client) ExportLibrary(ctx context.Context) ([]APIUserBook, error) {
 	}
 }
 func (c *Client) LookupISBN(ctx context.Context, isbn string) (int, error) {
-	req := graphql.NewRequest(`query($isbn:String!) { editions(where:{_or:[{isbn_13:{_eq:$isbn}},{isbn_10:{_eq:$isbn}}]},limit:2) { book_id } }`)
+	req := graphql.NewRequest(`query($isbn:String!) { editions(where:{_or:[{isbn_13:{_eq:$isbn}},{isbn_10:{_eq:$isbn}}]},distinct_on:[book_id],order_by:{book_id:asc},limit:2) { book_id } }`)
 	req.Var("isbn", isbn)
 	var resp struct {
 		Editions []struct {

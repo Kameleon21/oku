@@ -184,6 +184,10 @@ func TestGoalValidationAndRequiredObject(t *testing.T) {
 func TestLookupISBNAmbiguity(t *testing.T) {
 	t.Parallel()
 	c, srv := testClientForServer(func(w http.ResponseWriter, r *http.Request) {
+		q := readReaderRequest(t, r)
+		if !strings.Contains(q.Query, "distinct_on:[book_id]") {
+			t.Error("ambiguity check must compare distinct books, not editions")
+		}
 		fmt.Fprint(w, `{"data":{"editions":[{"book_id":1},{"book_id":2}]}}`)
 	})
 	defer srv.Close()
