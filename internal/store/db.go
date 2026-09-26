@@ -14,7 +14,7 @@ import (
 // Bump this whenever schemaDDL, its index list, or the ensureColumn lists in
 // migrate change. A database already at the old value skips migrate entirely,
 // so without a bump existing installations silently never get the change.
-const schemaVersion = 1
+const schemaVersion = 2
 
 // Store wraps a SQLite database connection for local book data.
 type Store struct {
@@ -98,6 +98,11 @@ CREATE TABLE IF NOT EXISTS user_book_reads (
 	progress_pages  INTEGER NOT NULL DEFAULT 0,
 	started_at      TEXT,
 	finished_at     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS private_notes (
+ book_id INTEGER PRIMARY KEY,
+ text TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS state (

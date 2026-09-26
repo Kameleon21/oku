@@ -36,6 +36,7 @@ type keyMap struct {
 	HalfPageUp, HalfPageDown key.Binding
 
 	// Library.
+	FinishedBooks                                                            key.Binding
 	Details                                                                  key.Binding
 	ProgressUp, ProgressDown                                                 key.Binding
 	Update, Rate                                                             key.Binding
@@ -105,28 +106,29 @@ func newKeyMap() keyMap {
 		HalfPageUp:   bind("C-u", "half page up", "ctrl+u", "pgup"),
 		HalfPageDown: bind("C-d", "half page down", "ctrl+d", "pgdown"),
 
-		Details:      bind("↵", "detail", "enter"),
-		ProgressUp:   bind("+", "+10 pages", "+", "="),
-		ProgressDown: bind("-", "-10 pages", "-"),
-		Update:       bind("u", "update page", "u"),
-		Rate:         bind("v", "review / rate", "v"),
-		Note:         bind("n", "note / quote", "n"),
-		SetPaused:    bind("p", "pause book", "p"),
-		PausedShelf:  bind("P", "toggle paused shelf", "P"),
-		QueueUp:      bind("K", "raise reading priority", "K"),
-		QueueDown:    bind("J", "lower reading priority", "J"),
-		QueueRefresh: bind("R", "refresh reading queue", "R"),
-		Trending:     bind("D", "discover trending books", "D"),
-		SetReading:   bind("g", "set reading", "g"),
-		SetWant:      bind("w", "set want to read", "w"),
-		SetFinished:  bind("f", "set finished", "f"),
-		SetDNF:       bind("d", "did not finish (asks)", "d"),
-		SetIgnored:   bind("x", "ignore / remove (asks)", "x"),
-		Timer:        bind("t", "start timer", "t"),
-		TimerStop:    bind("s", "stop timer", "s"),
-		Sync:         bind("s", "sync with Hardcover", "s"),
-		Refresh:      bind("r", "refresh", "r"),
-		Density:      bind("z", "density", "z"),
+		FinishedBooks: bind("b", "browse finished books", "b"),
+		Details:       bind("↵", "detail", "enter"),
+		ProgressUp:    bind("+", "+10 pages", "+", "="),
+		ProgressDown:  bind("-", "-10 pages", "-"),
+		Update:        bind("u", "update page", "u"),
+		Rate:          bind("v", "review / rate", "v"),
+		Note:          bind("n", "note / quote", "n"),
+		SetPaused:     bind("p", "pause book", "p"),
+		PausedShelf:   bind("P", "toggle paused shelf", "P"),
+		QueueUp:       bind("K", "raise reading priority", "K"),
+		QueueDown:     bind("J", "lower reading priority", "J"),
+		QueueRefresh:  bind("R", "refresh reading queue", "R"),
+		Trending:      bind("D", "discover trending books", "D"),
+		SetReading:    bind("g", "set reading", "g"),
+		SetWant:       bind("w", "set want to read", "w"),
+		SetFinished:   bind("f", "set finished", "f"),
+		SetDNF:        bind("d", "did not finish (asks)", "d"),
+		SetIgnored:    bind("x", "ignore / remove (asks)", "x"),
+		Timer:         bind("t", "start timer", "t"),
+		TimerStop:     bind("s", "stop timer", "s"),
+		Sync:          bind("s", "sync with Hardcover", "s"),
+		Refresh:       bind("r", "refresh", "r"),
+		Density:       bind("z", "density", "z"),
 
 		SearchMode:   bind("m", "cycle mode", "m", "ctrl+t"),
 		SearchSubmit: bind("↵", "search", "enter"),
@@ -235,7 +237,7 @@ func (k keyMap) helpGroups() []helpGroup {
 			hint("half page", k.HalfPageUp, k.HalfPageDown),
 		}},
 		{"Actions", []key.Binding{
-			k.Details,
+			k.Details, k.FinishedBooks,
 			k.AddReading,
 			k.SearchSubmit,
 			k.Select,

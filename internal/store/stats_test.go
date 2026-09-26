@@ -232,3 +232,47 @@ func TestGoalsRoundTrip(t *testing.T) {
 		t.Fatalf("got %d goals after clear, want 0", len(got))
 	}
 }
+
+func TestFinishedBooksMatchSummaryIncludingRereads(t *testing.T) {
+	s := testStore(t)
+	seedFinishedRead(t, s, 1, 300, 4, "2026-01-01", "")
+	seedFinishedRead(t, s, 2, 200, 5, "2026-12-31", "")
+	seedFinishedRead(t, s, 3, 100, 0, "2025-12-31", "")
+	seedFinishedRead(t, s, 4, 100, 0, "2027-01-01", "")
+	seedFinishedRead(t, s, 5, 100, 0, "", "")
+	finished := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
+	if err := s.UpsertUserBookRead(model.UserBookRead{ID: 11, UserBookID: 1, FinishedAt: &finished}); err != nil {
+		t.Fatal(err)
+	}
+	started := finished.AddDate(0, 1, 0)
+	if err := s.UpsertUserBookRead(model.UserBookRead{ID: 12, UserBookID: 1, StartedAt: &started}); err != nil {
+		t.Fatal(err)
+	}
+	// A current reread must not hide the two historical completions.
+	if _, err := s.db.Exec(`UPDATE user_books SET status_id = ? WHERE id = 1`, model.StatusCurrentlyReading); err != nil {
+		t.Fatal(err)
+	}
+	books, err := s.ListFinishedBooks(2026)
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, err := s.GetYearSummary(2026)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(books) != summary.BooksFinished || len(books) != 3 {
+		t.Fatalf("list count %d, summary %+v", len(books), summary)
+	}
+	for i, id := range []int{2, 11, 1} {
+		if books[i].UserBookReads[0].ID != id {
+			t.Fatalf("read %d = %+v; want %d", i, books[i], id)
+		}
+	}
+	if books[1].Rating != 4 || books[1].BookID != 1 || books[1].Book.Pages != 300 {
+		t.Fatalf("missing book details: %+v", books[1])
+	}
+	empty, err := s.ListFinishedBooks(2024)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("empty year = %v, %v", empty, err)
+	}
+}

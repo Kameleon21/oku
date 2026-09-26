@@ -39,6 +39,11 @@ type queueLoadedMsg struct {
 	err    error
 }
 type reqTrending struct{ seq int }
+type reqPrivateNote struct {
+	bookID, token int
+	text          string
+}
+
 type reqJournal struct {
 	bookID, token int
 	event, text   string
@@ -145,6 +150,19 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 			books, err := m.app.TrendingBooks(m.ctx, "week", 20)
 			return searchLoadedMsg{results: books, query: "Trending this week", mode: model.SearchModeBook, seq: r.seq, err: err}
 		}), true
+	case reqPrivateNote:
+		if m.isLoading() {
+			return m.refuse(opPrivateNote, r.token), true
+		}
+		return m.beginLoading(func() tea.Msg {
+			var err error
+			if m.app == nil || m.app.Store == nil {
+				err = fmt.Errorf("local storage is unavailable")
+			} else {
+				err = m.app.Store.SavePrivateNote(r.bookID, r.text)
+			}
+			return opDoneMsg{op: opPrivateNote, seq: r.token, bookID: r.bookID, privateNote: r.text, err: err, info: "Private note saved on this device"}
+		}), true
 	case reqJournal:
 		if m.isLoading() {
 			return m.refuse(opJournal, r.token), true
@@ -201,6 +219,7 @@ func ratingRows(raw json.RawMessage, w int) string {
 }
 
 type journalModal struct {
+	private       bool
 	bookID, token int
 	title, event  string
 	text          textarea.Model
@@ -219,8 +238,20 @@ func newJournalModal(sh *shared, st styles, b model.UserBook) *journalModal {
 	text.SetHeight(8)
 	return &journalModal{bookID: b.BookID, token: sh.nextToken(), title: b.Book.Title, event: "note", text: text, focusCmd: text.Focus()}
 }
+func newPrivateNoteModal(sh *shared, st styles, b model.UserBook) *journalModal {
+	n := newJournalModal(sh, st, b)
+	n.private = true
+	n.text.Placeholder = "Write a private note (stored only on this device)…"
+	n.text.SetValue(sh.privateNotes[b.BookID])
+	return n
+}
+
 func (n *journalModal) Update(msg tea.Msg) (bool, tea.Cmd) {
-	if done, ok := msg.(opDoneMsg); ok && done.op == opJournal && done.seq == n.token {
+	op := opJournal
+	if n.private {
+		op = opPrivateNote
+	}
+	if done, ok := msg.(opDoneMsg); ok && done.op == op && done.seq == n.token {
 		n.submitting = false
 		if done.err != nil {
 			n.err = done.err.Error()
@@ -236,6 +267,9 @@ func (n *journalModal) Update(msg tea.Msg) (bool, tea.Cmd) {
 		case "esc":
 			return true, nil
 		case "tab":
+			if n.private {
+				return false, nil
+			}
 			if n.event == "note" {
 				n.event = "quote"
 				n.text.Placeholder = "Write a quote…"
@@ -245,12 +279,15 @@ func (n *journalModal) Update(msg tea.Msg) (bool, tea.Cmd) {
 			}
 			return false, nil
 		case "ctrl+s":
-			if strings.TrimSpace(n.text.Value()) == "" {
+			if !n.private && strings.TrimSpace(n.text.Value()) == "" {
 				n.err = "Enter some text first"
 				return false, nil
 			}
 			n.submitting = true
 			n.err = ""
+			if n.private {
+				return false, request(reqPrivateNote{n.bookID, n.token, n.text.Value()})
+			}
 			return false, request(reqJournal{n.bookID, n.token, n.event, n.text.Value()})
 		}
 	}
@@ -267,6 +304,10 @@ func (n *journalModal) View(lay layout, st styles) string {
 	if n.err != "" {
 		body += st.modalError.Render(lipgloss.NewStyle().Width(modalInnerW(width)).Render(n.err)) + "\n"
 	}
+	if n.private {
+		body += st.modalDim.Render("Only on this device · Ctrl+S save · Esc cancel")
+		return renderModalPanel("Private note", body, width, st)
+	}
 	body += st.modalDim.Render("Tab note/quote · Ctrl+S save · Esc cancel")
 	return renderModalPanel("Journal · "+n.event, body, width, st)
 }
@@ -274,6 +315,9 @@ func (n *journalModal) Keys(k *keyMap) {
 	if !n.submitting {
 		enable(&k.Back, &k.ReviewSave, &k.ReviewNextField)
 		k.ReviewNextField.SetHelp("Tab", "note / quote")
+	}
+	if n.private {
+		k.ReviewNextField.SetEnabled(false)
 	}
 	k.short = []key.Binding{k.ReviewNextField, k.ReviewSave, k.Back}
 }

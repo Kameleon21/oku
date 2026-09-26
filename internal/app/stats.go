@@ -20,6 +20,10 @@ func (a *App) GetReadingStats() (*model.ReadingStats, error) {
 	if err != nil {
 		return nil, err
 	}
+	finished, err := a.Store.ListFinishedBooks(year)
+	if err != nil {
+		return nil, err
+	}
 	months, err := a.Store.GetBooksPerMonth(year)
 	if err != nil {
 		return nil, err
@@ -50,14 +54,15 @@ func (a *App) GetReadingStats() (*model.ReadingStats, error) {
 	}
 
 	return &model.ReadingStats{
-		Year:    summary,
-		Goal:    pickBooksGoal(goals),
-		Months:  months,
-		Years:   years,
-		Ratings: ratings,
-		Genres:  genres,
-		Heatmap: heatmap,
-		Weekly:  weekly,
+		Year:     summary,
+		Finished: finished,
+		Goal:     pickBooksGoal(goals),
+		Months:   months,
+		Years:    years,
+		Ratings:  ratings,
+		Genres:   genres,
+		Heatmap:  heatmap,
+		Weekly:   weekly,
 	}, nil
 }
 

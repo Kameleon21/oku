@@ -59,6 +59,7 @@ type detailPane struct {
 type detailKey struct {
 	kind    string
 	id      int
+	readID  int
 	updated time.Time
 	density Density
 	w       int
@@ -162,6 +163,9 @@ func (d *detailPane) View(sel selection, t tab) string {
 	switch {
 	case sel.Book != nil:
 		k.kind, k.id, k.updated = "book", sel.Book.Book.ID, sel.Book.UpdatedAt
+		if len(sel.Book.UserBookReads) > 0 {
+			k.readID = sel.Book.UserBookReads[0].ID
+		}
 	case sel.Result != nil:
 		k.kind, k.id = "result", sel.Result.ID
 	default:
@@ -172,7 +176,7 @@ func (d *detailPane) View(sel selection, t tab) string {
 		// A new book starts at the top; the same book redrawn — a reconcile
 		// landing, a timer stopping — keeps the reader where they were in a
 		// long review, clamped in case the content is now shorter.
-		sameSelection := k.kind == d.key.kind && k.id == d.key.id
+		sameSelection := k.kind == d.key.kind && k.id == d.key.id && k.readID == d.key.readID
 		offset := d.vp.YOffset()
 		d.key = k
 		d.vp.SetContent(d.render(sel, t))
@@ -188,7 +192,7 @@ func (d *detailPane) View(sel selection, t tab) string {
 func (d *detailPane) render(sel selection, t tab) string {
 	switch {
 	case sel.Book != nil:
-		return renderUserBook(*sel.Book, d.sh.sessions, d.sh.now(), d.w, d.sh.density, d.st) + renderRichDetail(d.sh.details[sel.Book.BookID], d.w, d.st) + renderBookJournal(d.sh.journals[sel.Book.BookID], d.w, d.st)
+		return renderUserBook(*sel.Book, d.sh.sessions, d.sh.now(), d.w, d.sh.density, d.st) + renderPrivateNote(d.sh.privateNotes[sel.Book.BookID], d.w, d.st) + renderRichDetail(d.sh.details[sel.Book.BookID], d.w, d.st) + renderBookJournal(d.sh.journals[sel.Book.BookID], d.w, d.st)
 	case sel.Result != nil:
 		return renderSearchResult(*sel.Result, d.sh.shelf, d.w, d.st) + renderRichDetail(d.sh.details[sel.Result.ID], d.w, d.st)
 	case t == tabSearch:
@@ -593,4 +597,12 @@ func cut(s string, w int) string {
 		return ""
 	}
 	return ansi.Truncate(s, w, "…")
+}
+
+func renderPrivateNote(text string, w int, st styles) string {
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	return "\n\n" + st.head.Width(max(1, w)).Render("Private note · only on this device") + "\n" +
+		lipgloss.NewStyle().Width(max(1, w)).Render(text) + "\n\n"
 }

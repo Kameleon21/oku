@@ -98,6 +98,16 @@ below that `Enter` opens it in place of the list. In the Search tab `Enter`
 opens a result the same way, and `a` adds it to Reading. Press `?` for every
 control the focused tab understands.
 
+In **Stats**, press `b` to browse the books behind this year's finished count,
+newest completion first. Rereads appear separately, matching the stats total.
+Use `j`/`k` to select a book and `Enter` for its details. Press `n` to write or
+edit a **private note stored only on this device**, or `v` to save a rating and
+review to **Hardcover**. `Ctrl+S` saves either form; `Esc` cancels. From details,
+`Esc` returns to the finished list; another `Esc` returns to the stats charts.
+Private notes work offline and survive library syncs; they are not uploaded to
+Hardcover. The existing `n` note/quote action on Reading and Oku remains a
+Hardcover journal entry using your account's privacy setting.
+
 The Search tab has two states and no modes. `/` puts the cursor in the query,
 where every key is a character — `Ctrl+T` cycles Title/Author/Genre, `Enter`
 searches, `Esc` goes back to the tab you came from. `Esc` or `i` over the
