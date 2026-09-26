@@ -135,6 +135,10 @@ ORDER BY ub.updated_at DESC
 	}
 	defer rows.Close()
 
+	return scanUserBooks(rows)
+}
+
+func scanUserBooks(rows *sql.Rows) ([]model.UserBook, error) {
 	var result []model.UserBook
 	for rows.Next() {
 		var ub model.UserBook

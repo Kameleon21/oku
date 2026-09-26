@@ -79,6 +79,7 @@ type shared struct {
 	queueOrder   []int
 	details      map[int]*api.BookDetail
 	journals     map[int][]api.JournalEntry
+	privateNotes map[int]string
 	// shelf is every cached user book by book id, across all statuses, so
 	// the search detail can say whether the library already has a result,
 	// and what it was rated.

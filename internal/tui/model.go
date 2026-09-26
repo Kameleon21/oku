@@ -469,6 +469,7 @@ func (m *Model) applyLocalDataLoaded(msg localDataLoadedMsg) tea.Cmd {
 		return m.showToast(toastError, msg.err.Error())
 	}
 	m.shared.stats = msg.readingStats
+	m.shared.privateNotes = msg.privateNotes
 	if msg.readingStats != nil {
 		m.shared.weekly = msg.readingStats.Weekly
 	}
@@ -492,6 +493,13 @@ func (m *Model) applyOpDone(msg opDoneMsg) tea.Cmd {
 		m.syncing = false
 	}
 
+	if msg.op == opPrivateNote && msg.err == nil {
+		if m.shared.privateNotes == nil {
+			m.shared.privateNotes = map[int]string{}
+		}
+		m.shared.privateNotes[msg.bookID] = msg.privateNote
+		m.detail.stamp++
+	}
 	toastCmd := m.toastFor(msg)
 	if msg.err == nil && msg.markDirty {
 		m.dirty = true
@@ -529,6 +537,11 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 			return m.setTab((m.tab + tab(r.step) + tabCount) % tabCount)
 		}
 
+	case reqStatsBrowse:
+		s := m.sections[tabStats].(*statsSection)
+		s.browsing = r.show
+		m.focus = focusContent
+		return tea.Batch(s.rebuildFinished(), m.resize())
 	case reqOpenModal:
 		return m.push(r.m)
 
@@ -763,7 +776,7 @@ func (m *Model) backTab() tab {
 // narrow to split, the detail pane takes the content pane's place instead of
 // sitting beside it, so the sizes are recomputed either way.
 func (m *Model) setFocus(f focus) tea.Cmd {
-	if f == focusDetail && !m.tab.hasDetail() {
+	if f == focusDetail && !m.layoutTab().hasDetail() {
 		return nil
 	}
 	if f == m.focus {
@@ -778,7 +791,7 @@ func (m *Model) setFocus(f focus) tea.Cmd {
 // are given, so a resize rebuilds them — and a rebuild has a command that
 // must be run, or an active filter goes blank.
 func (m *Model) resize() tea.Cmd {
-	m.lay = computeLayout(m.lay.W, m.lay.H, m.tab, m.focus == focusDetail)
+	m.lay = computeLayout(m.lay.W, m.lay.H, m.layoutTab(), m.focus == focusDetail)
 	m.help.SetWidth(m.helpBarWidth())
 
 	cmd := m.section().Resize(m.lay.ContentInner, m.lay.InnerH)
@@ -965,4 +978,13 @@ func Run(ctx context.Context, a *app.App, density Density, version string) error
 	_, err := p.Run()
 	cancel()
 	return err
+}
+
+// Stats keeps its charts full-width; browsing its completed reads uses the
+// same responsive list/detail layout as the library.
+func (m *Model) layoutTab() tab {
+	if m.tab == tabStats && m.sections[tabStats].(*statsSection).browsing {
+		return tabReading
+	}
+	return m.tab
 }

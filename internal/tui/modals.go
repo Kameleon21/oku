@@ -564,7 +564,7 @@ func (r *reviewModal) View(lay layout, st styles) string {
 
 	sb.WriteString(st.modalDim.Render("Tab/Shift+Tab switch fields   Ctrl+S save   Esc cancel"))
 
-	return renderModalPanel("Review / Rate Book", sb.String(), width, st)
+	return renderModalPanel("Hardcover · Review / Rate Book", sb.String(), width, st)
 }
 
 // reviewModalWidth is the panel's own width, which View and Resize both need.

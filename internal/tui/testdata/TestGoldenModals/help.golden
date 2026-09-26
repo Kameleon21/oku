@@ -17,7 +17,8 @@
 ┃                                  │                                                │                                  │
 ┃                                  │  Actions                                       │                                  │
 ┃                                  │    ↵             detail                        │ace is the best part, and the     │
-┃                                  │    a             add as reading                │actually lives. Worth the evening │
+┃                                  │    b             browse finished books         │actually lives. Worth the evening │
+┃                                  │    a             add as reading                │                                  │
 ┃                                  │    ↵             search                        │                                  │
 ┃                                  │    ↵             select                        │                                  │
 ┃                                  │    +/-           page ±10                      │                                  │
@@ -33,7 +34,6 @@
 ┃                                  │    P             toggle paused shelf           │                                  │
 ┃                                  │    K             raise reading priority        │                                  │
 ┃                                  │    J             lower reading priority        │                                  │
-┃                                  │    R             refresh reading queue         │                                  │
 ┃                                  │  j/k scroll · ? or esc close   oku test        │                                  │
 ┃                                  │                                                │                                  │
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╰────────────────────────────────────────────────╯──────────────────────────────────╯

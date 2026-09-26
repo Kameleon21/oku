@@ -52,16 +52,18 @@ const (
 	opReview
 	opSync
 	opJournal
+	opPrivateNote
 )
 
 type opDoneMsg struct {
 	op opKind
 	// seq identifies the modal session that started the operation.
-	seq       int
-	info      string
-	err       error
-	reload    bool
-	markDirty bool
+	seq         int
+	info        string
+	err         error
+	reload      bool
+	markDirty   bool
+	privateNote string
 
 	// What a status change or a progress update did to which book, so the
 	// result can offer to undo it. Zero for every other operation.
@@ -77,6 +79,7 @@ type timerTickMsg time.Time
 
 type localDataLoadedMsg struct {
 	readingStats   *model.ReadingStats
+	privateNotes   map[int]string
 	recentSessions []model.ReadingSession
 	recentSearches []string
 	timerState     *model.TimerState
@@ -183,6 +186,10 @@ func loadLocalDataCmd(a *app.App, now func() time.Time) tea.Cmd {
 		if err != nil {
 			return localDataLoadedMsg{err: err}
 		}
+		notes, err := a.Store.ListPrivateNotes()
+		if err != nil {
+			return localDataLoadedMsg{err: err}
+		}
 		sessions, err := a.TimerList(recentSessionsLimit)
 		if err != nil {
 			return localDataLoadedMsg{err: err}
@@ -222,6 +229,7 @@ func loadLocalDataCmd(a *app.App, now func() time.Time) tea.Cmd {
 
 		return localDataLoadedMsg{
 			readingStats:   stats,
+			privateNotes:   notes,
 			recentSessions: sessions,
 			recentSearches: recentSearches,
 			timerState:     timer,

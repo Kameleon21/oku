@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -24,9 +25,11 @@ import (
 // a dozen charts' worth of work, so the result is memoised on everything
 // that would change it; a data change or a resize drops the memo.
 type statsSection struct {
-	sh *shared
-	st styles
-	vp viewport.Model
+	sh       *shared
+	st       styles
+	vp       viewport.Model
+	finished list.Model
+	browsing bool
 
 	// w and h are the pane the page is drawn into.
 	w, h int
@@ -48,7 +51,7 @@ type statsKey struct {
 }
 
 func newStatsSection(sh *shared, st styles) *statsSection {
-	return &statsSection{sh: sh, st: st, vp: viewport.New(viewport.WithWidth(1), viewport.WithHeight(1))}
+	return &statsSection{sh: sh, st: st, vp: viewport.New(viewport.WithWidth(1), viewport.WithHeight(1)), finished: newList(st)}
 }
 
 func (s *statsSection) Update(msg tea.Msg) tea.Cmd {
@@ -58,6 +61,7 @@ func (s *statsSection) Update(msg tea.Msg) tea.Cmd {
 		// row that starts reading it cannot go stale.
 		if msg.kind == dataLocal || msg.kind == dataDensity {
 			s.key = statsKey{}
+			return s.rebuildFinished()
 		}
 		return nil
 	}
@@ -65,11 +69,18 @@ func (s *statsSection) Update(msg tea.Msg) tea.Cmd {
 		// The page is drawn with the styles, so the memo has to go with them.
 		s.st = msg.st
 		s.key = statsKey{}
-		return nil
+		s.finished.SetDelegate(newListDelegate(listRowSpacing, s.st))
+		return s.rebuildFinished()
 	}
 	keyMsg, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return nil
+	}
+	if s.browsing {
+		return s.finishedKey(keyMsg)
+	}
+	if key.Matches(keyMsg, keysFor(s).FinishedBooks) {
+		return request(reqStatsBrowse{true})
 	}
 	// The keys move the viewport, which has to hold the page before it can
 	// be scrolled: a key pressed before the first render would otherwise
@@ -124,6 +135,16 @@ func (s *statsSection) View(w, h int) string {
 		// tests' path; the pane is the authority either way.
 		s.Resize(w, h)
 	}
+	if s.browsing {
+		if len(s.finished.Items()) == 0 {
+			return fitBlock(s.st.dim.Render("No completed reads for this year. Press s to sync."), w, h)
+		}
+		out := fitBlock(s.finished.View(), w, h)
+		if s.finished.Paginator.TotalPages > 1 {
+			out = stampOverflowBadge(out, fmt.Sprintf("%d/%d", s.finished.Index()+1, len(s.finished.Items())), w, s.st)
+		}
+		return out
+	}
 	s.build()
 	// The viewport is a row shorter than the pane when the page overflows,
 	// so the row the badge is stamped on is the empty one fitBlock adds.
@@ -140,6 +161,7 @@ func (s *statsSection) Resize(w, h int) tea.Cmd {
 		return nil
 	}
 	s.w, s.h = w, h
+	s.finished.SetSize(w, h)
 	s.vp.SetWidth(max(1, w))
 	s.vp.SetHeight(max(1, h))
 	// The charts are drawn to the width they are given, so the page itself
@@ -149,6 +171,11 @@ func (s *statsSection) Resize(w, h int) tea.Cmd {
 }
 
 func (s *statsSection) Keys(k *keyMap) {
+	if s.browsing {
+		s.finishedKeys(k)
+		return
+	}
+	enable(&k.FinishedBooks)
 	tabHint := hint("tab", k.PrevSection, k.NextSection)
 	k.Up.SetHelp("k", "scroll")
 	k.Down.SetHelp("j", "scroll")
@@ -156,7 +183,7 @@ func (s *statsSection) Keys(k *keyMap) {
 		&k.HalfPageUp, &k.HalfPageDown, &k.NextSection, &k.PrevSection,
 		&k.TabJump, &k.Sync, &k.Refresh, &k.Search)
 	k.short = []key.Binding{
-		k.Help, hint("scroll", k.Down, k.Up), hint("half page", k.HalfPageUp, k.HalfPageDown),
+		k.Help, k.FinishedBooks, hint("scroll", k.Down, k.Up), hint("half page", k.HalfPageUp, k.HalfPageDown),
 		hintAs("g/G", "top/bottom", k.ScrollTop, k.ScrollBottom), tabHint,
 		hintAs("s", "sync", k.Sync), k.Refresh, k.Search, k.Quit,
 	}
@@ -170,13 +197,24 @@ func (s *statsSection) Blur() { s.vp.GotoTop() }
 func (s *statsSection) CapturesKeys() bool { return false }
 
 func (s *statsSection) Title() string {
+	if s.browsing {
+		return fmt.Sprintf("Finished · %d (%d)", s.year(), len(s.finished.Items()))
+	}
 	if s.sh.stats != nil {
 		return fmt.Sprintf("Stats · %d", s.sh.stats.Year.Year)
 	}
 	return "Stats"
 }
 
-func (s *statsSection) Selected() selection { return selection{} }
+func (s *statsSection) Selected() selection {
+	if s.browsing {
+		if item, ok := s.finished.SelectedItem().(finishedBookItem); ok {
+			b := item.book
+			return selection{Book: &b}
+		}
+	}
+	return selection{}
+}
 
 // ── Chart decoration ───────────────────────────────────────────────────────
 
@@ -253,6 +291,7 @@ func (s *statsSection) render(w int) string {
 		pairs = append(pairs, [2]string{fmt.Sprintf("★ %.1f", rs.Year.AvgRating), "avg"})
 	}
 	sb.WriteString(renderStatLine(pairs, st))
+	sb.WriteString("\n" + st.dim.Render("  b browse finished books"))
 	sb.WriteString("\n\n")
 
 	// Reading goal.
