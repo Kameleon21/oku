@@ -36,6 +36,23 @@ func TestGetConf(t *testing.T) {
 	}
 }
 
+func TestNewTokenURL(t *testing.T) {
+	got := NewTokenURL()
+
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("NewTokenURL() = %q, not a valid URL: %v", got, err)
+	}
+	if u.Scheme != "https" || u.Host != "hardcover.app" || u.Path != "/account/api/keys/new" {
+		t.Fatalf("NewTokenURL() = %q, want the New API Key page", got)
+	}
+
+	wantScope := strings.Join(scopes, "+")
+	if !strings.HasSuffix(got, "?scope="+wantScope) {
+		t.Fatalf("NewTokenURL() = %q, want it to end with ?scope=%s", got, wantScope)
+	}
+}
+
 func TestCheckCallback(t *testing.T) {
 	const state = "test-state"
 

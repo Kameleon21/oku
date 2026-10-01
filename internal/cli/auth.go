@@ -62,6 +62,7 @@ func newSetTokenCmd() *cobra.Command {
 		Use:   "set-token",
 		Short: "Manually store a Hardcover API token (advanced; prefer 'oku auth login')",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Fprintf(cmd.OutOrStdout(), "Create a token with the scopes oku needs:\n%s\n", auth.NewTokenURL())
 			raw, err := auth.PromptToken()
 			if err != nil {
 				return err
