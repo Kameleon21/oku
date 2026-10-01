@@ -129,28 +129,40 @@ func TokenSource(ctx context.Context, token *oauth2.Token) oauth2.TokenSource {
 	}
 	// Timeout so a stalled refresh request can't hang forever.
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Timeout: 10 * time.Second})
-	return &persistingTokenSource{src: GetConf().TokenSource(ctx, token)}
+	return &persistingTokenSource{ctx: ctx, conf: GetConf(), token: token}
 }
 
 // persistingTokenSource wraps an oauth2.TokenSource and writes the token to
 // the keychain whenever it changes, i.e. right after a refresh.
 type persistingTokenSource struct {
-	src  oauth2.TokenSource
-	last string // last access token persisted, to avoid redundant writes
+	ctx   context.Context
+	conf  *oauth2.Config
+	token *oauth2.Token
 }
 
 func (p *persistingTokenSource) Token() (*oauth2.Token, error) {
-	token, err := p.src.Token()
-	if err != nil {
-		return nil, fmt.Errorf("refresh token: %w; run: oku auth login", err)
+	if p.token.Valid() {
+		return p.token, nil
 	}
-	if token.AccessToken != p.last {
-		if err := SetToken(token); err != nil {
-			return nil, fmt.Errorf("store refreshed token: %w", err)
+
+	// another oku process may have refreshed already
+	if stored, err := loadStoredToken(); err == nil {
+		p.token = stored
+		if stored.Valid() {
+			return stored, nil
 		}
-		p.last = token.AccessToken
 	}
-	return token, nil
+
+	fresh, err := p.conf.TokenSource(p.ctx, p.token).Token()
+	if err != nil {
+		return nil, fmt.Errorf("token rejected or expired: %w; run: oku auth login", err)
+	}
+	if err := SetToken(fresh); err != nil {
+		return nil, fmt.Errorf("store refreshed token: %w", err)
+	}
+
+	p.token = fresh
+	return fresh, nil
 }
 
 // PromptToken reads a token interactively from stdin. On a terminal the
