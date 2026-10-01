@@ -44,6 +44,11 @@ func GetToken() (*oauth2.Token, error) {
 	return loadStoredToken()
 }
 
+// EnvTokenSet reports whether HARDCOVER_TOKEN overrides the stored login.
+func EnvTokenSet() bool {
+	return normalizeToken(os.Getenv(envKey)) != ""
+}
+
 // StoredToken returns the token saved in the system keychain, ignoring any
 // HARDCOVER_TOKEN override.
 func StoredToken() (*oauth2.Token, error) {
