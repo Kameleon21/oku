@@ -67,7 +67,7 @@ func TestNormalizeToken(t *testing.T) {
 func TestGetTokenTrimsEnvToken(t *testing.T) {
 	t.Setenv(envKey, "  env-token\n")
 
-	got, err := GetToken(context.Background())
+	got, err := GetToken()
 	if err != nil {
 		t.Fatalf("GetToken: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestGetTokenTrimsEnvToken(t *testing.T) {
 func TestGetTokenEnvTokenHasNoExpiry(t *testing.T) {
 	t.Setenv(envKey, "env-token")
 
-	got, err := GetToken(context.Background())
+	got, err := GetToken()
 	if err != nil {
 		t.Fatalf("GetToken: %v", err)
 	}

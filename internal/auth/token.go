@@ -37,7 +37,7 @@ func normalizeToken(token string) string {
 // keychain. It does not refresh an expired token itself; pass the result
 // through TokenSource to get one that refreshes (and persists the refresh)
 // on demand.
-func GetToken(ctx context.Context) (*oauth2.Token, error) {
+func GetToken() (*oauth2.Token, error) {
 	if raw := normalizeToken(os.Getenv(envKey)); raw != "" {
 		return &oauth2.Token{AccessToken: raw, TokenType: "Bearer"}, nil
 	}

@@ -104,7 +104,7 @@ func Execute(version string) int {
 
 // initApp creates the App instance (API client + store + config).
 func initApp() (*app.App, error) {
-	token, err := auth.GetToken(ctx())
+	token, err := auth.GetToken()
 	if err != nil {
 		return nil, err
 	}
