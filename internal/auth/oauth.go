@@ -139,6 +139,10 @@ func checkCallback(q url.Values, state string) (code string, ok bool, err error)
 }
 
 func LogOut(ctx context.Context, token *oauth2.Token) error {
+	return logOutAt(ctx, revokeEndpoint, token)
+}
+
+func logOutAt(ctx context.Context, endpoint string, token *oauth2.Token) error {
 	if token == nil {
 		return nil
 	}
@@ -156,7 +160,7 @@ func LogOut(ctx context.Context, token *oauth2.Token) error {
 		"token_type_hint": {hint},
 		"client_id":       {clientID},
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, revokeEndpoint, strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return fmt.Errorf("build revoke request: %w", err)
 	}
