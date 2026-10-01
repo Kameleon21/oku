@@ -16,10 +16,24 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// TestMain keeps tests off the real keychain.
+// TestMain keeps tests off the real keychain and data dir.
 func TestMain(m *testing.M) {
 	keyring.MockInit()
-	os.Exit(m.Run())
+	// helper processes share their parent's data dir
+	dataDir := os.Getenv("OKU_TEST_DATA_DIR")
+	if dataDir == "" {
+		var err error
+		if dataDir, err = os.MkdirTemp("", "oku-auth-test"); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
+	os.Setenv("XDG_DATA_HOME", dataDir)
+	code := m.Run()
+	if os.Getenv("OKU_TEST_DATA_DIR") == "" {
+		os.RemoveAll(dataDir)
+	}
+	os.Exit(code)
 }
 
 // freshKeychain empties the mock keychain.
