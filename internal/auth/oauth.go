@@ -45,7 +45,7 @@ const (
 const newTokenPageURL = "https://hardcover.app/account/api/keys/new"
 
 // NewTokenURL returns a link to Hardcover's "New API Key" form with oku's required scopes pre-checked,
-// per https://docs.hardcover.app/api/PAT-Link-Builder.
+// per https://docs.hardcover.app/api/pat-link-builder/
 func NewTokenURL() string {
 	u, err := url.Parse(newTokenPageURL)
 	if err != nil {
