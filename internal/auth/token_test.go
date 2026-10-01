@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/zalando/go-keyring"
@@ -154,8 +153,5 @@ func TestLoadStoredTokenMigratesLegacyToken(t *testing.T) {
 
 	if stored, err := loadStoredToken(); err != nil || stored.AccessToken != "legacy-token" {
 		t.Fatalf("after migration, loadStoredToken() = %+v, %v", stored, err)
-	}
-	if _, err := keyring.Get(serviceName, legacyAccountName); !errors.Is(err, keyring.ErrNotFound) {
-		t.Fatalf("legacy entry still present: err = %v", err)
 	}
 }

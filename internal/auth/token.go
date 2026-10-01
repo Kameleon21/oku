@@ -76,7 +76,7 @@ func loadStoredToken() (*oauth2.Token, error) {
 	return &token, nil
 }
 
-// migrateLegacyToken moves a plain API token from the pre-OAuth keychain
+// migrateLegacyToken copies a plain API token from the pre-OAuth keychain
 // entry into the new OAuth-shaped one. Returns keyring.ErrNotFound when
 // there's nothing to migrate; any other error is a keyring backend problem.
 func migrateLegacyToken() (*oauth2.Token, error) {
@@ -92,7 +92,6 @@ func migrateLegacyToken() (*oauth2.Token, error) {
 	if err := SetToken(token); err != nil {
 		return nil, err
 	}
-	_ = keyring.Delete(serviceName, legacyAccountName)
 	return token, nil
 }
 
