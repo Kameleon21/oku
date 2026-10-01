@@ -38,17 +38,22 @@ Run `oku --version` to check your version.
 
 ### Connect Hardcover
 
-Create an account at [hardcover.app](https://hardcover.app), then copy your API
-token from [Account Settings](https://hardcover.app/account/api).
+Create an account at [hardcover.app](https://hardcover.app), then sign in:
 
 ```sh
-oku auth set-token  # Save your Hardcover API token
-oku sync            # Pull your library into the local cache
-oku                 # Launch the dashboard
+oku auth login  # Sign in via your browser
+oku sync        # Pull your library into the local cache
+oku             # Launch the dashboard
 ```
 
-Your token is stored in the system keychain. You can also set `HARDCOVER_TOKEN`,
-which takes priority over the saved token.
+`oku auth login` opens Hardcover in your browser to approve access, then stores
+the resulting token in your system keychain; it's refreshed automatically as
+needed. Run `oku auth logout` to sign out and revoke it.
+
+No browser handy (e.g. over SSH)? Run `oku auth set-token` instead: it prints
+a link to Hardcover's "New API Key" form with the scopes oku needs already
+checked, so you just name the key and paste it in. `HARDCOVER_TOKEN` also
+works as an env var and takes priority over any saved token.
 
 ## Everyday use
 
