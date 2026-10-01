@@ -2,8 +2,15 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/zalando/go-keyring"
 	"golang.org/x/oauth2"
@@ -67,45 +74,207 @@ func TestGetTokenEnvTokenHasNoExpiry(t *testing.T) {
 	}
 }
 
-// fakeTokenSource hands back tokens from a fixed list in order, repeating
-// the last one once exhausted, standing in for conf.TokenSource's refresh
-// behaviour without hitting a real token endpoint.
-type fakeTokenSource struct {
-	tokens []*oauth2.Token
-	i      int
+// rotatingServer mimics Hardcover's token endpoint: each refresh token works
+// once, and replaying a spent one is rejected.
+type rotatingServer struct {
+	*httptest.Server
+	mu      sync.Mutex
+	current string // the only refresh token still accepted
+	calls   int
+	seq     int
 }
 
-func (f *fakeTokenSource) Token() (*oauth2.Token, error) {
-	token := f.tokens[f.i]
-	if f.i < len(f.tokens)-1 {
-		f.i++
-	}
-	return token, nil
+func newRotatingServer(t *testing.T, refreshToken string) *rotatingServer {
+	t.Helper()
+	rs := &rotatingServer{current: refreshToken}
+	rs.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("ParseForm: %v", err)
+		}
+		rs.mu.Lock()
+		defer rs.mu.Unlock()
+		rs.calls++
+
+		w.Header().Set("Content-Type", "application/json")
+		if r.PostForm.Get("refresh_token") != rs.current {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
+			return
+		}
+		rs.seq++
+		rs.current = fmt.Sprintf("refresh-%d", rs.seq)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token":  fmt.Sprintf("access-%d", rs.seq),
+			"refresh_token": rs.current,
+			"token_type":    "Bearer",
+			"expires_in":    3600,
+		})
+	}))
+	t.Cleanup(rs.Close)
+	return rs
 }
 
-func TestPersistingTokenSourcePersistsOnRefresh(t *testing.T) {
-	freshKeychain(t)
-	if err := SetToken(&oauth2.Token{AccessToken: "seed"}); err != nil {
+func (rs *rotatingServer) callCount() int {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	return rs.calls
+}
+
+func (rs *rotatingServer) source(token *oauth2.Token) *persistingTokenSource {
+	conf := GetConf()
+	conf.Endpoint.TokenURL = rs.URL
+	return &persistingTokenSource{ctx: context.Background(), conf: conf, token: token}
+}
+
+func expiredToken(access, refresh string) *oauth2.Token {
+	return &oauth2.Token{AccessToken: access, RefreshToken: refresh, Expiry: time.Now().Add(-time.Hour)}
+}
+
+func validToken(access, refresh string) *oauth2.Token {
+	return &oauth2.Token{AccessToken: access, RefreshToken: refresh, Expiry: time.Now().Add(time.Hour)}
+}
+
+func mustStore(t *testing.T, token *oauth2.Token) {
+	t.Helper()
+	if err := SetToken(token); err != nil {
 		t.Fatalf("SetToken: %v", err)
 	}
+}
 
-	src := &persistingTokenSource{src: &fakeTokenSource{tokens: []*oauth2.Token{
-		{AccessToken: "first"},
-		{AccessToken: "second"},
-	}}}
+func TestPersistingTokenSourceValidTokenSkipsKeychainAndServer(t *testing.T) {
+	freshKeychain(t)
+	rs := newRotatingServer(t, "r0")
+	mustStore(t, validToken("stored", "r0"))
 
-	if _, err := src.Token(); err != nil {
+	got, err := rs.source(validToken("memory", "r0")).Token()
+	if err != nil {
 		t.Fatalf("Token() = %v", err)
 	}
-	if stored, err := loadStoredToken(); err != nil || stored.AccessToken != "first" {
-		t.Fatalf("after 1st Token(): loadStoredToken() = %+v, %v; want AccessToken %q", stored, err, "first")
+	if got.AccessToken != "memory" {
+		t.Fatalf("AccessToken = %q, want the in-memory token", got.AccessToken)
 	}
+	if n := rs.callCount(); n != 0 {
+		t.Fatalf("token endpoint called %d times, want 0", n)
+	}
+}
 
-	if _, err := src.Token(); err != nil {
+func TestPersistingTokenSourceAdoptsValidStoredToken(t *testing.T) {
+	freshKeychain(t)
+	rs := newRotatingServer(t, "r0")
+	mustStore(t, validToken("from-other-process", "r1"))
+
+	src := rs.source(expiredToken("stale", "r0"))
+	got, err := src.Token()
+	if err != nil {
 		t.Fatalf("Token() = %v", err)
 	}
-	if stored, err := loadStoredToken(); err != nil || stored.AccessToken != "second" {
-		t.Fatalf("after 2nd Token(): loadStoredToken() = %+v, %v; want AccessToken %q", stored, err, "second")
+	if got.AccessToken != "from-other-process" {
+		t.Fatalf("AccessToken = %q, want the stored token", got.AccessToken)
+	}
+	if n := rs.callCount(); n != 0 {
+		t.Fatalf("token endpoint called %d times, want 0", n)
+	}
+	if src.token.AccessToken != "from-other-process" {
+		t.Fatalf("in-memory token = %q, want it replaced by the stored one", src.token.AccessToken)
+	}
+}
+
+func TestPersistingTokenSourceRefreshesWithStoredRefreshToken(t *testing.T) {
+	freshKeychain(t)
+	rs := newRotatingServer(t, "r-stored")
+	mustStore(t, expiredToken("old", "r-stored"))
+
+	// in-memory refresh token is stale; the server would reject it
+	got, err := rs.source(expiredToken("old", "r-stale")).Token()
+	if err != nil {
+		t.Fatalf("Token() = %v", err)
+	}
+	if got.AccessToken != "access-1" {
+		t.Fatalf("AccessToken = %q, want %q", got.AccessToken, "access-1")
+	}
+	if n := rs.callCount(); n != 1 {
+		t.Fatalf("token endpoint called %d times, want 1", n)
+	}
+
+	stored, err := loadStoredToken()
+	if err != nil || stored.AccessToken != "access-1" || stored.RefreshToken != "refresh-1" {
+		t.Fatalf("stored token = %+v, %v; want the rotated pair persisted", stored, err)
+	}
+}
+
+// Dashboard open in one terminal, `oku sync` in another: both hold the same
+// expired token, and only the first refresh may reach the server.
+func TestPersistingTokenSourcesShareRefreshAcrossProcesses(t *testing.T) {
+	freshKeychain(t)
+	rs := newRotatingServer(t, "r0")
+	mustStore(t, expiredToken("old", "r0"))
+
+	first := rs.source(expiredToken("old", "r0"))
+	second := rs.source(expiredToken("old", "r0"))
+
+	a, err := first.Token()
+	if err != nil {
+		t.Fatalf("first Token() = %v", err)
+	}
+	b, err := second.Token()
+	if err != nil {
+		t.Fatalf("second Token() = %v", err)
+	}
+	if a.AccessToken != "access-1" || b.AccessToken != "access-1" {
+		t.Fatalf("access tokens = %q, %q; want both %q", a.AccessToken, b.AccessToken, "access-1")
+	}
+	if n := rs.callCount(); n != 1 {
+		t.Fatalf("token endpoint called %d times, want 1 (a replay would revoke the session)", n)
+	}
+}
+
+func TestPersistingTokenSourceRefreshFailure(t *testing.T) {
+	t.Run("rejected refresh token", func(t *testing.T) {
+		freshKeychain(t)
+		rs := newRotatingServer(t, "other")
+		original := expiredToken("old", "r0")
+		mustStore(t, original)
+
+		_, err := rs.source(original).Token()
+		if err == nil {
+			t.Fatal("Token() err = nil, want an error")
+		}
+		for _, want := range []string{"token rejected or expired", "oku auth login"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("err = %q, want it to contain %q", err, want)
+			}
+		}
+		if stored, err := loadStoredToken(); err != nil || stored.AccessToken != "old" {
+			t.Fatalf("stored token = %+v, %v; want it untouched", stored, err)
+		}
+	})
+
+	t.Run("expired personal token has no refresh token", func(t *testing.T) {
+		freshKeychain(t)
+		rs := newRotatingServer(t, "r0")
+		personal := &oauth2.Token{AccessToken: "personal", Expiry: time.Now().Add(-time.Hour)}
+		mustStore(t, personal)
+
+		_, err := rs.source(personal).Token()
+		if err == nil || !strings.Contains(err.Error(), "oku auth login") {
+			t.Fatalf("Token() err = %v, want a hint to run oku auth login", err)
+		}
+		if n := rs.callCount(); n != 0 {
+			t.Fatalf("token endpoint called %d times, want 0", n)
+		}
+	})
+}
+
+func TestPersistingTokenSourceKeychainUnreadable(t *testing.T) {
+	freshKeychain(t) // nothing stored, so the re-read fails
+	rs := newRotatingServer(t, "r0")
+
+	got, err := rs.source(expiredToken("old", "r0")).Token()
+	if err != nil {
+		t.Fatalf("Token() = %v", err)
+	}
+	if got.AccessToken != "access-1" {
+		t.Fatalf("AccessToken = %q, want a refresh from the in-memory token", got.AccessToken)
 	}
 }
 
