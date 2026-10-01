@@ -20,7 +20,18 @@ const (
 	clientID = "163f8e7c-970a-463d-b6b4-a4e51e4cb4dd"
 )
 
-var scopes = []string{"read:me:content"}
+// scopes is the minimum the app needs, per https://api.hardcover.app/capabilities.json
+var scopes = []string{
+	"read:me:content", // me: current user id/username
+	"read:library",    // user_books: library, reading progress
+	"read:journal",    // reading_journals: notes/quotes, activity stats
+	"read:goals",      // goals: reading goals
+	"read:lists",      // lists, list_books: reading queue
+	"read:catalog",    // search, books, editions: search, trending, ISBN lookup
+	"write:library",   // insert/update_user_book, insert_reading_journal: library writes, ratings/reviews, journal entries
+	"write:goals",     // insert/update_goal: reading goals
+	"write:lists",     // insert_list, update_list_books: reading queue
+}
 
 // const OAUTH_AUTHORIZATION_SERVER = "https://api.hardcover.app/.well-known/oauth-authorization-server"
 const (
