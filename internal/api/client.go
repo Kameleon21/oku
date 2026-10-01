@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/machinebox/graphql"
+	"golang.org/x/oauth2"
 )
 
 const endpoint = "https://api.hardcover.app/v1/graphql"
@@ -153,13 +154,37 @@ func NewClient(token string) *Client {
 }
 
 func newClientWithEndpoint(url, token string) *Client {
-	httpClient := &http.Client{
+	return &Client{
+		gql:   graphql.NewClient(url, graphql.WithHTTPClient(baseHTTPClient())),
+		token: normalizeToken(token),
+	}
+}
+
+// NewOAuthClient creates a Hardcover API client authorized by src. Unlike
+// NewClient, the Authorization header is set per-request by src's own
+// oauth2.Transport, which refreshes an expired token on demand, so the
+// request-level normalizeToken/header logic in do is skipped (c.token stays
+// empty).
+func NewOAuthClient(ctx context.Context, src oauth2.TokenSource) *Client {
+	return newOAuthClientWithEndpoint(ctx, endpoint, src)
+}
+
+func newOAuthClientWithEndpoint(ctx context.Context, url string, src oauth2.TokenSource) *Client {
+	// Routes oauth2's token-refresh requests, and the API requests
+	// themselves, through our statusTransport so non-2xx responses still
+	// surface as *StatusError for the retry/backoff logic in do.
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, baseHTTPClient())
+	return &Client{
+		gql: graphql.NewClient(url, graphql.WithHTTPClient(oauth2.NewClient(ctx, src))),
+	}
+}
+
+// baseHTTPClient is the plain (non-OAuth) transport shared by both
+// constructors: a timeout plus status-code classification.
+func baseHTTPClient() *http.Client {
+	return &http.Client{
 		Timeout:   attemptTimeout,
 		Transport: &statusTransport{base: http.DefaultTransport},
-	}
-	return &Client{
-		gql:   graphql.NewClient(url, graphql.WithHTTPClient(httpClient)),
-		token: normalizeToken(token),
 	}
 }
 
@@ -180,7 +205,9 @@ func (c *Client) do(ctx context.Context, req *graphql.Request, resp interface{})
 	ctx, cancel := withRequestTimeout(ctx)
 	defer cancel()
 
-	req.Header.Set("authorization", c.token)
+	if c.token != "" {
+		req.Header.Set("authorization", c.token)
+	}
 	req.Header.Set("User-Agent", userAgent())
 
 	var lastErr error

@@ -15,6 +15,7 @@ import (
 
 	"github.com/Kameleon21/oku/internal/model"
 	"github.com/machinebox/graphql"
+	"golang.org/x/oauth2"
 )
 
 func TestNormalizeToken(t *testing.T) {
@@ -78,6 +79,58 @@ func TestNormalizeToken(t *testing.T) {
 func testClientForServer(handler http.HandlerFunc) (*Client, *httptest.Server) {
 	srv := httptest.NewServer(handler)
 	return newClientWithEndpoint(srv.URL, "test-token"), srv
+}
+
+// staticTokenSource always hands back the same token; it stands in for
+// auth.TokenSource in tests, which otherwise depends on the keychain and
+// Hardcover's real token endpoint.
+type staticTokenSource struct{ token *oauth2.Token }
+
+func (s staticTokenSource) Token() (*oauth2.Token, error) { return s.token, nil }
+
+func TestOAuthClientSendsBearerAuthorizationHeader(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{}}`))
+	}))
+	defer srv.Close()
+
+	src := staticTokenSource{token: &oauth2.Token{AccessToken: "abc123", TokenType: "Bearer"}}
+	c := newOAuthClientWithEndpoint(context.Background(), srv.URL, src)
+
+	var resp struct{}
+	if err := c.do(context.Background(), graphql.NewRequest(`query { me { id } }`), &resp); err != nil {
+		t.Fatalf("do() = %v, want success", err)
+	}
+	if gotAuth != "Bearer abc123" {
+		t.Fatalf("Authorization header = %q, want %q", gotAuth, "Bearer abc123")
+	}
+}
+
+func TestOAuthClientRetriesOn429(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{}}`))
+	}))
+	defer srv.Close()
+
+	src := staticTokenSource{token: &oauth2.Token{AccessToken: "abc123", TokenType: "Bearer"}}
+	c := newOAuthClientWithEndpoint(context.Background(), srv.URL, src)
+
+	var resp struct{}
+	if err := c.do(context.Background(), graphql.NewRequest(`query { me { id } }`), &resp); err != nil {
+		t.Fatalf("do() = %v, want success after retry", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Fatalf("server calls = %d, want 2 (429 then 200)", got)
+	}
 }
 
 func TestDoRetriesOn429(t *testing.T) {

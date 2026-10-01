@@ -104,7 +104,7 @@ func Execute(version string) int {
 
 // initApp creates the App instance (API client + store + config).
 func initApp() (*app.App, error) {
-	token, err := auth.GetToken()
+	token, err := auth.GetToken(ctx())
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +128,7 @@ func initApp() (*app.App, error) {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
-	client := api.NewClient(token)
+	client := api.NewOAuthClient(ctx(), auth.TokenSource(ctx(), token))
 	return app.New(client, db, cfg), nil
 }
 

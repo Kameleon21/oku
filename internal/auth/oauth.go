@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	clientID = ""
+	clientID = "" // FIXME: add testing client id
 )
 
 // scopes is the minimum the app needs, per https://api.hardcover.app/capabilities.json
