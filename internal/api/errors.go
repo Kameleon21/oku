@@ -14,6 +14,7 @@ var (
 	ErrInsufficientScope = errors.New("insufficient scope")         // 403
 	ErrUnsupportedOp     = errors.New("unsupported operation")      // 403
 	ErrTopLevelLimit     = errors.New("too many top-level queries") // 403
+	ErrOverCapacity      = errors.New("request exceeds capacity")   // 403
 	ErrForbidden         = errors.New("forbidden")                  // 403
 	ErrNotFound          = errors.New("not found")                  // 404
 	ErrTimeout           = errors.New("server timeout")             // 408
@@ -35,6 +36,8 @@ func (e *StatusError) Is(target error) bool {
 		return e.APIError == "unsupported_operation"
 	case ErrTopLevelLimit:
 		return e.APIError == "top_level_limit_exceeded"
+	case ErrOverCapacity:
+		return e.APIError == "request_exceeds_capacity"
 	case ErrForbidden:
 		return e.Code == http.StatusForbidden
 	case ErrNotFound:
@@ -53,16 +56,37 @@ func (e *StatusError) Is(target error) bool {
 // {error, error_description|message, scope} form, and a GraphQL-style
 // {errors: [{message, extensions: {code}}]} array.
 type apiErrorBody struct {
-	Error       string `json:"error"`
-	Description string `json:"error_description"`
-	Message     string `json:"message"`
-	Scope       string `json:"scope"`
-	Errors      []struct {
+	Error       string         `json:"error"`
+	Description string         `json:"error_description"`
+	Message     string         `json:"message"`
+	Scope       string         `json:"scope"`
+	Errors      []apiErrorItem `json:"errors"`
+}
+
+// apiErrorItem is an entry of an "errors" array: a bare code string
+// ("request_exceeds_capacity") or {message, extensions: {code}}.
+type apiErrorItem struct {
+	Code    string
+	Message string
+}
+
+func (i *apiErrorItem) UnmarshalJSON(data []byte) error {
+	var code string
+	if json.Unmarshal(data, &code) == nil {
+		i.Code = code
+		return nil
+	}
+	var obj struct {
 		Message    string `json:"message"`
 		Extensions struct {
 			Code string `json:"code"`
 		} `json:"extensions"`
-	} `json:"errors"`
+	}
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return err
+	}
+	i.Code, i.Message = obj.Extensions.Code, obj.Message
+	return nil
 }
 
 // parseErrorBody fills the structured fields of e from a JSON response body.
@@ -79,8 +103,10 @@ func (e *StatusError) parseErrorBody(body []byte) {
 	}
 	e.Scope = b.Scope
 	if e.APIError == "" && len(b.Errors) > 0 {
-		e.APIError = b.Errors[0].Extensions.Code
-		e.Description = b.Errors[0].Message
+		e.APIError = b.Errors[0].Code
+		if e.Description == "" {
+			e.Description = b.Errors[0].Message
+		}
 	}
 }
 

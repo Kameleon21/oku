@@ -54,6 +54,15 @@ func TestStatusErrorParsing(t *testing.T) {
 			desc:     "max 5",
 		},
 		{
+			name:     "over capacity: errors array of strings",
+			code:     403,
+			body:     `{"errors":["request_exceeds_capacity"],"message":"8 fields exceeds burst of 5"}`,
+			is:       []error{ErrForbidden, ErrOverCapacity},
+			isNot:    []error{ErrTopLevelLimit},
+			apiError: "request_exceeds_capacity",
+			desc:     "8 fields exceeds burst of 5",
+		},
+		{
 			name:     "rate limited uses message",
 			code:     429,
 			body:     `{"error":"Too Many Requests","message":"slow down"}`,
