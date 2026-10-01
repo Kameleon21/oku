@@ -16,7 +16,7 @@ import (
 type AuthError struct{}
 
 func (e *AuthError) Error() string {
-	return "authentication failed: run `oku auth set-token` or check your Hardcover token"
+	return "authentication failed: run `oku auth login` or check your Hardcover token"
 }
 
 // GetMe returns the authenticated user's ID and username.
