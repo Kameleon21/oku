@@ -29,6 +29,7 @@ var scopes = []string{
 	"read:lists",      // lists, list_books: reading queue
 	"read:catalog",    // search, books, editions: search, trending, ISBN lookup
 	"write:library",   // insert/update_user_book, insert_reading_journal: library writes, ratings/reviews, journal entries
+	"write:reviews",   //
 	"write:goals",     // insert/update_goal: reading goals
 	"write:lists",     // insert_list, update_list_books: reading queue
 }
