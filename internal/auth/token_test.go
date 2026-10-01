@@ -2,8 +2,10 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"github.com/zalando/go-keyring"
 	"golang.org/x/oauth2"
 )
 
@@ -92,5 +94,31 @@ func TestPersistingTokenSourcePersistsOnRefresh(t *testing.T) {
 	}
 	if stored, err := loadStoredToken(); err != nil || stored.AccessToken != "second" {
 		t.Fatalf("after 2nd Token(): loadStoredToken() = %+v, %v; want AccessToken %q", stored, err, "second")
+	}
+}
+
+func TestLoadStoredTokenMigratesLegacyToken(t *testing.T) {
+	if err := keyring.Set(serviceName, legacyAccountName, "  legacy-token\n"); err != nil {
+		t.Skipf("keyring unavailable in this environment: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = keyring.Delete(serviceName, legacyAccountName)
+		_ = DeleteToken()
+	})
+	_ = DeleteToken() // make sure the new-style slot starts empty
+
+	token, err := loadStoredToken()
+	if err != nil {
+		t.Fatalf("loadStoredToken: %v", err)
+	}
+	if token.AccessToken != "legacy-token" {
+		t.Fatalf("AccessToken = %q, want %q", token.AccessToken, "legacy-token")
+	}
+
+	if stored, err := loadStoredToken(); err != nil || stored.AccessToken != "legacy-token" {
+		t.Fatalf("after migration, loadStoredToken() = %+v, %v", stored, err)
+	}
+	if _, err := keyring.Get(serviceName, legacyAccountName); !errors.Is(err, keyring.ErrNotFound) {
+		t.Fatalf("legacy entry still present: err = %v", err)
 	}
 }

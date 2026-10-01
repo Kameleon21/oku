@@ -18,6 +18,10 @@ const (
 	serviceName = "oku"
 	accountName = "hardcover-oauth"
 	envKey      = "HARDCOVER_TOKEN"
+
+	// legacyAccountName held a plain API token before OAuth support was added.
+	// loadStoredToken migrates it on first read so upgrading doesn't force existing users to re-authenticate.
+	legacyAccountName = "hardcover"
 )
 
 // normalizeToken trims surrounding whitespace and newlines, which routinely
@@ -44,6 +48,9 @@ func loadStoredToken() (*oauth2.Token, error) {
 	raw, err := keyring.Get(serviceName, accountName)
 	if err != nil {
 		if errors.Is(err, keyring.ErrNotFound) {
+			if token, ok := migrateLegacyToken(); ok {
+				return token, nil
+			}
 			return nil, fmt.Errorf("no token found; run: oku auth login")
 		}
 		return nil, fmt.Errorf("keyring backend unavailable: %w; set %s as a workaround", err, envKey)
@@ -55,6 +62,27 @@ func loadStoredToken() (*oauth2.Token, error) {
 		return nil, fmt.Errorf("stored token was corrupt and has been cleared; run: oku auth login")
 	}
 	return &token, nil
+}
+
+// migrateLegacyToken moves a plain API token from the pre-OAuth keychain
+// entry into the new OAuth-shaped one. ok is false when there's nothing to
+// migrate (including on a keyring error, which GetToken's next call will
+// report in its usual, more informative way).
+func migrateLegacyToken() (token *oauth2.Token, ok bool) {
+	raw, err := keyring.Get(serviceName, legacyAccountName)
+	if err != nil {
+		return nil, false
+	}
+	if raw = normalizeToken(raw); raw == "" {
+		return nil, false
+	}
+
+	token = &oauth2.Token{AccessToken: raw, TokenType: "Bearer"}
+	if err := SetToken(token); err != nil {
+		return nil, false
+	}
+	_ = keyring.Delete(serviceName, legacyAccountName)
+	return token, true
 }
 
 // SetToken stores an OAuth token in the system keychain.
