@@ -1,6 +1,6 @@
 module github.com/Kameleon21/oku
 
-go 1.26.0
+go 1.25.7
 
 require (
 	charm.land/bubbles/v2 v2.2.1
@@ -15,7 +15,7 @@ require (
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/spf13/cobra v1.10.2
 	github.com/zalando/go-keyring v0.2.6
-	golang.org/x/oauth2 v0.37.0
+	golang.org/x/oauth2 v0.36.0
 	golang.org/x/term v0.45.0
 	modernc.org/sqlite v1.44.3
 )
