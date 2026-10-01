@@ -97,6 +97,43 @@ func TestPersistingTokenSourcePersistsOnRefresh(t *testing.T) {
 	}
 }
 
+func TestTokenSourceEnvTokenBypassesKeychain(t *testing.T) {
+	if err := DeleteToken(); err != nil {
+		t.Skipf("keyring unavailable in this environment: %v", err)
+	}
+	t.Setenv(envKey, "env-token")
+	t.Cleanup(func() { _ = DeleteToken() })
+
+	src := TokenSource(context.Background(), &oauth2.Token{AccessToken: "env-token"})
+	token, err := src.Token()
+	if err != nil {
+		t.Fatalf("Token() = %v", err)
+	}
+	if token.AccessToken != "env-token" {
+		t.Fatalf("AccessToken = %q, want %q", token.AccessToken, "env-token")
+	}
+
+	if _, err := loadStoredToken(); err == nil {
+		t.Fatal("TokenSource wrote the env token to the keychain, it should not have")
+	}
+}
+
+func TestStoredTokenIgnoresEnvVar(t *testing.T) {
+	if err := SetToken(&oauth2.Token{AccessToken: "keychain-token"}); err != nil {
+		t.Skipf("keyring unavailable in this environment: %v", err)
+	}
+	t.Cleanup(func() { _ = DeleteToken() })
+	t.Setenv(envKey, "env-token")
+
+	got, err := StoredToken()
+	if err != nil {
+		t.Fatalf("StoredToken: %v", err)
+	}
+	if got.AccessToken != "keychain-token" {
+		t.Fatalf("AccessToken = %q, want %q", got.AccessToken, "keychain-token")
+	}
+}
+
 func TestLoadStoredTokenMigratesLegacyToken(t *testing.T) {
 	if err := keyring.Set(serviceName, legacyAccountName, "  legacy-token\n"); err != nil {
 		t.Skipf("keyring unavailable in this environment: %v", err)

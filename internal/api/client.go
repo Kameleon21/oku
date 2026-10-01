@@ -160,19 +160,17 @@ func newClientWithEndpoint(url, token string) *Client {
 	}
 }
 
-// NewOAuthClient creates a Hardcover API client authorized by src. Unlike
-// NewClient, the Authorization header is set per-request by src's own
-// oauth2.Transport, which refreshes an expired token on demand, so the
-// request-level normalizeToken/header logic in do is skipped (c.token stays
-// empty).
+// NewOAuthClient creates a Hardcover API client authorized by src. The
+// Authorization header is set per-request by src's own oauth2.Transport,
+// which refreshes an expired token on demand.
 func NewOAuthClient(ctx context.Context, src oauth2.TokenSource) *Client {
 	return newOAuthClientWithEndpoint(ctx, endpoint, src)
 }
 
 func newOAuthClientWithEndpoint(ctx context.Context, url string, src oauth2.TokenSource) *Client {
-	// Routes oauth2's token-refresh requests, and the API requests
-	// themselves, through our statusTransport so non-2xx responses still
-	// surface as *StatusError for the retry/backoff logic in do.
+	// Routes API requests through statusTransport so non-2xx responses
+	// surface as *StatusError for do's retry/backoff logic. Token-refresh
+	// requests use their own ctx, set in auth.TokenSource.
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, baseHTTPClient())
 	return &Client{
 		gql: graphql.NewClient(url, graphql.WithHTTPClient(oauth2.NewClient(ctx, src))),

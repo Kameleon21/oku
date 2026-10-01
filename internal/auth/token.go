@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/zalando/go-keyring"
 	"golang.org/x/oauth2"
@@ -42,14 +44,24 @@ func GetToken(ctx context.Context) (*oauth2.Token, error) {
 	return loadStoredToken()
 }
 
+// StoredToken returns the token saved in the system keychain, ignoring any
+// HARDCOVER_TOKEN override.
+func StoredToken() (*oauth2.Token, error) {
+	return loadStoredToken()
+}
+
 // loadStoredToken reads and decodes the token saved in the system keychain.
 // A corrupt entry is deleted so the next login starts from a clean slate.
 func loadStoredToken() (*oauth2.Token, error) {
 	raw, err := keyring.Get(serviceName, accountName)
 	if err != nil {
 		if errors.Is(err, keyring.ErrNotFound) {
-			if token, ok := migrateLegacyToken(); ok {
+			token, migrateErr := migrateLegacyToken()
+			if migrateErr == nil {
 				return token, nil
+			}
+			if !errors.Is(migrateErr, keyring.ErrNotFound) {
+				return nil, fmt.Errorf("keyring backend unavailable: %w; set %s as a workaround", migrateErr, envKey)
 			}
 			return nil, fmt.Errorf("no token found; run: oku auth login")
 		}
@@ -65,24 +77,23 @@ func loadStoredToken() (*oauth2.Token, error) {
 }
 
 // migrateLegacyToken moves a plain API token from the pre-OAuth keychain
-// entry into the new OAuth-shaped one. ok is false when there's nothing to
-// migrate (including on a keyring error, which GetToken's next call will
-// report in its usual, more informative way).
-func migrateLegacyToken() (token *oauth2.Token, ok bool) {
+// entry into the new OAuth-shaped one. Returns keyring.ErrNotFound when
+// there's nothing to migrate; any other error is a keyring backend problem.
+func migrateLegacyToken() (*oauth2.Token, error) {
 	raw, err := keyring.Get(serviceName, legacyAccountName)
 	if err != nil {
-		return nil, false
+		return nil, err
 	}
 	if raw = normalizeToken(raw); raw == "" {
-		return nil, false
+		return nil, keyring.ErrNotFound
 	}
 
-	token = &oauth2.Token{AccessToken: raw, TokenType: "Bearer"}
+	token := &oauth2.Token{AccessToken: raw, TokenType: "Bearer"}
 	if err := SetToken(token); err != nil {
-		return nil, false
+		return nil, err
 	}
 	_ = keyring.Delete(serviceName, legacyAccountName)
-	return token, true
+	return token, nil
 }
 
 // SetToken stores an OAuth token in the system keychain.
@@ -108,7 +119,17 @@ func DeleteToken() error {
 // that transparently refreshes token when it has expired, and persists any
 // refreshed token back to the keychain so the next invocation of oku picks
 // it up without needing to refresh again.
+//
+// When HARDCOVER_TOKEN is set, token is used as-is and the keychain is never
+// touched, so the env var keeps working as a workaround on machines without
+// a usable keychain backend (it has no refresh token anyway, so there would
+// be nothing to refresh).
 func TokenSource(ctx context.Context, token *oauth2.Token) oauth2.TokenSource {
+	if normalizeToken(os.Getenv(envKey)) != "" {
+		return oauth2.StaticTokenSource(token)
+	}
+	// Timeout so a stalled refresh request can't hang forever.
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Timeout: 10 * time.Second})
 	return &persistingTokenSource{src: GetConf().TokenSource(ctx, token)}
 }
 

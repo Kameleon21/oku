@@ -43,7 +43,7 @@ func newLogoutCmd() *cobra.Command {
 		Short: "Sign out and revoke stored credentials",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Best-effort revoke: a missing/expired token still gets cleared locally.
-			if token, err := auth.GetToken(cmd.Context()); err == nil {
+			if token, err := auth.StoredToken(); err == nil {
 				if err := auth.LogOut(cmd.Context(), token); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "warning: failed to revoke token with Hardcover: %v\n", err)
 				}
