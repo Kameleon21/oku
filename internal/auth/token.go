@@ -132,8 +132,8 @@ func TokenSource(ctx context.Context, token *oauth2.Token) oauth2.TokenSource {
 	return &persistingTokenSource{ctx: ctx, conf: GetConf(), token: token}
 }
 
-// persistingTokenSource wraps an oauth2.TokenSource and writes the token to
-// the keychain whenever it changes, i.e. right after a refresh.
+// persistingTokenSource refreshes an expired token under a cross-process lock
+// and writes the result to the keychain, since refresh tokens rotate on use.
 type persistingTokenSource struct {
 	ctx   context.Context
 	conf  *oauth2.Config
@@ -145,7 +145,10 @@ func (p *persistingTokenSource) Token() (*oauth2.Token, error) {
 		return p.token, nil
 	}
 
-	// another oku process may have refreshed already
+	unlockRefresh := lockRefresh(p.ctx)
+	defer unlockRefresh()
+
+	// re-read under the lock: another oku process may have just refreshed
 	if stored, err := loadStoredToken(); err == nil {
 		p.token = stored
 		if stored.Valid() {
