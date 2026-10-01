@@ -2,11 +2,24 @@ package auth
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/zalando/go-keyring"
 	"golang.org/x/oauth2"
 )
+
+// TestMain keeps tests off the real keychain.
+func TestMain(m *testing.M) {
+	keyring.MockInit()
+	os.Exit(m.Run())
+}
+
+// freshKeychain empties the mock keychain.
+func freshKeychain(t *testing.T) {
+	t.Helper()
+	keyring.MockInit()
+}
 
 func TestNormalizeToken(t *testing.T) {
 	tests := []struct {
@@ -71,10 +84,10 @@ func (f *fakeTokenSource) Token() (*oauth2.Token, error) {
 }
 
 func TestPersistingTokenSourcePersistsOnRefresh(t *testing.T) {
+	freshKeychain(t)
 	if err := SetToken(&oauth2.Token{AccessToken: "seed"}); err != nil {
-		t.Skipf("keyring unavailable in this environment: %v", err)
+		t.Fatalf("SetToken: %v", err)
 	}
-	t.Cleanup(func() { _ = DeleteToken() })
 
 	src := &persistingTokenSource{src: &fakeTokenSource{tokens: []*oauth2.Token{
 		{AccessToken: "first"},
@@ -97,11 +110,8 @@ func TestPersistingTokenSourcePersistsOnRefresh(t *testing.T) {
 }
 
 func TestTokenSourceEnvTokenBypassesKeychain(t *testing.T) {
-	if err := DeleteToken(); err != nil {
-		t.Skipf("keyring unavailable in this environment: %v", err)
-	}
+	freshKeychain(t)
 	t.Setenv(envKey, "env-token")
-	t.Cleanup(func() { _ = DeleteToken() })
 
 	src := TokenSource(context.Background(), &oauth2.Token{AccessToken: "env-token"})
 	token, err := src.Token()
@@ -118,10 +128,10 @@ func TestTokenSourceEnvTokenBypassesKeychain(t *testing.T) {
 }
 
 func TestStoredTokenIgnoresEnvVar(t *testing.T) {
+	freshKeychain(t)
 	if err := SetToken(&oauth2.Token{AccessToken: "keychain-token"}); err != nil {
-		t.Skipf("keyring unavailable in this environment: %v", err)
+		t.Fatalf("SetToken: %v", err)
 	}
-	t.Cleanup(func() { _ = DeleteToken() })
 	t.Setenv(envKey, "env-token")
 
 	got, err := StoredToken()
@@ -134,14 +144,10 @@ func TestStoredTokenIgnoresEnvVar(t *testing.T) {
 }
 
 func TestLoadStoredTokenMigratesLegacyToken(t *testing.T) {
+	freshKeychain(t)
 	if err := keyring.Set(serviceName, legacyAccountName, "  legacy-token\n"); err != nil {
-		t.Skipf("keyring unavailable in this environment: %v", err)
+		t.Fatalf("keyring.Set: %v", err)
 	}
-	t.Cleanup(func() {
-		_ = keyring.Delete(serviceName, legacyAccountName)
-		_ = DeleteToken()
-	})
-	_ = DeleteToken() // make sure the new-style slot starts empty
 
 	token, err := loadStoredToken()
 	if err != nil {
@@ -153,5 +159,10 @@ func TestLoadStoredTokenMigratesLegacyToken(t *testing.T) {
 
 	if stored, err := loadStoredToken(); err != nil || stored.AccessToken != "legacy-token" {
 		t.Fatalf("after migration, loadStoredToken() = %+v, %v", stored, err)
+	}
+
+	// legacy entry stays for rollback
+	if legacy, err := keyring.Get(serviceName, legacyAccountName); err != nil || legacy != "  legacy-token\n" {
+		t.Fatalf("legacy entry = %q, %v; want it left untouched", legacy, err)
 	}
 }
