@@ -47,9 +47,9 @@ func TestNewTokenURL(t *testing.T) {
 		t.Fatalf("NewTokenURL() = %q, want the New API Key page", got)
 	}
 
-	wantScope := strings.Join(scopes, "+")
-	if !strings.HasSuffix(got, "?scope="+wantScope) {
-		t.Fatalf("NewTokenURL() = %q, want it to end with ?scope=%s", got, wantScope)
+	wantScope := strings.Join(scopes, " ")
+	if gotScope := u.Query().Get("scope"); gotScope != wantScope {
+		t.Fatalf("scope param = %q, want %q", gotScope, wantScope)
 	}
 }
 
