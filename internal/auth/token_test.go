@@ -52,7 +52,12 @@ func TestNormalizeToken(t *testing.T) {
 		{name: "trailing newline is stripped", input: "abc123\n", want: "abc123"},
 		{name: "surrounding whitespace is stripped", input: "  abc123\t\r\n", want: "abc123"},
 		{name: "whitespace only becomes empty", input: " \n\t", want: ""},
-		{name: "inner whitespace is preserved", input: " Bearer abc123 ", want: "Bearer abc123"},
+		{name: "bearer prefix is stripped", input: "Bearer abc123", want: "abc123"},
+		{name: "bearer prefix is case insensitive", input: "bEaReR abc123", want: "abc123"},
+		{name: "bearer prefix with surrounding whitespace", input: "  Bearer   abc123\n", want: "abc123"},
+		{name: "bearer only is not a token", input: "Bearer", want: "Bearer"},
+		{name: "bearer only with trailing space", input: "Bearer ", want: "Bearer"},
+		{name: "bearer in the middle is kept", input: "abc Bearer def", want: "abc Bearer def"},
 	}
 
 	for _, tt := range tests {
@@ -66,6 +71,18 @@ func TestNormalizeToken(t *testing.T) {
 
 func TestGetTokenTrimsEnvToken(t *testing.T) {
 	t.Setenv(envKey, "  env-token\n")
+
+	got, err := GetToken()
+	if err != nil {
+		t.Fatalf("GetToken: %v", err)
+	}
+	if got.AccessToken != "env-token" {
+		t.Fatalf("GetToken().AccessToken = %q, want %q", got.AccessToken, "env-token")
+	}
+}
+
+func TestGetTokenStripsBearerPrefixFromEnvToken(t *testing.T) {
+	t.Setenv(envKey, "Bearer env-token\n")
 
 	got, err := GetToken()
 	if err != nil {

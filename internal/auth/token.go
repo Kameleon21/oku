@@ -30,6 +30,10 @@ const (
 // sneak in via `export HARDCOVER_TOKEN="$(cat token.txt)"` or a copy-paste
 // into the keychain and would otherwise corrupt the Authorization header.
 func normalizeToken(token string) string {
+	token = strings.TrimSpace(token)
+	if len(token) > 7 && strings.EqualFold(token[:7], "bearer ") {
+		token = token[7:]
+	}
 	return strings.TrimSpace(token)
 }
 
