@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/Kameleon21/oku/internal/auth"
 	"github.com/spf13/cobra"
@@ -24,8 +27,13 @@ func newLoginCmd() *cobra.Command {
 		Use:   "login",
 		Short: "Sign in to Hardcover via your browser",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			token, err := auth.Login(cmd.Context(), cmd.OutOrStdout())
+			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
+			defer cancel()
+			token, err := auth.Login(ctx, cmd.OutOrStdout())
 			if err != nil {
+				if errors.Is(err, context.DeadlineExceeded) {
+					return fmt.Errorf("timed out waiting for browser sign-in")
+				}
 				return fmt.Errorf("login failed: %w", err)
 			}
 			if err := auth.SetToken(token); err != nil {
