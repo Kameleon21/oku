@@ -314,6 +314,8 @@ func authorLine(b model.Book) string {
 }
 
 // statusLine is the shelf the book is on, and the dates of the open read.
+// Read dates are calendar days stored as UTC midnight, so they are formatted
+// as-is: converting to local time would show the previous day west of UTC.
 func statusLine(ub model.UserBook) string {
 	out := ub.StatusID.Label()
 	if len(ub.UserBookReads) == 0 {
@@ -321,10 +323,10 @@ func statusLine(ub model.UserBook) string {
 	}
 	read := ub.UserBookReads[0]
 	if read.StartedAt != nil {
-		out += " · started " + read.StartedAt.Local().Format("2 Jan 2006")
+		out += " · started " + read.StartedAt.Format("2 Jan 2006")
 	}
 	if read.FinishedAt != nil {
-		out += " · finished " + read.FinishedAt.Local().Format("2 Jan 2006")
+		out += " · finished " + read.FinishedAt.Format("2 Jan 2006")
 	}
 	return out
 }
