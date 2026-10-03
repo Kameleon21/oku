@@ -17,7 +17,8 @@ import (
 )
 
 const (
-	clientID = "" // FIXME: add testing client id
+	// Public client (PKCE, no secret), so the ID is safe to commit.
+	clientID = "41696682-fd7a-45ad-8145-eb002ac6179d"
 )
 
 // scopes is the minimum the app needs, per https://api.hardcover.app/capabilities.json
