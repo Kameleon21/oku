@@ -24,13 +24,13 @@ var lockTimeout = 15 * time.Second
 var refreshMu sync.Mutex
 
 var (
-	ErrLockTimeout = errors.New("timed out waiting for refresh lock")
-	ErrNoLock      = errors.New("refresh lock not acquired")
+	errLockTimeout = errors.New("timed out waiting for refresh lock")
 )
 
-// lockRefresh serializes token refreshes across goroutines and oku processes.
-// If the file lock can't be taken it falls back to the in-process mutex only,
-// so a broken data dir never blocks the user.
+// lockRefresh serializes token refreshes across goroutines and processes.
+// unlock is always safe to call. An error other than errLockTimeout or a
+// context error means the file lock is unavailable; the caller may refresh
+// under the in-process mutex alone.
 func lockRefresh(ctx context.Context) (unlock func(), err error) {
 	if ctx.Err() != nil {
 		return func() {}, ctx.Err()
@@ -59,15 +59,14 @@ func lockFile(ctx context.Context) (unlock func(), err error) {
 	defer cancel()
 
 	fl := flock.New(filepath.Join(dir, lockFileName))
-	locked, err := fl.TryLockContext(tCtx, lockPollEvery)
+	_, err = fl.TryLockContext(tCtx, lockPollEvery)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
-			return nil, ErrLockTimeout
+			return nil, errLockTimeout
 		}
 		return nil, err
 	}
-	if !locked {
-		return nil, ErrNoLock
-	}
+
+	// locked
 	return func() { _ = fl.Unlock() }, nil
 }

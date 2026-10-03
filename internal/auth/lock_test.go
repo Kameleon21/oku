@@ -162,7 +162,7 @@ func TestLockFileTimeoutReturnsSentinel(t *testing.T) {
 	setLockTimeout(t, 100*time.Millisecond)
 	holdLock(t)
 
-	if _, err := lockFile(context.Background()); !errors.Is(err, ErrLockTimeout) {
+	if _, err := lockFile(context.Background()); !errors.Is(err, errLockTimeout) {
 		t.Fatalf("lockFile err = %v, want ErrLockTimeout", err)
 	}
 }
@@ -174,7 +174,7 @@ func TestLockFileCallerDeadlineIsNotATimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	_, err := lockFile(ctx)
-	if errors.Is(err, ErrLockTimeout) || !errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, errLockTimeout) || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("lockFile err = %v, want the caller's DeadlineExceeded", err)
 	}
 }
@@ -208,7 +208,7 @@ func TestRefreshDoesNotReplayOnLockTimeout(t *testing.T) {
 	release := holdLock(t)
 
 	src := rs.source(expiredToken("old", "r0"))
-	if _, err := src.Token(); !errors.Is(err, ErrLockTimeout) {
+	if _, err := src.Token(); !errors.Is(err, errLockTimeout) {
 		t.Fatalf("Token() err = %v, want ErrLockTimeout", err)
 	}
 	if calls := rs.callCount(); calls != 0 {

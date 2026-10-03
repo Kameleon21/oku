@@ -159,9 +159,12 @@ func (p *persistingTokenSource) Token() (*oauth2.Token, error) {
 	unlockRefresh, err := lockRefresh(p.ctx)
 	defer unlockRefresh()
 	switch {
-	case errors.Is(err, ErrLockTimeout):
+	case errors.Is(err, errLockTimeout):
 		stored, loadErr := loadStoredToken()
-		if loadErr == nil && stored.Valid() {
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		if stored.Valid() {
 			p.token = stored
 			return stored, nil
 		}
