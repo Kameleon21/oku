@@ -176,17 +176,13 @@ func logOutAt(ctx context.Context, endpoint string, token *oauth2.Token) error {
 		return nil
 	}
 
-	hint, value := "refresh_token", token.RefreshToken
-	if value == "" {
-		hint, value = "access_token", token.AccessToken
-	}
-	if value == "" {
-		return nil // nothing to revoke
+	if token.RefreshToken == "" {
+		return nil
 	}
 
 	form := url.Values{
-		"token":           {value},
-		"token_type_hint": {hint},
+		"token":           {token.RefreshToken},
+		"token_type_hint": {"refresh_token"},
 		"client_id":       {clientID},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))

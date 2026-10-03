@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -364,5 +365,52 @@ func TestLoadStoredTokenMigratesLegacyToken(t *testing.T) {
 	// legacy entry stays for rollback
 	if legacy, err := keyring.Get(serviceName, legacyAccountName); err != nil || legacy != "  legacy-token\n" {
 		t.Fatalf("legacy entry = %q, %v; want it left untouched", legacy, err)
+	}
+}
+
+func TestDeleteTokenClearsBothEntries(t *testing.T) {
+	freshKeychain(t)
+	if err := SetToken(&oauth2.Token{AccessToken: "oauth-token", RefreshToken: "refresh"}); err != nil {
+		t.Fatalf("SetToken: %v", err)
+	}
+	if err := keyring.Set(serviceName, legacyAccountName, "legacy-token"); err != nil {
+		t.Fatalf("keyring.Set: %v", err)
+	}
+
+	if err := DeleteToken(); err != nil {
+		t.Fatalf("DeleteToken: %v", err)
+	}
+
+	for _, account := range []string{accountName, legacyAccountName} {
+		if _, err := keyring.Get(serviceName, account); !errors.Is(err, keyring.ErrNotFound) {
+			t.Fatalf("keyring.Get(%q) err = %v, want ErrNotFound", account, err)
+		}
+	}
+	// logout must not be undone by migrating the legacy token back
+	if token, err := loadStoredToken(); err == nil {
+		t.Fatalf("loadStoredToken after DeleteToken = %+v, want an error", token)
+	}
+}
+
+func TestDeleteTokenClearsLegacyEntryWithoutOAuthEntry(t *testing.T) {
+	freshKeychain(t)
+	if err := keyring.Set(serviceName, legacyAccountName, "legacy-token"); err != nil {
+		t.Fatalf("keyring.Set: %v", err)
+	}
+
+	if err := DeleteToken(); err != nil {
+		t.Fatalf("DeleteToken: %v", err)
+	}
+
+	if _, err := keyring.Get(serviceName, legacyAccountName); !errors.Is(err, keyring.ErrNotFound) {
+		t.Fatalf("legacy entry err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestDeleteTokenWhenNothingStored(t *testing.T) {
+	freshKeychain(t)
+
+	if err := DeleteToken(); err != nil {
+		t.Fatalf("DeleteToken on an empty keychain = %v, want nil", err)
 	}
 }

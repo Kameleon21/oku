@@ -119,6 +119,12 @@ func DeleteToken() error {
 	err := keyring.Delete(serviceName, accountName)
 	if err != nil && errors.Is(err, keyring.ErrNotFound) {
 		return nil
+	} else if err != nil {
+		return err
+	}
+	err = keyring.Delete(serviceName, legacyAccountName)
+	if err != nil && errors.Is(err, keyring.ErrNotFound) {
+		return nil
 	}
 	return err
 }

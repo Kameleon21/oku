@@ -287,7 +287,7 @@ func TestLogOut(t *testing.T) {
 		}
 	})
 
-	t.Run("prefers refresh token over access token", func(t *testing.T) {
+	t.Run("revokes the refresh token", func(t *testing.T) {
 		var gotToken, gotHint, gotClientID string
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if err := r.ParseForm(); err != nil {
@@ -312,24 +312,20 @@ func TestLogOut(t *testing.T) {
 		}
 	})
 
-	t.Run("falls back to access token", func(t *testing.T) {
-		var gotToken, gotHint string
+	t.Run("skips revoke without a refresh token", func(t *testing.T) {
+		called := false
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if err := r.ParseForm(); err != nil {
-				t.Fatalf("ParseForm: %v", err)
-			}
-			gotToken = r.PostForm.Get("token")
-			gotHint = r.PostForm.Get("token_type_hint")
-			w.WriteHeader(http.StatusOK)
+			called = true
 		}))
 		defer srv.Close()
 
-		token := &oauth2.Token{AccessToken: "access-abc"}
+		// personal API keys have no refresh token and can't be revoked via OAuth
+		token := &oauth2.Token{AccessToken: "hc_pat_abc"}
 		if err := logOutAt(context.Background(), srv.URL, token); err != nil {
 			t.Fatalf("logOutAt = %v, want nil", err)
 		}
-		if gotToken != "access-abc" || gotHint != "access_token" {
-			t.Fatalf("got token=%q hint=%q, want token=%q hint=%q", gotToken, gotHint, "access-abc", "access_token")
+		if called {
+			t.Fatal("server was contacted for a token without a refresh token")
 		}
 	})
 
@@ -340,7 +336,7 @@ func TestLogOut(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		err := logOutAt(context.Background(), srv.URL, &oauth2.Token{AccessToken: "abc"})
+		err := logOutAt(context.Background(), srv.URL, &oauth2.Token{AccessToken: "abc", RefreshToken: "def"})
 		if err == nil {
 			t.Fatal("logOutAt err = nil, want an error for a non-200 response")
 		}

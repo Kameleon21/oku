@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Kameleon21/oku/internal/auth"
@@ -50,10 +51,19 @@ func newLogoutCmd() *cobra.Command {
 		Use:   "logout",
 		Short: "Sign out and revoke stored credentials",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if auth.EnvTokenSet() {
+				fmt.Fprintln(cmd.ErrOrStderr(), "warning: environment variable is set and cannot be cleared")
+			}
+
 			// Best-effort revoke: a missing/expired token still gets cleared locally.
 			if token, err := auth.StoredToken(); err == nil {
 				if err := auth.LogOut(cmd.Context(), token); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "warning: failed to revoke token with Hardcover: %v\n", err)
+				}
+
+				// Only the legacy JWTs can't be revoked, but hint if the key is a PAT
+				if strings.HasPrefix(token.AccessToken, "hc_pat_") {
+					fmt.Fprintln(cmd.OutOrStdout(), "Hint: Personal Access Tokens have to be manually revoked at https://hardcover.app/account/api")
 				}
 			}
 			if err := auth.DeleteToken(); err != nil {
