@@ -137,3 +137,109 @@ func TestRefreshWorksWhenLockUnavailable(t *testing.T) {
 		t.Fatalf("AccessToken = %q, want %q", got.AccessToken, "access-1")
 	}
 }
+
+func setLockTimeout(t *testing.T, d time.Duration) {
+	t.Helper()
+	old := lockTimeout
+	lockTimeout = d
+	t.Cleanup(func() { lockTimeout = old })
+}
+
+// holdLock stands in for another oku process that is mid-refresh.
+func holdLock(t *testing.T) (release func()) {
+	t.Helper()
+	unlock, err := lockFile(context.Background())
+	if err != nil {
+		t.Fatalf("lockFile: %v", err)
+	}
+	var once sync.Once
+	release = func() { once.Do(unlock) }
+	t.Cleanup(release)
+	return release
+}
+
+func TestLockFileTimeoutReturnsSentinel(t *testing.T) {
+	setLockTimeout(t, 100*time.Millisecond)
+	holdLock(t)
+
+	if _, err := lockFile(context.Background()); !errors.Is(err, ErrLockTimeout) {
+		t.Fatalf("lockFile err = %v, want ErrLockTimeout", err)
+	}
+}
+
+func TestLockFileCallerDeadlineIsNotATimeout(t *testing.T) {
+	setLockTimeout(t, time.Minute)
+	holdLock(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err := lockFile(ctx)
+	if errors.Is(err, ErrLockTimeout) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("lockFile err = %v, want the caller's DeadlineExceeded", err)
+	}
+}
+
+func TestRefreshAdoptsStoredTokenOnLockTimeout(t *testing.T) {
+	freshKeychain(t)
+	setLockTimeout(t, 100*time.Millisecond)
+	rs := newRotatingServer(t, "r0")
+	// another process finished refreshing, but still holds the lock
+	mustStore(t, validToken("access-other", "r-other"))
+	holdLock(t)
+
+	got, err := rs.source(expiredToken("old", "r0")).Token()
+	if err != nil {
+		t.Fatalf("Token() = %v, want the stored token to be adopted", err)
+	}
+	if got.AccessToken != "access-other" {
+		t.Fatalf("AccessToken = %q, want %q", got.AccessToken, "access-other")
+	}
+	if calls := rs.callCount(); calls != 0 {
+		t.Fatalf("token endpoint called %d times, want 0", calls)
+	}
+}
+
+// Refreshing without the lock could replay a rotated refresh token.
+func TestRefreshDoesNotReplayOnLockTimeout(t *testing.T) {
+	freshKeychain(t)
+	setLockTimeout(t, 100*time.Millisecond)
+	rs := newRotatingServer(t, "r0")
+	mustStore(t, expiredToken("old", "r0"))
+	release := holdLock(t)
+
+	src := rs.source(expiredToken("old", "r0"))
+	if _, err := src.Token(); !errors.Is(err, ErrLockTimeout) {
+		t.Fatalf("Token() err = %v, want ErrLockTimeout", err)
+	}
+	if calls := rs.callCount(); calls != 0 {
+		t.Fatalf("token endpoint called %d times, want 0", calls)
+	}
+
+	// the failed attempt must not leave the in-process mutex locked
+	release()
+	got, err := src.Token()
+	if err != nil {
+		t.Fatalf("Token() after the lock was released = %v", err)
+	}
+	if got.AccessToken != "access-1" {
+		t.Fatalf("AccessToken = %q, want %q", got.AccessToken, "access-1")
+	}
+}
+
+func TestRefreshReturnsCallerContextError(t *testing.T) {
+	freshKeychain(t)
+	rs := newRotatingServer(t, "r0")
+	mustStore(t, expiredToken("old", "r0"))
+
+	src := rs.source(expiredToken("old", "r0"))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	src.ctx = ctx
+
+	if _, err := src.Token(); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Token() err = %v, want context.Canceled", err)
+	}
+	if calls := rs.callCount(); calls != 0 {
+		t.Fatalf("token endpoint called %d times, want 0", calls)
+	}
+}

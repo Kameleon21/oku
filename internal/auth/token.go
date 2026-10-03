@@ -116,17 +116,13 @@ func SetToken(token *oauth2.Token) error {
 // DeleteToken removes the stored token from the system keychain. Deleting an
 // already-absent token is not an error.
 func DeleteToken() error {
-	err := keyring.Delete(serviceName, accountName)
-	if err != nil && errors.Is(err, keyring.ErrNotFound) {
-		return nil
-	} else if err != nil {
-		return err
+	var errs []error
+	for _, account := range []string{accountName, legacyAccountName} {
+		if err := keyring.Delete(serviceName, account); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+			errs = append(errs, err)
+		}
 	}
-	err = keyring.Delete(serviceName, legacyAccountName)
-	if err != nil && errors.Is(err, keyring.ErrNotFound) {
-		return nil
-	}
-	return err
+	return errors.Join(errs...)
 }
 
 // TokenSource returns an oauth2.TokenSource backed by GetConf's endpoint
@@ -160,8 +156,19 @@ func (p *persistingTokenSource) Token() (*oauth2.Token, error) {
 		return p.token, nil
 	}
 
-	unlockRefresh := lockRefresh(p.ctx)
+	unlockRefresh, err := lockRefresh(p.ctx)
 	defer unlockRefresh()
+	switch {
+	case errors.Is(err, ErrLockTimeout):
+		stored, loadErr := loadStoredToken()
+		if loadErr == nil && stored.Valid() {
+			p.token = stored
+			return stored, nil
+		}
+		return nil, fmt.Errorf("another oku process is refreshing the token: %w; try again", err)
+	case err != nil && p.ctx.Err() != nil:
+		return nil, err
+	}
 
 	// re-read under the lock: another oku process may have just refreshed
 	if stored, err := loadStoredToken(); err == nil {
