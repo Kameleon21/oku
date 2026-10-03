@@ -577,3 +577,25 @@ func TestNarrowScreenEnterSwapsThePane(t *testing.T) {
 		t.Fatal("the list should be back on screen")
 	}
 }
+
+// TestStatusLineKeepsCalendarDates pins read dates to the day Hardcover
+// stored. They arrive as UTC midnight, and CI runs in UTC, so the test forces
+// a zone west of UTC where a local conversion would show the previous day.
+func TestStatusLineKeepsCalendarDates(t *testing.T) {
+	la, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Skipf("tzdata unavailable: %v", err)
+	}
+	prev := time.Local
+	time.Local = la
+	t.Cleanup(func() { time.Local = prev })
+
+	started := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	finished := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
+	ub := model.UserBook{StatusID: model.StatusRead,
+		UserBookReads: []model.UserBookRead{{StartedAt: &started, FinishedAt: &finished}}}
+
+	if got, want := statusLine(ub), "Read · started 1 Sep 2026 · finished 20 Sep 2026"; got != want {
+		t.Fatalf("statusLine = %q, want %q", got, want)
+	}
+}
