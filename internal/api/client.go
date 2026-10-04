@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/machinebox/graphql"
+	"golang.org/x/oauth2"
 )
 
 const endpoint = "https://api.hardcover.app/v1/graphql"
@@ -29,6 +30,7 @@ const (
 	// diagnostics; maxRetryAfter caps how long a Retry-After header may hold
 	// a request back.
 	maxErrorBody  = 512
+	maxParseBody  = 4096
 	maxRetryAfter = 30 * time.Second
 )
 
@@ -78,6 +80,11 @@ func IsNetworkError(err error) bool {
 // non-2xx responses into this typed error at the transport layer.
 type StatusError struct {
 	Code int
+	// APIError, Description and Scope are parsed from a JSON error body;
+	// all are empty when the body isn't JSON.
+	APIError    string // e.g. "invalid_token", "insufficient_scope"
+	Description string
+	Scope       string // permissions missing, for insufficient_scope
 	// Body holds up to maxErrorBody bytes of the response body, with runs of
 	// whitespace collapsed, so failures carry the server's explanation
 	// instead of just a status number.
@@ -88,8 +95,16 @@ type StatusError struct {
 
 func (e *StatusError) Error() string {
 	msg := fmt.Sprintf("unexpected HTTP status %d (%s)", e.Code, http.StatusText(e.Code))
-	if e.Body != "" {
+	switch {
+	case e.APIError != "" && e.Description != "":
+		msg += ": " + e.APIError + ": " + e.Description
+	case e.APIError != "":
+		msg += ": " + e.APIError
+	case e.Body != "":
 		msg += ": " + e.Body
+	}
+	if e.Scope != "" {
+		msg += " (scope: " + e.Scope + ")"
 	}
 	return msg
 }
@@ -106,15 +121,19 @@ func (t *statusTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
+		// Read more than maxErrorBody so a JSON body isn't cut mid-way
+		// before parsing; only the displayed Body is truncated.
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxParseBody))
 		resp.Body.Close()
-		return nil, &StatusError{
+		statusErr := &StatusError{
 			Code: resp.StatusCode,
 			// The body lands on stderr verbatim, and an edge proxy's HTML 503
 			// is 512 bytes of newlines and indentation, so flatten it first.
-			Body:       strings.Join(strings.Fields(string(body)), " "),
+			Body:       truncate(strings.Join(strings.Fields(string(body)), " "), maxErrorBody),
 			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
 		}
+		statusErr.parseErrorBody(body)
+		return nil, statusErr
 	}
 	return resp, nil
 }
@@ -153,13 +172,35 @@ func NewClient(token string) *Client {
 }
 
 func newClientWithEndpoint(url, token string) *Client {
-	httpClient := &http.Client{
+	return &Client{
+		gql:   graphql.NewClient(url, graphql.WithHTTPClient(baseHTTPClient())),
+		token: normalizeToken(token),
+	}
+}
+
+// NewOAuthClient creates a Hardcover API client authorized by src. The
+// Authorization header is set per-request by src's own oauth2.Transport,
+// which refreshes an expired token on demand.
+func NewOAuthClient(ctx context.Context, src oauth2.TokenSource) *Client {
+	return newOAuthClientWithEndpoint(ctx, endpoint, src)
+}
+
+func newOAuthClientWithEndpoint(ctx context.Context, url string, src oauth2.TokenSource) *Client {
+	// Routes API requests through statusTransport so non-2xx responses
+	// surface as *StatusError for do's retry/backoff logic. Token-refresh
+	// requests use their own ctx, set in auth.TokenSource.
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, baseHTTPClient())
+	return &Client{
+		gql: graphql.NewClient(url, graphql.WithHTTPClient(oauth2.NewClient(ctx, src))),
+	}
+}
+
+// baseHTTPClient is the plain (non-OAuth) transport shared by both
+// constructors: a timeout plus status-code classification.
+func baseHTTPClient() *http.Client {
+	return &http.Client{
 		Timeout:   attemptTimeout,
 		Transport: &statusTransport{base: http.DefaultTransport},
-	}
-	return &Client{
-		gql:   graphql.NewClient(url, graphql.WithHTTPClient(httpClient)),
-		token: normalizeToken(token),
 	}
 }
 
@@ -180,7 +221,9 @@ func (c *Client) do(ctx context.Context, req *graphql.Request, resp interface{})
 	ctx, cancel := withRequestTimeout(ctx)
 	defer cancel()
 
-	req.Header.Set("authorization", c.token)
+	if c.token != "" {
+		req.Header.Set("authorization", c.token)
+	}
 	req.Header.Set("User-Agent", userAgent())
 
 	var lastErr error

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -94,12 +95,29 @@ func Execute(version string) int {
 	cmd := newRootCmd(version)
 	if err := cmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
+		if hint := errorHint(err); hint != "" {
+			fmt.Fprintln(os.Stderr, hint)
+		}
 		if api.IsNetworkError(err) {
 			return 2
 		}
 		return 1
 	}
 	return 0
+}
+
+// errorHint suggests a next step for API errors the user can act on.
+func errorHint(err error) string {
+	switch {
+	case errors.Is(err, api.ErrUnauthorized):
+		if auth.EnvTokenSet() {
+			return "Hint: the HARDCOVER_TOKEN environment variable was rejected; fix it, or unset it to use your stored login"
+		}
+		return "Hint: token rejected or expired; run: oku auth login"
+	case errors.Is(err, api.ErrInsufficientScope):
+		return "Hint: this token lacks the required permission; run: oku auth login"
+	}
+	return ""
 }
 
 // initApp creates the App instance (API client + store + config).
@@ -128,7 +146,7 @@ func initApp() (*app.App, error) {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
-	client := api.NewClient(token)
+	client := api.NewOAuthClient(ctx(), auth.TokenSource(ctx(), token))
 	return app.New(client, db, cfg), nil
 }
 
