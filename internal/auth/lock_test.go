@@ -163,7 +163,7 @@ func TestLockFileTimeoutReturnsSentinel(t *testing.T) {
 	holdLock(t)
 
 	if _, err := lockFile(context.Background()); !errors.Is(err, errLockTimeout) {
-		t.Fatalf("lockFile err = %v, want ErrLockTimeout", err)
+		t.Fatalf("lockFile err = %v, want errLockTimeout", err)
 	}
 }
 
@@ -209,7 +209,7 @@ func TestRefreshDoesNotReplayOnLockTimeout(t *testing.T) {
 
 	src := rs.source(expiredToken("old", "r0"))
 	if _, err := src.Token(); !errors.Is(err, errLockTimeout) {
-		t.Fatalf("Token() err = %v, want ErrLockTimeout", err)
+		t.Fatalf("Token() err = %v, want errLockTimeout", err)
 	}
 	if calls := rs.callCount(); calls != 0 {
 		t.Fatalf("token endpoint called %d times, want 0", calls)
