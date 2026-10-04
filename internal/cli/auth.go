@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Kameleon21/oku/internal/auth"
@@ -60,9 +62,9 @@ func newLogoutCmd() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "warning: failed to revoke token with Hardcover: %v\n", err)
 				}
 
-				// API keys (legacy JWTs and hc_pat_ tokens) have no refresh token and can't be revoked via OAuth
+				// API keys have no refresh token and can't be revoked via OAuth
 				if token.RefreshToken == "" {
-					fmt.Fprintln(cmd.OutOrStdout(), "Hint: API keys have to be revoked manually at https://hardcover.app/account/api")
+					hintManualRevoke(cmd, token.AccessToken)
 				}
 			}
 			if err := auth.DeleteToken(); err != nil {
@@ -72,6 +74,28 @@ func newLogoutCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// hintManualRevoke tells the user how to revoke an API key that oku is about
+// to forget. hc_pat_ tokens can be revoked from the account page, but legacy
+// JWTs can only be invalidated by pasting the key itself, so offer to show it
+// before it's deleted from the keychain.
+func hintManualRevoke(cmd *cobra.Command, key string) {
+	out := cmd.OutOrStdout()
+	if strings.HasPrefix(key, "hc_pat_") {
+		fmt.Fprintln(out, "Hint: API keys have to be revoked manually at https://hardcover.app/account/api")
+		return
+	}
+
+	fmt.Fprintln(out, "Hint: legacy API keys can only be revoked by pasting the key at https://api.hardcover.app/invalidate_keys/new")
+	fmt.Fprint(out, "Show the key now so you can revoke it? It is removed from oku after logout. [y/N] ")
+	answer, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+	fmt.Fprintln(out)
+	if a := strings.ToLower(strings.TrimSpace(answer)); a == "y" || a == "yes" {
+		fmt.Fprintf(out, "Your API key (keep it secret):\n%s\n", key)
+		return
+	}
+	fmt.Fprintln(out, "Key not shown. It stays valid until it expires unless you revoke it.")
 }
 
 func newSetTokenCmd() *cobra.Command {
