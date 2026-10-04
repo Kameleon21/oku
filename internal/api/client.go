@@ -239,6 +239,9 @@ func (c *Client) do(ctx context.Context, req *graphql.Request, resp interface{})
 		if err == nil {
 			return nil
 		}
+		if refreshRejected(err) {
+			return fmt.Errorf("%w: %w", ErrUnauthorized, err)
+		}
 
 		if !isRetryable(err) {
 			if isNetworkish(err) {
@@ -321,6 +324,15 @@ func withRequestTimeout(ctx context.Context) (context.Context, context.CancelFun
 		return ctx, func() {}
 	}
 	return context.WithTimeout(ctx, requestTimeout)
+}
+
+// refreshRejected reports whether the token endpoint refused to refresh an
+// expired login, e.g. a revoked or replayed refresh token. That is a dead
+// login, not a network failure: retrying only replays the refresh token.
+func refreshRejected(err error) bool {
+	var retrieveErr *oauth2.RetrieveError
+	return errors.As(err, &retrieveErr) && retrieveErr.Response != nil &&
+		retrieveErr.Response.StatusCode >= 400 && retrieveErr.Response.StatusCode < 500
 }
 
 func isRetryable(err error) bool {

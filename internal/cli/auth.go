@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Kameleon21/oku/internal/api"
 	"github.com/Kameleon21/oku/internal/auth"
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2"
@@ -21,6 +22,7 @@ func newAuthCmd() *cobra.Command {
 	cmd.AddCommand(newLoginCmd())
 	cmd.AddCommand(newLogoutCmd())
 	cmd.AddCommand(newSetTokenCmd())
+	cmd.AddCommand(newAuthStatusCmd())
 	return cmd
 }
 
@@ -82,7 +84,7 @@ func newLogoutCmd() *cobra.Command {
 // before it's deleted from the keychain.
 func hintManualRevoke(cmd *cobra.Command, key string) {
 	out := cmd.OutOrStdout()
-	if strings.HasPrefix(key, "hc_pat_") {
+	if isPersonalAccessToken(key) {
 		fmt.Fprintln(out, "Hint: API keys have to be revoked manually at https://hardcover.app/account/api")
 		return
 	}
@@ -96,6 +98,62 @@ func hintManualRevoke(cmd *cobra.Command, key string) {
 		return
 	}
 	fmt.Fprintln(out, "Key not shown. It stays valid until it expires unless you revoke it.")
+}
+
+// verifyLogin asks Hardcover who token belongs to, refreshing it first if it
+// has expired. It returns the token in use afterwards, so a refresh shows up
+// in the reported expiry. A variable so tests can stub out the network.
+var verifyLogin = func(ctx context.Context, token *oauth2.Token) (string, *oauth2.Token, error) {
+	src := auth.TokenSource(ctx, token)
+	_, username, err := api.NewOAuthClient(ctx, src).GetMe(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	current, err := src.Token()
+	if err != nil {
+		return "", nil, err
+	}
+	return username, current, nil
+}
+
+func newAuthStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show whether you're logged in to Hardcover",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			token, err := auth.GetToken()
+			if err != nil {
+				return err
+			}
+			username, token, err := verifyLogin(cmd.Context(), token)
+			if err != nil {
+				return err
+			}
+
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "Logged in to Hardcover as %s\n", username)
+			switch {
+			case auth.EnvTokenSet():
+				fmt.Fprintln(out, "Using: HARDCOVER_TOKEN environment variable (overrides any stored login)")
+			case token.RefreshToken != "":
+				fmt.Fprintln(out, "Using: browser login")
+				if !token.Expiry.IsZero() {
+					fmt.Fprintf(out, "Access token expires %s; oku renews it automatically.\n", token.Expiry.Local().Format("2 Jan 2006 15:04"))
+				}
+			case isPersonalAccessToken(token.AccessToken):
+				fmt.Fprintln(out, "Using: personal API key (expires on the date you chose at https://hardcover.app/account/api)")
+			default:
+				fmt.Fprintln(out, "Using: legacy API key")
+				fmt.Fprintln(out, "Hint: run `oku auth login` to switch to browser login")
+			}
+			return nil
+		},
+	}
+}
+
+func isPersonalAccessToken(token string) bool {
+	return strings.HasPrefix(token, "hc_pat_")
 }
 
 func newSetTokenCmd() *cobra.Command {

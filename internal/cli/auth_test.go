@@ -2,10 +2,16 @@ package cli
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Kameleon21/oku/internal/api"
+	"github.com/Kameleon21/oku/internal/auth"
 	"github.com/zalando/go-keyring"
+	"golang.org/x/oauth2"
 )
 
 func runLogout(t *testing.T, stdin string) string {
@@ -85,5 +91,108 @@ func TestLogoutWarnsWhenEnvTokenSet(t *testing.T) {
 
 	if out := runLogout(t, ""); !strings.Contains(out, "HARDCOVER_TOKEN is set") {
 		t.Fatalf("logout output does not name HARDCOVER_TOKEN:\n%s", out)
+	}
+}
+
+func runAuthStatus(t *testing.T) (string, error) {
+	t.Helper()
+	var out bytes.Buffer
+	cmd := newAuthStatusCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	err := cmd.Execute()
+	return out.String(), err
+}
+
+func stubVerifyLogin(t *testing.T, username string, err error) {
+	t.Helper()
+	orig := verifyLogin
+	t.Cleanup(func() { verifyLogin = orig })
+	verifyLogin = func(_ context.Context, token *oauth2.Token) (string, *oauth2.Token, error) {
+		if err != nil {
+			return "", nil, err
+		}
+		return username, token, nil
+	}
+}
+
+func TestAuthStatusReportsCredential(t *testing.T) {
+	expiry := time.Date(2026, 10, 11, 12, 0, 0, 0, time.Local)
+	tests := []struct {
+		name  string
+		env   string
+		token *oauth2.Token
+		want  []string
+	}{
+		{
+			name:  "browser login",
+			token: &oauth2.Token{AccessToken: "hc_at_abc", RefreshToken: "hc_rt_abc", Expiry: expiry},
+			want:  []string{"Using: browser login", "expires 11 Oct 2026 12:00", "renews it automatically"},
+		},
+		{
+			name:  "personal access token",
+			token: &oauth2.Token{AccessToken: "hc_pat_abc"},
+			want:  []string{"Using: personal API key", "https://hardcover.app/account/api"},
+		},
+		{
+			name:  "legacy JWT",
+			token: &oauth2.Token{AccessToken: "eyJhbGciOiJIUzI1NiJ9.e30.sig"},
+			want:  []string{"Using: legacy API key", "oku auth login"},
+		},
+		{
+			name: "environment variable",
+			env:  "hc_pat_env",
+			want: []string{"Using: HARDCOVER_TOKEN environment variable"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			keyring.MockInit()
+			t.Setenv("HARDCOVER_TOKEN", tt.env)
+			if tt.token != nil {
+				if err := auth.SetToken(tt.token); err != nil {
+					t.Fatalf("SetToken: %v", err)
+				}
+			}
+			stubVerifyLogin(t, "reader", nil)
+
+			out, err := runAuthStatus(t)
+			if err != nil {
+				t.Fatalf("status: %v", err)
+			}
+			for _, want := range append([]string{"Logged in to Hardcover as reader"}, tt.want...) {
+				if !strings.Contains(out, want) {
+					t.Errorf("output missing %q:\n%s", want, out)
+				}
+			}
+		})
+	}
+}
+
+func TestAuthStatusNotLoggedIn(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("HARDCOVER_TOKEN", "")
+	stubVerifyLogin(t, "", errors.New("verifyLogin should not be called"))
+
+	_, err := runAuthStatus(t)
+	if err == nil || !strings.Contains(err.Error(), "oku auth login") {
+		t.Fatalf("err = %v, want a hint to run oku auth login", err)
+	}
+}
+
+func TestAuthStatusRejectedToken(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("HARDCOVER_TOKEN", "")
+	if err := auth.SetToken(&oauth2.Token{AccessToken: "hc_pat_revoked"}); err != nil {
+		t.Fatalf("SetToken: %v", err)
+	}
+	stubVerifyLogin(t, "", api.ErrUnauthorized)
+
+	out, err := runAuthStatus(t)
+	if !errors.Is(err, api.ErrUnauthorized) {
+		t.Fatalf("err = %v, want ErrUnauthorized", err)
+	}
+	if strings.Contains(out, "Logged in") {
+		t.Fatalf("rejected token reported as logged in:\n%s", out)
 	}
 }
