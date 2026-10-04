@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -130,6 +131,58 @@ func TestOAuthClientRetriesOn429(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&calls); got != 2 {
 		t.Fatalf("server calls = %d, want 2 (429 then 200)", got)
+	}
+}
+
+// refreshFailingSource fails like persistingTokenSource does when the token
+// endpoint answers a refresh with status.
+type refreshFailingSource struct {
+	status int
+	calls  *int32
+}
+
+func (s refreshFailingSource) Token() (*oauth2.Token, error) {
+	atomic.AddInt32(s.calls, 1)
+	err := &oauth2.RetrieveError{Response: &http.Response{StatusCode: s.status}, ErrorCode: "invalid_grant"}
+	return nil, fmt.Errorf("token rejected or expired: %w; run: oku auth login", err)
+}
+
+func TestOAuthClientRejectedRefreshIsUnauthorized(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("API request sent without a token")
+	}))
+	defer srv.Close()
+
+	var calls int32
+	c := newOAuthClientWithEndpoint(context.Background(), srv.URL, refreshFailingSource{status: http.StatusBadRequest, calls: &calls})
+
+	var resp struct{}
+	err := c.do(context.Background(), graphql.NewRequest(`query { me { id } }`), &resp)
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("do() = %v, want ErrUnauthorized", err)
+	}
+	if IsNetworkError(err) {
+		t.Fatalf("do() = %v, want it not classified as a network error", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("refresh attempts = %d, want 1 (a rejected refresh token must not be replayed)", got)
+	}
+}
+
+func TestOAuthClientRetriesRefreshServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	var calls int32
+	c := newOAuthClientWithEndpoint(context.Background(), srv.URL, refreshFailingSource{status: http.StatusBadGateway, calls: &calls})
+
+	var resp struct{}
+	err := c.do(context.Background(), graphql.NewRequest(`query { me { id } }`), &resp)
+	if !IsNetworkError(err) || errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("do() = %v, want a network error", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != maxRetries {
+		t.Fatalf("refresh attempts = %d, want %d", got, maxRetries)
 	}
 }
 
