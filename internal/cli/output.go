@@ -2,7 +2,9 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -10,6 +12,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
 
+	"github.com/Kameleon21/oku/internal/app"
 	"github.com/Kameleon21/oku/internal/format"
 	"github.com/Kameleon21/oku/internal/model"
 	"github.com/Kameleon21/oku/internal/tui"
@@ -25,6 +28,24 @@ var stdout = colorprofile.NewWriter(os.Stdout, os.Environ())
 
 func outPrintf(format string, a ...any) { fmt.Fprintf(stdout, format, a...) }
 func outPrintln(a ...any)               { fmt.Fprintln(stdout, a...) }
+
+// warnOut is where write warnings go, so a test can read them.
+var warnOut io.Writer = os.Stderr
+
+// finishWrite ends a write-through command. A plain error fails it. Otherwise
+// report prints the success, and an app.ErrCacheRefresh, which means the
+// change reached Hardcover and only the local cache lags, follows it as a
+// warning rather than failing a change that a retry would repeat.
+func finishWrite(err error, report func()) error {
+	if err != nil && !errors.Is(err, app.ErrCacheRefresh) {
+		return err
+	}
+	report()
+	if err != nil {
+		fmt.Fprintf(warnOut, "Warning: %v\n", err)
+	}
+	return nil
+}
 
 // The CLI output shares the dashboard's palette, so a book looks the same in
 // `oku reading` as it does in the TUI. lipgloss v2 resolves a colour when the

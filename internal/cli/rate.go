@@ -42,12 +42,10 @@ func newRateCmd() *cobra.Command {
 				return err
 			}
 
-			if err := a.RateBook(ctx(), resolvedID, rating); err != nil {
-				return err
-			}
-
-			outPrintf("Rating updated to %s (%s)\n", pageStyle().Render(fmt.Sprintf("%.1f", rating)), model.StarString(rating))
-			return nil
+			err = a.RateBook(ctx(), resolvedID, rating)
+			return finishWrite(err, func() {
+				outPrintf("Rating updated to %s (%s)\n", pageStyle().Render(fmt.Sprintf("%.1f", rating)), model.StarString(rating))
+			})
 		},
 	}
 	cmd.Flags().IntVar(&bookID, "book", 0, "Book ID (skips title lookup/picker)")

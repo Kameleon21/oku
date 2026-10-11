@@ -46,7 +46,10 @@ const (
 type toast struct {
 	level toastLevel
 	text  string
-	seq   int
+	// note follows text and is never cut: a warning that must stay readable
+	// however much of the text the footer has room for.
+	note string
+	seq  int
 }
 
 type toastExpiredMsg struct{ seq int }
@@ -82,29 +85,38 @@ func (m *Model) showUndoToast(text string, undo undoAction) tea.Cmd {
 }
 
 // toastFor reports an operation's result: its error, or its info with an
-// undo when the result says how to reverse it.
+// undo when the result says how to reverse it. A warning turns the toast into
+// a warning and follows the info, undo and all.
 func (m *Model) toastFor(msg opDoneMsg) tea.Cmd {
 	if msg.err != nil {
 		return m.showToast(toastError, msg.err.Error())
 	}
+	text := msg.info
+	var undo *undoAction
 	switch {
 	case msg.op == opStatus && msg.bookID > 0 && msg.prevStatus != 0 && msg.prevStatus != msg.newStatus:
-		return m.showUndoToast(
-			fmt.Sprintf("Moved '%s' to %s", msg.title, msg.newStatus.Label()),
-			undoAction{op: opStatus, bookID: msg.bookID, title: msg.title,
-				toStatus: msg.prevStatus, fromStatus: msg.newStatus},
-		)
+		text = fmt.Sprintf("Moved '%s' to %s", msg.title, msg.newStatus.Label())
+		undo = &undoAction{op: opStatus, bookID: msg.bookID, title: msg.title,
+			toStatus: msg.prevStatus, fromStatus: msg.newStatus}
 	case msg.op == opProgress && msg.bookID > 0 && msg.prevPage != msg.newPage:
-		return m.showUndoToast(
-			fmt.Sprintf("Page %d", msg.newPage),
-			undoAction{op: opProgress, bookID: msg.bookID, title: msg.title,
-				toPage: msg.prevPage, fromPage: msg.newPage},
-		)
+		text = fmt.Sprintf("Page %d", msg.newPage)
+		undo = &undoAction{op: opProgress, bookID: msg.bookID, title: msg.title,
+			toPage: msg.prevPage, fromPage: msg.newPage}
 	}
-	if msg.info == "" {
+	switch {
+	case msg.warn == "" && text == "":
 		return nil
+	case msg.warn == "":
+		cmd := m.showToast(toastSuccess, text)
+		m.undo = undo
+		return cmd
+	case text == "":
+		return m.showToast(toastWarn, msg.warn)
 	}
-	return m.showToast(toastSuccess, msg.info)
+	cmd := m.showToast(toastWarn, text)
+	m.toast.note = msg.warn
+	m.undo = undo
+	return cmd
 }
 
 // runUndo reverses the change the current toast reports, if there is one.
@@ -152,16 +164,25 @@ func (m *Model) renderToast(avail int) string {
 	// help bar would be the thing clipped off the bottom of the screen.
 	text := strings.Join(strings.Fields(m.toast.text), " ")
 
+	note := ""
+	if m.toast.note != "" {
+		note = "; " + m.toast.note
+	}
+
 	// A message wider than the footer would wrap it onto a second line and
 	// push the layout off the screen, so it is cut to the room that is left.
-	// The undo hint goes first when there is not room for both.
-	room := avail - lipgloss.Width(glyph) - lipgloss.Width(undoHint)
+	// The note is never cut; the undo hint goes first when there is not room
+	// for both, and the text after it.
+	room := avail - lipgloss.Width(glyph) - lipgloss.Width(note) - lipgloss.Width(undoHint)
 	if room < minStatusMessageWidth {
 		undoHint = ""
-		room = avail - lipgloss.Width(glyph)
+		room = avail - lipgloss.Width(glyph) - lipgloss.Width(note)
 	}
 	if room < minStatusMessageWidth {
+		if m.toast.note != "" && lipgloss.Width(glyph+m.toast.note) <= avail {
+			return style.Render(glyph + m.toast.note)
+		}
 		return ""
 	}
-	return style.Render(glyph+ansi.Truncate(text, room, "…")) + undoHint
+	return style.Render(glyph+ansi.Truncate(text, room, "…")+note) + undoHint
 }

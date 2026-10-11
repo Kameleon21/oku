@@ -14,6 +14,7 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/Kameleon21/oku/internal/app"
 	"github.com/Kameleon21/oku/internal/model"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -2237,6 +2238,85 @@ func TestStatusChangeOffersUndoWhileTheToastIsUp(t *testing.T) {
 	before = expired.inflight
 	if cmd := send(t, expired, runeKey('U')); cmd != nil || expired.inflight != before {
 		t.Fatal("U after the toast expired must not change anything")
+	}
+}
+
+// TestCacheRefreshFailureIsASuccessWithAWarning: a status change that
+// reached Hardcover but could not refresh the cache must not read as a
+// failure, or a retry would repeat it. It reloads, marks dirty and offers
+// undo like a success, under a warning.
+func TestCacheRefreshFailureIsASuccessWithAWarning(t *testing.T) {
+	ok := opDoneMsg{
+		op: opStatus, info: "Status changed to Read", reload: true, markDirty: true,
+		bookID: 1, title: "Dune", prevStatus: model.StatusCurrentlyReading, newStatus: model.StatusRead,
+	}
+	if failed := writeDone(errors.New("rejected"), ok); failed.err == nil || failed.reload || failed.markDirty || failed.bookID != 0 {
+		t.Fatalf("plain failure = %+v, want only the error", failed)
+	}
+	msg := writeDone(fmt.Errorf("%w: database is closed", app.ErrCacheRefresh), ok)
+	if msg.err != nil || msg.warn == "" {
+		t.Fatalf("cache refresh failure = %+v, want a warning and no error", msg)
+	}
+
+	m := renderedDashboard(120, 40)
+	m.setTab(tabReading)
+	before := m.inflight
+	m.Update(msg)
+
+	if !m.dirty {
+		t.Fatal("the change reached Hardcover, so the library is dirty")
+	}
+	if m.inflight <= before {
+		t.Fatal("the result should reload the library")
+	}
+	if m.undo == nil || m.undo.toStatus != model.StatusCurrentlyReading || m.undo.fromStatus != model.StatusRead {
+		t.Fatalf("undo = %+v, want the way back to Currently Reading", m.undo)
+	}
+	if m.toast.level != toastWarn {
+		t.Fatalf("toast level = %v, want a warning", m.toast.level)
+	}
+	bar := stripANSI(m.footer(m.lay))
+	for _, want := range []string{"Moved 'Dune' to Read", "press s to sync", "U undo"} {
+		if !strings.Contains(bar, want) {
+			t.Fatalf("status bar = %q, want %q", bar, want)
+		}
+	}
+
+	// The cache is still broken, so the reload the result started fails.
+	// That must not replace the warning, nor take the undo with it.
+	m.Update(libraryLoadedMsg{err: errors.New("database is closed")})
+	m.Update(localDataLoadedMsg{err: errors.New("database is closed")})
+	if m.toast.level != toastWarn || m.undo == nil {
+		t.Fatalf("toast = %+v, undo = %+v; want the warning and its undo still up", m.toast, m.undo)
+	}
+	if bar := stripANSI(m.footer(m.lay)); !strings.Contains(bar, "press s to sync") || !strings.Contains(bar, "U undo") {
+		t.Fatalf("status bar = %q, want the warning and the undo hint", bar)
+	}
+
+	// A later, unrelated load error toasts as it always has.
+	m.Update(libraryLoadedMsg{err: errors.New("disk full")})
+	if m.toast.level != toastError || m.undo != nil {
+		t.Fatalf("toast = %+v, want the unrelated load error", m.toast)
+	}
+}
+
+// TestCacheWarningSurvivesANarrowFooter: the text gives way to the warning,
+// not the other way round, and the undo hint stays too.
+func TestCacheWarningSurvivesANarrowFooter(t *testing.T) {
+	m := renderedDashboard(80, 40)
+	m.setTab(tabReading)
+	m.Update(writeDone(app.ErrCacheRefresh, opDoneMsg{
+		op: opStatus, info: "Status changed to Currently Reading", reload: true, markDirty: true,
+		bookID: 1, title: "The Brothers Karamazov", prevStatus: model.StatusWantToRead, newStatus: model.StatusCurrentlyReading,
+	}))
+	bar := stripANSI(m.footer(m.lay))
+	for _, want := range []string{"! Moved 'The Brothers", "…; press s to sync", "U undo"} {
+		if !strings.Contains(bar, want) {
+			t.Fatalf("status bar = %q, want %q", bar, want)
+		}
+	}
+	if w := lipgloss.Width(bar); w > 80 {
+		t.Fatalf("status bar is %d columns wide, want at most 80", w)
 	}
 }
 

@@ -21,6 +21,9 @@ import (
 type fakeHardcover struct {
 	calls []string
 	errs  map[string]error
+	// afterWrite runs after each library write succeeds, so a test can break
+	// the local cache between the remote write and the cache update.
+	afterWrite func()
 
 	userID    int
 	username  string
@@ -79,6 +82,18 @@ func (f *fakeHardcover) record(method string, args ...any) error {
 	return f.errs[method]
 }
 
+// write is record for a library write: it also runs afterWrite when the
+// write succeeds.
+func (f *fakeHardcover) write(method string, args ...any) error {
+	if err := f.record(method, args...); err != nil {
+		return err
+	}
+	if f.afterWrite != nil {
+		f.afterWrite()
+	}
+	return nil
+}
+
 // called returns the recorded calls to method, in order.
 func (f *fakeHardcover) called(method string) []string {
 	var out []string
@@ -112,7 +127,7 @@ func (f *fakeHardcover) ListUserBooks(ctx context.Context, statusID int) ([]api.
 }
 
 func (f *fakeHardcover) InsertUserBook(ctx context.Context, bookID int, statusID int) (int, error) {
-	if err := f.record("InsertUserBook", bookID, statusID); err != nil {
+	if err := f.write("InsertUserBook", bookID, statusID); err != nil {
 		return 0, err
 	}
 	f.nextID++
@@ -126,19 +141,19 @@ func (f *fakeHardcover) InsertUserBook(ctx context.Context, bookID int, statusID
 }
 
 func (f *fakeHardcover) UpdateUserBookStatus(ctx context.Context, userBookID int, statusID int) error {
-	return f.record("UpdateUserBookStatus", userBookID, statusID)
+	return f.write("UpdateUserBookStatus", userBookID, statusID)
 }
 
 func (f *fakeHardcover) UpdateUserBookRating(ctx context.Context, userBookID int, rating float64) error {
-	return f.record("UpdateUserBookRating", userBookID, rating)
+	return f.write("UpdateUserBookRating", userBookID, rating)
 }
 
 func (f *fakeHardcover) UpdateUserBookReviewAndRating(ctx context.Context, userBookID int, rating float64, review string, reviewedAt string) error {
-	return f.record("UpdateUserBookReviewAndRating", userBookID, rating, review, reviewedAt)
+	return f.write("UpdateUserBookReviewAndRating", userBookID, rating, review, reviewedAt)
 }
 
 func (f *fakeHardcover) InsertUserBookRead(ctx context.Context, userBookID int, progressPages int) (*api.APIUserBookRead, error) {
-	if err := f.record("InsertUserBookRead", userBookID, progressPages); err != nil {
+	if err := f.write("InsertUserBookRead", userBookID, progressPages); err != nil {
 		return nil, err
 	}
 	f.nextID++
@@ -146,7 +161,7 @@ func (f *fakeHardcover) InsertUserBookRead(ctx context.Context, userBookID int, 
 }
 
 func (f *fakeHardcover) UpdateReadProgress(ctx context.Context, userBookReadID int, progressPages int) error {
-	return f.record("UpdateReadProgress", userBookReadID, progressPages)
+	return f.write("UpdateReadProgress", userBookReadID, progressPages)
 }
 
 func (f *fakeHardcover) InsertProgressJournal(ctx context.Context, bookID, progressPages, totalPages, privacySettingID int) error {

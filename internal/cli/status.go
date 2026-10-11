@@ -1,11 +1,6 @@
 package cli
 
 import (
-	"errors"
-	"fmt"
-	"os"
-
-	"github.com/Kameleon21/oku/internal/app"
 	"github.com/Kameleon21/oku/internal/model"
 	"github.com/spf13/cobra"
 )
@@ -29,17 +24,10 @@ func newStatusCmd() *cobra.Command {
 			}
 			defer a.Close()
 
-			// A cache-refresh failure still means the change reached
-			// Hardcover, so report success and warn instead of failing.
 			err = a.ChangeStatus(ctx(), bookID, status)
-			if err != nil && !errors.Is(err, app.ErrCacheRefresh) {
-				return err
-			}
-			outPrintf("Status changed to %s\n", statusStyle().Render(status.Label()))
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
-			}
-			return nil
+			return finishWrite(err, func() {
+				outPrintf("Status changed to %s\n", statusStyle().Render(status.Label()))
+			})
 		},
 	}
 	cmd.Flags().IntVar(&bookID, "book", 0, "Book ID (defaults when there is exactly one active book)")

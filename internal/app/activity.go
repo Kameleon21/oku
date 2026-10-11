@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -42,26 +43,47 @@ func (a *App) logRemoteProgress(ctx context.Context, bookID, page, totalPages in
 	if !a.Online() {
 		return
 	}
-	_ = a.hc.InsertProgressJournal(ctx, bookID, page, totalPages, a.accountPrivacySettingID(ctx))
+	privacy, _ := a.privacy(ctx, false)
+	_ = a.hc.InsertProgressJournal(ctx, bookID, page, totalPages, privacy)
 }
 
-// accountPrivacySettingID returns the user's default privacy setting for
-// journal entries, cached in local state after the first fetch. Falls back to
-// public when the setting can't be determined.
-func (a *App) accountPrivacySettingID(ctx context.Context) int {
-	if val, err := a.store.GetState(privacySettingKey); err == nil {
-		if id, err := strconv.Atoi(strings.TrimSpace(val)); err == nil && id > 0 {
-			return id
+// privacy returns the account's default privacy setting for journal entries
+// and goals. Strict lookups, for anything the user writes, always ask
+// Hardcover and fail when it can't answer: a personal note must never fall
+// back to public. Lenient lookups, for progress telemetry, take the value
+// cached by an earlier fetch, then ask Hardcover, then fall back to public,
+// and never fail. Every successful fetch refreshes the cached value.
+func (a *App) privacy(ctx context.Context, strict bool) (int, error) {
+	if !strict {
+		if val, err := a.store.GetState(privacySettingKey); err == nil {
+			if id, err := strconv.Atoi(strings.TrimSpace(val)); err == nil && id > 0 {
+				return id, nil
+			}
 		}
 	}
 
-	if !a.Online() {
-		return privacyPublic
-	}
-	id, err := a.hc.GetAccountPrivacySetting(ctx)
-	if err != nil || id <= 0 {
-		return privacyPublic
+	id, err := a.fetchPrivacy(ctx)
+	if err != nil {
+		if strict {
+			return 0, err
+		}
+		return privacyPublic, nil
 	}
 	_ = a.store.SetState(privacySettingKey, strconv.Itoa(id))
-	return id
+	return id, nil
+}
+
+func (a *App) fetchPrivacy(ctx context.Context) (int, error) {
+	// Every caller checks this already; it stays so fetchPrivacy is safe on its own.
+	if err := a.requireOnline(); err != nil {
+		return 0, err
+	}
+	id, err := a.hc.GetAccountPrivacySetting(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if id <= 0 {
+		return 0, fmt.Errorf("invalid account privacy setting %d", id)
+	}
+	return id, nil
 }

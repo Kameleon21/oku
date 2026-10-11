@@ -246,18 +246,16 @@ func newReviewCmd() *cobra.Command {
 				return nil
 			}
 
-			if err := a.ReviewBook(ctx(), ub.Book.ID, result.rating, result.review); err != nil {
-				return err
-			}
-
-			outPrintf("Updated review and rating for %s\n", titleStyle().Render(ub.Book.Title))
-			outPrintf("Rating: %s (%s)\n", pageStyle().Render(fmt.Sprintf("%.1f", result.rating)), model.StarString(result.rating))
-			if strings.TrimSpace(result.review) == "" {
-				outPrintln("Review cleared.")
-			} else {
-				outPrintln("Review updated.")
-			}
-			return nil
+			err = a.ReviewBook(ctx(), ub.Book.ID, result.rating, result.review)
+			return finishWrite(err, func() {
+				outPrintf("Updated review and rating for %s\n", titleStyle().Render(ub.Book.Title))
+				outPrintf("Rating: %s (%s)\n", pageStyle().Render(fmt.Sprintf("%.1f", result.rating)), model.StarString(result.rating))
+				if strings.TrimSpace(result.review) == "" {
+					outPrintln("Review cleared.")
+				} else {
+					outPrintln("Review updated.")
+				}
+			})
 		},
 	}
 	cmd.Flags().IntVar(&bookID, "book", 0, "Book ID (skips title lookup/picker)")
