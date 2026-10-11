@@ -106,7 +106,19 @@ type Book struct {
 	ReleaseDate            string
 	CachedTags             string // raw Hardcover cached_tags JSON (genres/moods/tags)
 	FeaturedSeries         string
-	FeaturedSeriesPosition int
+	FeaturedSeriesPosition float64 // Hardcover allows fractions, e.g. 1.5 for a novella; 0 = unknown
+}
+
+// SeriesLabel returns the featured series with the book's position in it,
+// e.g. "Dune #1" or "The Expanse #2.5", or "" when the book has no series.
+func (b Book) SeriesLabel() string {
+	if b.FeaturedSeries == "" {
+		return ""
+	}
+	if b.FeaturedSeriesPosition <= 0 {
+		return b.FeaturedSeries
+	}
+	return b.FeaturedSeries + " #" + strconv.FormatFloat(b.FeaturedSeriesPosition, 'f', -1, 64)
 }
 
 // AuthorString returns authors joined by ", ".

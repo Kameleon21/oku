@@ -76,9 +76,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 	return nil
 }
 
-// latestReadCTE ranks each user_book's reads so the newest one — using the same
-// ordering as GetLatestRead — can be joined in the same query instead of being
-// fetched with a follow-up lookup per row.
+// latestReadCTE ranks each user_book's reads, newest first, so the latest one
+// can be joined in the same query instead of being fetched with a follow-up
+// lookup per row. It is the only definition of "latest read".
 const latestReadCTE = `
 WITH latest_read AS (
 	SELECT id, user_book_id, progress_pages, started_at, finished_at,
@@ -89,28 +89,91 @@ WITH latest_read AS (
 )
 `
 
-// attachLatestRead populates ub.UserBookReads from the columns produced by the
-// latest_read join. A user_book with no reads leaves the slice nil.
-func attachLatestRead(ub *model.UserBook, id, progressPages sql.NullInt64, startedAt, finishedAt sql.NullString) {
-	if !id.Valid {
-		return
+// readColumns are the read columns readRow scans, aliased as r. They may come
+// from a LEFT JOIN, so every one is nullable.
+const readColumns = `r.id, r.progress_pages, r.started_at, r.finished_at`
+
+// readRow scans readColumns.
+type readRow struct {
+	id, progressPages     sql.NullInt64
+	startedAt, finishedAt sql.NullString
+}
+
+func (r *readRow) dest() []any {
+	return []any{&r.id, &r.progressPages, &r.startedAt, &r.finishedAt}
+}
+
+// read returns the scanned read of userBookID, or nil when the row had none.
+func (r *readRow) read(userBookID int) *model.UserBookRead {
+	if !r.id.Valid {
+		return nil
 	}
-	r := model.UserBookRead{
-		ID:            int(id.Int64),
-		UserBookID:    ub.ID,
-		ProgressPages: int(progressPages.Int64),
+	read := model.UserBookRead{
+		ID:            int(r.id.Int64),
+		UserBookID:    userBookID,
+		ProgressPages: int(r.progressPages.Int64),
+		StartedAt:     parseStoredTime(r.startedAt),
+		FinishedAt:    parseStoredTime(r.finishedAt),
 	}
-	if startedAt.Valid {
-		if t, err := time.Parse(time.RFC3339, startedAt.String); err == nil {
-			r.StartedAt = &t
+	return &read
+}
+
+// parseStoredTime reads a timestamp the store wrote as RFC 3339. NULL and
+// unreadable values are nil.
+func parseStoredTime(v sql.NullString) *time.Time {
+	if !v.Valid {
+		return nil
+	}
+	t, err := time.Parse(time.RFC3339, v.String)
+	if err != nil {
+		return nil
+	}
+	return &t
+}
+
+// userBookColumns are the columns scanUserBook reads: the user_book (ub), its
+// book (b) and one of its reads (r).
+const userBookColumns = `ub.id, ub.book_id, ub.status_id, ub.updated_at, ub.rating, ub.review, ub.reviewed_at,
+       ` + bookColumns + `,
+       ` + readColumns
+
+// scanUserBook scans one row of userBookColumns. The read, when present,
+// becomes the user book's only UserBookReads entry.
+func scanUserBook(row rowScanner) (model.UserBook, error) {
+	var ub model.UserBook
+	var updatedAt string
+	var reviewedAt sql.NullString
+	book := bookRow{book: &ub.Book}
+	var read readRow
+
+	dest := []any{&ub.ID, &ub.BookID, &ub.StatusID, &updatedAt, &ub.Rating, &ub.Review, &reviewedAt}
+	dest = append(dest, book.dest()...)
+	dest = append(dest, read.dest()...)
+	if err := row.Scan(dest...); err != nil {
+		return model.UserBook{}, err
+	}
+
+	book.finish()
+	if t, err := time.Parse(time.RFC3339, updatedAt); err == nil {
+		ub.UpdatedAt = t
+	}
+	ub.ReviewedAt = parseStoredTime(reviewedAt)
+	if r := read.read(ub.ID); r != nil {
+		ub.UserBookReads = []model.UserBookRead{*r}
+	}
+	return ub, nil
+}
+
+func scanUserBooks(rows *sql.Rows) ([]model.UserBook, error) {
+	var result []model.UserBook
+	for rows.Next() {
+		ub, err := scanUserBook(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan user_book row: %w", err)
 		}
+		result = append(result, ub)
 	}
-	if finishedAt.Valid {
-		if t, err := time.Parse(time.RFC3339, finishedAt.String); err == nil {
-			r.FinishedAt = &t
-		}
-	}
-	ub.UserBookReads = []model.UserBookRead{r}
+	return result, rows.Err()
 }
 
 // ListUserBooks returns all user_books matching the given status, joined
@@ -118,11 +181,7 @@ func attachLatestRead(ub *model.UserBook, id, progressPages sql.NullInt64, start
 // book's latest read to populate UserBookReads.
 func (s *Store) ListUserBooks(status model.Status) ([]model.UserBook, error) {
 	const query = latestReadCTE + `
-SELECT ub.id, ub.book_id, ub.status_id, ub.updated_at, ub.rating, ub.review, ub.reviewed_at,
-       b.id, b.title, b.authors, b.pages, b.slug, b.image_url,
-       b.rating, b.ratings_count, b.reviews_count, b.users_count, b.users_read_count,
-       b.release_date, b.featured_series, b.featured_series_position,
-       r.id, r.progress_pages, r.started_at, r.finished_at
+SELECT ` + userBookColumns + `
 FROM user_books ub
 JOIN books b ON b.id = ub.book_id
 LEFT JOIN latest_read r ON r.user_book_id = ub.id AND r.rn = 1
@@ -138,83 +197,23 @@ ORDER BY ub.updated_at DESC
 	return scanUserBooks(rows)
 }
 
-func scanUserBooks(rows *sql.Rows) ([]model.UserBook, error) {
-	var result []model.UserBook
-	for rows.Next() {
-		var ub model.UserBook
-		var updatedAt string
-		var reviewedAt sql.NullString
-		var authors string
-		var readID, readPages sql.NullInt64
-		var readStartedAt, readFinishedAt sql.NullString
-		err := rows.Scan(
-			&ub.ID, &ub.BookID, &ub.StatusID, &updatedAt, &ub.Rating, &ub.Review, &reviewedAt,
-			&ub.Book.ID, &ub.Book.Title, &authors, &ub.Book.Pages, &ub.Book.Slug, &ub.Book.ImageURL,
-			&ub.Book.Rating, &ub.Book.RatingsCount, &ub.Book.ReviewsCount, &ub.Book.UsersCount, &ub.Book.UsersReadCount,
-			&ub.Book.ReleaseDate, &ub.Book.FeaturedSeries, &ub.Book.FeaturedSeriesPosition,
-			&readID, &readPages, &readStartedAt, &readFinishedAt,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("scan user_book row: %w", err)
-		}
-		ub.Book.Authors = splitAuthors(authors)
-		if t, err := time.Parse(time.RFC3339, updatedAt); err == nil {
-			ub.UpdatedAt = t
-		}
-		if reviewedAt.Valid {
-			if t, err := time.Parse(time.RFC3339, reviewedAt.String); err == nil {
-				ub.ReviewedAt = &t
-			}
-		}
-		attachLatestRead(&ub, readID, readPages, readStartedAt, readFinishedAt)
-		result = append(result, ub)
-	}
-	return result, rows.Err()
-}
-
 // GetUserBookByBookID retrieves a single user_book by its book_id, joined
 // with the books table and its latest read. Returns nil, nil when not found.
 func (s *Store) GetUserBookByBookID(bookID int) (*model.UserBook, error) {
 	const query = latestReadCTE + `
-SELECT ub.id, ub.book_id, ub.status_id, ub.updated_at, ub.rating, ub.review, ub.reviewed_at,
-       b.id, b.title, b.authors, b.pages, b.slug, b.image_url,
-       b.rating, b.ratings_count, b.reviews_count, b.users_count, b.users_read_count,
-       b.release_date, b.featured_series, b.featured_series_position,
-       r.id, r.progress_pages, r.started_at, r.finished_at
+SELECT ` + userBookColumns + `
 FROM user_books ub
 JOIN books b ON b.id = ub.book_id
 LEFT JOIN latest_read r ON r.user_book_id = ub.id AND r.rn = 1
 WHERE ub.book_id = ?
 `
-	var ub model.UserBook
-	var updatedAt string
-	var reviewedAt sql.NullString
-	var authors string
-	var readID, readPages sql.NullInt64
-	var readStartedAt, readFinishedAt sql.NullString
-	err := s.db.QueryRow(query, bookID).Scan(
-		&ub.ID, &ub.BookID, &ub.StatusID, &updatedAt, &ub.Rating, &ub.Review, &reviewedAt,
-		&ub.Book.ID, &ub.Book.Title, &authors, &ub.Book.Pages, &ub.Book.Slug, &ub.Book.ImageURL,
-		&ub.Book.Rating, &ub.Book.RatingsCount, &ub.Book.ReviewsCount, &ub.Book.UsersCount, &ub.Book.UsersReadCount,
-		&ub.Book.ReleaseDate, &ub.Book.FeaturedSeries, &ub.Book.FeaturedSeriesPosition,
-		&readID, &readPages, &readStartedAt, &readFinishedAt,
-	)
+	ub, err := scanUserBook(s.db.QueryRow(query, bookID))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get user_book by book_id %d: %w", bookID, err)
 	}
-	ub.Book.Authors = splitAuthors(authors)
-	if t, err := time.Parse(time.RFC3339, updatedAt); err == nil {
-		ub.UpdatedAt = t
-	}
-	if reviewedAt.Valid {
-		if t, err := time.Parse(time.RFC3339, reviewedAt.String); err == nil {
-			ub.ReviewedAt = &t
-		}
-	}
-	attachLatestRead(&ub, readID, readPages, readStartedAt, readFinishedAt)
 	return &ub, nil
 }
 
@@ -246,38 +245,23 @@ VALUES (?, ?, ?, ?, ?)
 }
 
 // GetLatestRead returns the most recent user_book_reads row for the given
-// user_book_id, ordered by started_at descending. Returns nil, nil when
-// no reads exist.
+// user_book_id, as ranked by latestReadCTE. Returns nil, nil when no reads
+// exist.
 func (s *Store) GetLatestRead(userBookID int) (*model.UserBookRead, error) {
-	const query = `
-SELECT id, user_book_id, progress_pages, started_at, finished_at
-FROM user_book_reads
-WHERE user_book_id = ?
-ORDER BY started_at DESC, id DESC
-LIMIT 1
+	const query = latestReadCTE + `
+SELECT ` + readColumns + `
+FROM latest_read r
+WHERE r.user_book_id = ? AND r.rn = 1
 `
-	var r model.UserBookRead
-	var startedAt, finishedAt sql.NullString
-	err := s.db.QueryRow(query, userBookID).Scan(
-		&r.ID, &r.UserBookID, &r.ProgressPages, &startedAt, &finishedAt,
-	)
+	var read readRow
+	err := s.db.QueryRow(query, userBookID).Scan(read.dest()...)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get latest read for user_book %d: %w", userBookID, err)
 	}
-	if startedAt.Valid {
-		if t, err := time.Parse(time.RFC3339, startedAt.String); err == nil {
-			r.StartedAt = &t
-		}
-	}
-	if finishedAt.Valid {
-		if t, err := time.Parse(time.RFC3339, finishedAt.String); err == nil {
-			r.FinishedAt = &t
-		}
-	}
-	return &r, nil
+	return read.read(userBookID), nil
 }
 
 // LibraryBookIDs returns the IDs of every book on any of the user's cached shelves.

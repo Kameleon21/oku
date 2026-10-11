@@ -188,3 +188,48 @@ func TestGetAccountPrivacySettingMissingField(t *testing.T) {
 		t.Fatal("GetAccountPrivacySetting should error when the field is missing")
 	}
 }
+
+func TestListUserBooksRequestsAndDecodesFeaturedSeries(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Query string `json:"query"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		gotQuery = body.Query
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"me":[{"user_books":[
+			{"id":1,"status_id":3,"book":{"id":10,"title":"Dune","featured_book_series":{"position":1,"series":{"id":5,"name":"Dune"}}}},
+			{"id":2,"status_id":3,"book":{"id":11,"title":"Gods of Risk","featured_book_series":{"position":2.5,"series":{"id":6,"name":"The Expanse"}}}},
+			{"id":3,"status_id":3,"book":{"id":12,"title":"Standalone","featured_book_series":null}}
+		]}]}}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{gql: graphql.NewClient(srv.URL), token: "Bearer test"}
+	books, err := c.ListUserBooks(t.Context(), 3)
+	if err != nil {
+		t.Fatalf("ListUserBooks: %v", err)
+	}
+
+	if want := "featured_book_series { position series { id name } }"; !strings.Contains(strings.Join(strings.Fields(gotQuery), " "), want) {
+		t.Fatalf("query does not request %q:\n%s", want, gotQuery)
+	}
+	if len(books) != 3 {
+		t.Fatalf("got %d books, want 3", len(books))
+	}
+	for i, want := range []struct {
+		name     string
+		position float64
+	}{{"Dune", 1}, {"The Expanse", 2.5}} {
+		s := books[i].Book.FeaturedSeries
+		if s == nil || s.Series.Name != want.name || s.Position == nil || *s.Position != want.position {
+			t.Fatalf("book %d series = %+v, want %s #%v", i, s, want.name, want.position)
+		}
+	}
+	if books[2].Book.FeaturedSeries != nil {
+		t.Fatalf("standalone book has series %+v", books[2].Book.FeaturedSeries)
+	}
+}

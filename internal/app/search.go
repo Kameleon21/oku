@@ -18,9 +18,13 @@ func (a *App) SearchBooks(ctx context.Context, query string, limit int, mode mod
 	if mode == "" {
 		mode = model.SearchModeBook
 	}
-	results, err := a.hc.SearchBooks(ctx, query, limit, mode)
+	docs, err := a.hc.SearchBooks(ctx, query, limit, mode)
 	if err != nil {
 		return nil, err
+	}
+	results := make([]model.SearchResult, 0, len(docs))
+	for _, doc := range docs {
+		results = append(results, mapSearchHit(doc))
 	}
 	if len(results) == 0 {
 		return results, nil
@@ -40,10 +44,11 @@ func (a *App) SearchBooks(ctx context.Context, query string, limit int, mode mod
 		return results, nil
 	}
 	for i := range results {
-		meta, ok := byID[results[i].ID]
+		b, ok := byID[results[i].ID]
 		if !ok {
 			continue
 		}
+		meta := mapBook(b)
 		if results[i].Rating <= 0 && meta.Rating > 0 {
 			results[i].Rating = meta.Rating
 		}

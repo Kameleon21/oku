@@ -343,11 +343,7 @@ WHERE ub.status_id = ? AND b.cached_tags != ''
 // including rereads and books whose current shelf is no longer Read.
 func (s *Store) ListFinishedBooks(year int) ([]model.UserBook, error) {
 	const query = `
-SELECT ub.id, ub.book_id, ub.status_id, ub.updated_at, ub.rating, ub.review, ub.reviewed_at,
-       b.id, b.title, b.authors, b.pages, b.slug, b.image_url,
-       b.rating, b.ratings_count, b.reviews_count, b.users_count, b.users_read_count,
-       b.release_date, b.featured_series, b.featured_series_position,
-       r.id, r.progress_pages, r.started_at, r.finished_at
+SELECT ` + userBookColumns + `
 FROM user_book_reads r
 JOIN user_books ub ON ub.id = r.user_book_id
 JOIN books b ON b.id = ub.book_id

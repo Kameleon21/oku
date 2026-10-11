@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -10,7 +9,6 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/Kameleon21/oku/internal/api"
 	"github.com/Kameleon21/oku/internal/app"
 	"github.com/Kameleon21/oku/internal/model"
 )
@@ -18,12 +16,12 @@ import (
 type reqBookDetail struct{ selection selection }
 type detailLoadedMsg struct {
 	id   int
-	book *api.BookDetail
+	book *model.BookDetail
 	err  error
 }
 type journalLoadedMsg struct {
 	id      int
-	entries []api.JournalEntry
+	entries []model.BookJournalEntry
 	err     error
 }
 type reqPausedShelf struct{}
@@ -74,7 +72,7 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 			return m.showToast(toastError, r.err.Error()), true
 		}
 		if m.shared.details == nil {
-			m.shared.details = map[int]*api.BookDetail{}
+			m.shared.details = map[int]*model.BookDetail{}
 		}
 		m.shared.details[r.id] = r.book
 		m.detail.stamp++
@@ -84,7 +82,7 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 			return m.showToast(toastError, "Load journal: "+r.err.Error()), true
 		}
 		if m.shared.journals == nil {
-			m.shared.journals = map[int][]api.JournalEntry{}
+			m.shared.journals = map[int][]model.BookJournalEntry{}
 		}
 		m.shared.journals[r.id] = r.entries
 		m.detail.stamp++
@@ -157,7 +155,7 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 }
 
 // Rich metadata is appended to the existing scrollable detail, fetched on Enter.
-func renderRichDetail(b *api.BookDetail, w int, st styles) string {
+func renderRichDetail(b *model.BookDetail, w int, st styles) string {
 	if b == nil || w <= 0 {
 		return ""
 	}
@@ -176,8 +174,8 @@ func renderRichDetail(b *api.BookDetail, w int, st styles) string {
 }
 
 // ratingRows renders the array returned by the live API as a half/quarter-star histogram.
-func ratingRows(raw json.RawMessage, w int) string {
-	buckets, err := api.ParseRatingDistribution(raw)
+func ratingRows(raw string, w int) string {
+	buckets, err := model.ParseRatingDistribution(raw)
 	if err != nil {
 		return "Ratings distribution unavailable"
 	}
@@ -307,7 +305,7 @@ func (n *journalModal) Resize(lay layout) {
 func (n *journalModal) Init() tea.Cmd       { return n.focusCmd }
 func (n *journalModal) Cursor() *tea.Cursor { return nil }
 
-func renderBookJournal(entries []api.JournalEntry, w int, st styles) string {
+func renderBookJournal(entries []model.BookJournalEntry, w int, st styles) string {
 	if len(entries) == 0 || w <= 0 {
 		return ""
 	}

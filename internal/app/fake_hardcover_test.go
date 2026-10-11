@@ -41,8 +41,8 @@ type fakeHardcover struct {
 	goalSettings map[int]api.GoalInput
 	savedGoals   []api.GoalInput
 
-	search  []model.SearchResult
-	ratings map[int]model.Book
+	search  []api.TypesenseBookDoc
+	ratings map[int]api.APIBook
 	details map[int]*api.BookDetail
 	trend   []api.APIBook
 
@@ -220,14 +220,14 @@ func (f *fakeHardcover) SaveGoal(ctx context.Context, id int, g api.GoalInput) (
 	return f.nextID, nil
 }
 
-func (f *fakeHardcover) SearchBooks(ctx context.Context, query string, perPage int, mode model.SearchMode) ([]model.SearchResult, error) {
+func (f *fakeHardcover) SearchBooks(ctx context.Context, query string, perPage int, mode model.SearchMode) ([]api.TypesenseBookDoc, error) {
 	if err := f.record("SearchBooks", query, perPage, mode); err != nil {
 		return nil, err
 	}
-	return append([]model.SearchResult(nil), f.search...), nil
+	return append([]api.TypesenseBookDoc(nil), f.search...), nil
 }
 
-func (f *fakeHardcover) GetBookRatingsByIDs(ctx context.Context, ids []int) (map[int]model.Book, error) {
+func (f *fakeHardcover) GetBookRatingsByIDs(ctx context.Context, ids []int) (map[int]api.APIBook, error) {
 	if err := f.record("GetBookRatingsByIDs", ids); err != nil {
 		return nil, err
 	}

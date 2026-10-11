@@ -35,30 +35,51 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 	return nil
 }
 
+// bookColumns are the books columns a model.Book is read from, in the order
+// bookRow.dest expects. Queries alias the books table as b.
+const bookColumns = `b.id, b.title, b.authors, b.pages, b.slug, b.image_url,
+       b.rating, b.ratings_count, b.reviews_count, b.users_count, b.users_read_count,
+       b.release_date, b.cached_tags, b.featured_series, b.featured_series_position`
+
+// bookRow scans bookColumns into a model.Book. It contributes destinations to
+// a larger row's Scan so a joined query reads the book the same way.
+type bookRow struct {
+	book    *model.Book
+	authors string
+}
+
+func (r *bookRow) dest() []any {
+	b := r.book
+	return []any{
+		&b.ID, &b.Title, &r.authors, &b.Pages, &b.Slug, &b.ImageURL,
+		&b.Rating, &b.RatingsCount, &b.ReviewsCount, &b.UsersCount, &b.UsersReadCount,
+		&b.ReleaseDate, &b.CachedTags, &b.FeaturedSeries, &b.FeaturedSeriesPosition,
+	}
+}
+
+func (r *bookRow) finish() {
+	r.book.Authors = splitAuthors(r.authors)
+}
+
+// rowScanner is satisfied by *sql.Row and *sql.Rows.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
 // GetBookByID retrieves a single book by its ID.
 // Returns nil, nil when the book is not found.
 func (s *Store) GetBookByID(id int) (*model.Book, error) {
-	const query = `
-SELECT id, title, authors, pages, slug, image_url,
-       rating, ratings_count, reviews_count, users_count, users_read_count,
-       release_date, featured_series, featured_series_position
-FROM books
-WHERE id = ?
-`
+	query := `SELECT ` + bookColumns + ` FROM books b WHERE b.id = ?`
 	var b model.Book
-	var authors string
-	err := s.db.QueryRow(query, id).Scan(
-		&b.ID, &b.Title, &authors, &b.Pages, &b.Slug, &b.ImageURL,
-		&b.Rating, &b.RatingsCount, &b.ReviewsCount, &b.UsersCount, &b.UsersReadCount,
-		&b.ReleaseDate, &b.FeaturedSeries, &b.FeaturedSeriesPosition,
-	)
+	row := bookRow{book: &b}
+	err := s.db.QueryRow(query, id).Scan(row.dest()...)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get book %d: %w", id, err)
 	}
-	b.Authors = splitAuthors(authors)
+	row.finish()
 	return &b, nil
 }
 

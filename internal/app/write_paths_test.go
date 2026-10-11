@@ -485,9 +485,9 @@ func TestSaveGoalCreatesWithAccountPrivacy(t *testing.T) {
 	hc := newFakeHardcover()
 	hc.privacy = 2
 	a := newTestAppWith(t, hc)
-	g := api.GoalInput{Goal: 24, Metric: "book", StartDate: "2026-01-01", EndDate: "2026-12-31", PrivacySettingID: 3}
+	g := model.GoalInput{Goal: 24, Metric: "book", StartDate: "2026-01-01", EndDate: "2026-12-31", PrivacySettingID: 3}
 
-	id, err := a.SaveGoal(context.Background(), 0, g, func(old, next api.GoalInput) api.GoalInput {
+	id, err := a.SaveGoal(context.Background(), 0, g, func(old, next model.GoalInput) model.GoalInput {
 		t.Fatal("merge called when creating")
 		return next
 	})
@@ -498,8 +498,8 @@ func TestSaveGoalCreatesWithAccountPrivacy(t *testing.T) {
 		t.Fatalf("id = %d, want 1001", id)
 	}
 	assertCalls(t, hc, "GoalSettings")
-	g.PrivacySettingID = 2
-	if !reflect.DeepEqual(hc.savedGoals, []api.GoalInput{g}) {
+	want := api.GoalInput{Goal: 24, Metric: "book", StartDate: "2026-01-01", EndDate: "2026-12-31", PrivacySettingID: 2}
+	if !reflect.DeepEqual(hc.savedGoals, []api.GoalInput{want}) {
 		t.Fatalf("saved %+v, want %+v", hc.savedGoals, g)
 	}
 }
@@ -509,7 +509,7 @@ func TestSaveGoalRefusesUnsetAccountPrivacy(t *testing.T) {
 	hc.privacy = 0
 	a := newTestAppWith(t, hc)
 
-	_, err := a.SaveGoal(context.Background(), 0, api.GoalInput{Goal: 24, Metric: "book"}, nil)
+	_, err := a.SaveGoal(context.Background(), 0, model.GoalInput{Goal: 24, Metric: "book"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "invalid account privacy setting 0") {
 		t.Fatalf("err = %v, want the invalid privacy refusal", err)
 	}
@@ -521,7 +521,7 @@ func TestSaveGoalMergesIntoExistingSettings(t *testing.T) {
 	hc.goalSettings = map[int]api.GoalInput{5: {Goal: 10, Metric: "book", Description: "old", StartDate: "2026-01-01", EndDate: "2026-12-31", PrivacySettingID: 3}}
 	a := newTestAppWith(t, hc)
 
-	id, err := a.SaveGoal(context.Background(), 5, api.GoalInput{Goal: 30, Metric: "page"}, func(old, next api.GoalInput) api.GoalInput {
+	id, err := a.SaveGoal(context.Background(), 5, model.GoalInput{Goal: 30, Metric: "page"}, func(old, next model.GoalInput) model.GoalInput {
 		old.Goal = next.Goal
 		return old
 	})
@@ -558,7 +558,7 @@ func TestOfflineAppReturnsErrOffline(t *testing.T) {
 				"SearchBooks":    func() error { _, err := a.SearchBooks(ctx, "dune", 5, ""); return err },
 				"BookJournal":    func() error { _, err := a.BookJournal(ctx, 1); return err },
 				"ListGoals":      func() error { _, err := a.ListGoals(ctx); return err },
-				"SaveGoal":       func() error { _, err := a.SaveGoal(ctx, 0, api.GoalInput{}, nil); return err },
+				"SaveGoal":       func() error { _, err := a.SaveGoal(ctx, 0, model.GoalInput{}, nil); return err },
 				"GetBookDetail":  func() error { _, err := a.GetBookDetail(ctx, 1, false); return err },
 				"TrendingBooks":  func() error { _, err := a.TrendingBooks(ctx, "week", 5, false); return err },
 				"RefreshQueue":   func() error { _, err := a.RefreshQueue(ctx); return err },
@@ -583,20 +583,36 @@ func TestSaveGoalNilMergeSavesInputAsGiven(t *testing.T) {
 	hc := newFakeHardcover()
 	hc.goalSettings = map[int]api.GoalInput{5: {Goal: 10, Metric: "book", Description: "old"}}
 	a := newTestAppWith(t, hc)
-	g := api.GoalInput{Goal: 30, Metric: "page"}
+	g := model.GoalInput{Goal: 30, Metric: "page", StartDate: "2027-01-01", EndDate: "2027-12-31", PrivacySettingID: 1}
 
 	if _, err := a.SaveGoal(context.Background(), 5, g, nil); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(hc.savedGoals, []api.GoalInput{g}) {
-		t.Fatalf("saved %+v, want %+v", hc.savedGoals, g)
+	want := api.GoalInput{Goal: 30, Metric: "page", StartDate: "2027-01-01", EndDate: "2027-12-31", PrivacySettingID: 1}
+	if !reflect.DeepEqual(hc.savedGoals, []api.GoalInput{want}) {
+		t.Fatalf("saved %+v, want %+v", hc.savedGoals, want)
 	}
+}
+
+func TestSaveGoalValidatesTheMergedGoal(t *testing.T) {
+	hc := newFakeHardcover()
+	hc.goalSettings = map[int]api.GoalInput{5: {Goal: 10, Metric: "book", StartDate: "2026-01-01", EndDate: "2026-12-31", PrivacySettingID: 3}}
+	a := newTestAppWith(t, hc)
+
+	_, err := a.SaveGoal(context.Background(), 5, model.GoalInput{EndDate: "2025-01-01"}, func(old, next model.GoalInput) model.GoalInput {
+		old.EndDate = next.EndDate
+		return old
+	})
+	if err == nil || !strings.Contains(err.Error(), "on or after start date") {
+		t.Fatalf("err = %v, want the date refusal", err)
+	}
+	assertCalls(t, hc, "SaveGoal")
 }
 
 func TestSaveGoalUnknownGoalSavesNothing(t *testing.T) {
 	hc := newFakeHardcover()
 	a := newTestAppWith(t, hc)
-	_, err := a.SaveGoal(context.Background(), 5, api.GoalInput{Goal: 30}, func(old, next api.GoalInput) api.GoalInput { return next })
+	_, err := a.SaveGoal(context.Background(), 5, model.GoalInput{Goal: 30}, func(old, next model.GoalInput) model.GoalInput { return next })
 	if err == nil || !strings.Contains(err.Error(), "goal 5 not found") {
 		t.Fatalf("err = %v, want goal not found", err)
 	}

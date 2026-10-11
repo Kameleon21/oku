@@ -138,6 +138,13 @@ func userBooksQuery(statusID int, extended bool) string {
         users_read_count
         release_date
         cached_tags
+        featured_book_series {
+          position
+          series {
+            id
+            name
+          }
+        }
         contributions {
           author {
             name
@@ -216,10 +223,11 @@ func isSchemaFieldError(err error) bool {
 		strings.Contains(msg, "field ") && strings.Contains(msg, " not found")
 }
 
-// SearchBooks searches for books by query string and returns parsed results.
+// SearchBooks searches for books by query string and returns the Typesense
+// documents of the hits.
 // User input travels as a GraphQL variable, never interpolated into the
 // query document, so no escaping is needed.
-func (c *Client) SearchBooks(ctx context.Context, query string, perPage int, mode model.SearchMode) ([]model.SearchResult, error) {
+func (c *Client) SearchBooks(ctx context.Context, query string, perPage int, mode model.SearchMode) ([]TypesenseBookDoc, error) {
 	config := searchConfigForMode(mode)
 
 	newSearchRequest := func(extraArgs string) *graphql.Request {
@@ -253,25 +261,12 @@ func (c *Client) SearchBooks(ctx context.Context, query string, perPage int, mod
 		return nil, fmt.Errorf("SearchBooks: parsing results: %w", err)
 	}
 
-	results := make([]model.SearchResult, 0, len(tsResults.Hits))
+	docs := make([]TypesenseBookDoc, 0, len(tsResults.Hits))
 	for _, hit := range tsResults.Hits {
-		doc := hit.Document
-		sr := model.SearchResult{
-			ID:      int(doc.ID),
-			Title:   doc.Title,
-			Authors: doc.AuthorNames,
-			Pages:   int(doc.Pages),
-			Slug:    doc.Slug,
-			Rating:  float64(doc.Rating),
-			Ratings: int(doc.Ratings),
-		}
-		if doc.Image != nil {
-			sr.ImageURL = doc.Image.URL
-		}
-		results = append(results, sr)
+		docs = append(docs, hit.Document)
 	}
 
-	return results, nil
+	return docs, nil
 }
 
 func isSearchFallbackError(err error) bool {
@@ -286,10 +281,11 @@ func isSearchFallbackError(err error) bool {
 		strings.Contains(msg, "query_type") && strings.Contains(msg, "does not exist")
 }
 
-// GetBookRatingsByIDs fetches rating metadata for a set of book IDs.
-func (c *Client) GetBookRatingsByIDs(ctx context.Context, ids []int) (map[int]model.Book, error) {
+// GetBookRatingsByIDs fetches rating metadata for a set of book IDs, keyed by
+// book ID.
+func (c *Client) GetBookRatingsByIDs(ctx context.Context, ids []int) (map[int]APIBook, error) {
 	if len(ids) == 0 {
-		return map[int]model.Book{}, nil
+		return map[int]APIBook{}, nil
 	}
 
 	seen := make(map[int]struct{}, len(ids))
@@ -305,7 +301,7 @@ func (c *Client) GetBookRatingsByIDs(ctx context.Context, ids []int) (map[int]mo
 		parts = append(parts, strconv.Itoa(id))
 	}
 	if len(parts) == 0 {
-		return map[int]model.Book{}, nil
+		return map[int]APIBook{}, nil
 	}
 
 	q := fmt.Sprintf(`query {
@@ -328,20 +324,9 @@ func (c *Client) GetBookRatingsByIDs(ctx context.Context, ids []int) (map[int]mo
 		return nil, fmt.Errorf("GetBookRatingsByIDs: %w", err)
 	}
 
-	out := make(map[int]model.Book, len(resp.Books))
+	out := make(map[int]APIBook, len(resp.Books))
 	for _, b := range resp.Books {
-		mb := model.Book{
-			ID:             b.ID,
-			Rating:         b.Rating,
-			RatingsCount:   b.RatingsCount,
-			ReviewsCount:   b.ReviewsCount,
-			UsersCount:     b.UsersCount,
-			UsersReadCount: b.UsersReadCount,
-		}
-		if b.ReleaseDate != nil {
-			mb.ReleaseDate = *b.ReleaseDate
-		}
-		out[b.ID] = mb
+		out[b.ID] = b
 	}
 	return out, nil
 }

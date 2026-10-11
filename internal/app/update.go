@@ -42,21 +42,7 @@ func (a *App) UpdateProgress(ctx context.Context, bookID int, pageUpdate model.P
 		if err != nil {
 			return 0, fmt.Errorf("update progress: %w", err)
 		}
-		read = model.UserBookRead{
-			ID:            inserted.ID,
-			UserBookID:    ub.ID,
-			ProgressPages: inserted.ProgressPages,
-		}
-		if inserted.StartedAt != nil {
-			if t, ok := parseAPITime(*inserted.StartedAt); ok {
-				read.StartedAt = &t
-			}
-		}
-		if inserted.FinishedAt != nil {
-			if t, ok := parseAPITime(*inserted.FinishedAt); ok {
-				read.FinishedAt = &t
-			}
-		}
+		read = mapRead(ub.ID, *inserted)
 	}
 
 	cacheErr := a.store.UpsertUserBookRead(read)

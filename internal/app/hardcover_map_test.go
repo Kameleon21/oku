@@ -31,7 +31,7 @@ func TestParseAPITimeSupportsCommonLayouts(t *testing.T) {
 	}
 }
 
-func TestConvertAPIUserBookMapsExtendedFields(t *testing.T) {
+func TestMapUserBookMapsExtendedFields(t *testing.T) {
 	releaseDate := " 2024-01-05 "
 	updatedAt := "2025-02-03T04:05:06Z"
 	reviewedAt := "2025-02-10T09:30:00Z"
@@ -74,7 +74,7 @@ func TestConvertAPIUserBookMapsExtendedFields(t *testing.T) {
 		},
 	}
 
-	got := convertAPIUserBook(ab)
+	got := mapUserBook(ab)
 	if got.ID != 77 || got.BookID != 99 {
 		t.Fatalf("ids = userBook:%d book:%d, want 77/99", got.ID, got.BookID)
 	}
@@ -129,7 +129,7 @@ func TestConvertAPIUserBookMapsExtendedFields(t *testing.T) {
 	}
 }
 
-func TestConvertAPIUserBookFallsBackWhenTimesInvalid(t *testing.T) {
+func TestMapUserBookFallsBackWhenTimesInvalid(t *testing.T) {
 	invalidUpdatedAt := "not-a-time"
 	invalidStartedAt := "bad"
 	invalidReviewedAt := "bad-review-time"
@@ -148,7 +148,7 @@ func TestConvertAPIUserBookFallsBackWhenTimesInvalid(t *testing.T) {
 			{ID: 3, ProgressPages: 10, StartedAt: &invalidStartedAt},
 		},
 	}
-	got := convertAPIUserBook(ab)
+	got := mapUserBook(ab)
 	after := time.Now().UTC()
 
 	if got.UpdatedAt.Before(before.Add(-time.Second)) || got.UpdatedAt.After(after.Add(time.Second)) {

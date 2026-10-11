@@ -4,9 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -37,6 +34,7 @@ func (c *Client) BookDetail(ctx context.Context, id int) (*BookDetail, error) {
 	return resp.Book, nil
 }
 
+// JournalEntry is a reading_journals row as BookJournal requests it.
 type JournalEntry struct {
 	ID       int    `json:"id"`
 	BookID   int    `json:"book_id"`
@@ -106,6 +104,8 @@ func (r mutationResult) checked(action string) (int, error) {
 	return *r.ID, nil
 }
 
+// GoalInput is the object insert_goal and update_goal take, and the settings
+// GoalSettings reads back.
 type GoalInput struct {
 	Description      string         `json:"description"`
 	Goal             int            `json:"goal"`
@@ -116,30 +116,7 @@ type GoalInput struct {
 	PrivacySettingID int            `json:"privacy_setting_id"`
 }
 
-func (g GoalInput) Validate() error {
-	if g.Goal <= 0 {
-		return fmt.Errorf("goal must be greater than zero")
-	}
-	if g.Metric != "book" && g.Metric != "page" {
-		return fmt.Errorf("metric must be book or page")
-	}
-	start, e := time.Parse("2006-01-02", g.StartDate)
-	if e != nil {
-		return fmt.Errorf("invalid start date: %w", e)
-	}
-	end, e := time.Parse("2006-01-02", g.EndDate)
-	if e != nil || end.Before(start) {
-		return fmt.Errorf("end date must be YYYY-MM-DD and on or after start date")
-	}
-	if g.PrivacySettingID < 1 || g.PrivacySettingID > 3 {
-		return fmt.Errorf("invalid privacy setting")
-	}
-	return nil
-}
 func (c *Client) SaveGoal(ctx context.Context, id int, g GoalInput) (int, error) {
-	if err := g.Validate(); err != nil {
-		return 0, err
-	}
 	if g.Conditions == nil {
 		g.Conditions = map[string]any{}
 	}
@@ -465,37 +442,4 @@ func (c *Client) QueueBooks(ctx context.Context, listID int, books []RankedBook)
 		}
 	}
 	return nil
-}
-
-type RatingBucket struct {
-	Rating float64 `json:"rating"`
-	Count  int     `json:"count"`
-}
-
-// ParseRatingDistribution accepts Hardcover's array and older keyed-object shape.
-func ParseRatingDistribution(raw json.RawMessage) ([]RatingBucket, error) {
-	if len(raw) == 0 || string(raw) == "null" {
-		return nil, nil
-	}
-	var rows []RatingBucket
-	if err := json.Unmarshal(raw, &rows); err != nil {
-		var values map[string]int
-		if err := json.Unmarshal(raw, &values); err != nil {
-			return nil, err
-		}
-		for key, count := range values {
-			rating, err := strconv.ParseFloat(key, 64)
-			if err != nil {
-				return nil, err
-			}
-			rows = append(rows, RatingBucket{rating, count})
-		}
-	}
-	for _, r := range rows {
-		if r.Rating < 0 || r.Rating > 5 || math.IsNaN(r.Rating) || math.IsInf(r.Rating, 0) || r.Count < 0 {
-			return nil, fmt.Errorf("invalid rating distribution")
-		}
-	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].Rating > rows[j].Rating })
-	return rows, nil
 }

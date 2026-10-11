@@ -30,27 +30,39 @@ func (a *App) AddJournalEntry(ctx context.Context, bookID int, event, text strin
 	return a.hc.CreateJournalEntry(ctx, id, event, text, privacy)
 }
 
-// BookJournal returns the reading journal entries for a book.
-func (a *App) BookJournal(ctx context.Context, bookID int) ([]api.JournalEntry, error) {
+// BookJournal returns the user's notes and quotes on a book.
+func (a *App) BookJournal(ctx context.Context, bookID int) ([]model.BookJournalEntry, error) {
 	if err := a.requireOnline(); err != nil {
 		return nil, err
 	}
-	return a.hc.BookJournal(ctx, bookID)
+	entries, err := a.hc.BookJournal(ctx, bookID)
+	if err != nil {
+		return nil, err
+	}
+	return mapBookJournal(entries), nil
 }
 
 // ListGoals returns the user's reading goals straight from Hardcover.
-func (a *App) ListGoals(ctx context.Context) ([]api.APIGoal, error) {
+func (a *App) ListGoals(ctx context.Context) ([]model.Goal, error) {
 	if err := a.requireOnline(); err != nil {
 		return nil, err
 	}
-	return a.hc.ListGoals(ctx)
+	apiGoals, err := a.hc.ListGoals(ctx)
+	if err != nil {
+		return nil, err
+	}
+	goals := make([]model.Goal, 0, len(apiGoals))
+	for _, g := range apiGoals {
+		goals = append(goals, mapGoal(g))
+	}
+	return goals, nil
 }
 
 // SaveGoal creates g when id is 0, using the account's privacy setting.
 // Otherwise it updates goal id with merge(current, g), so the caller decides
 // which of g's fields overwrite the goal's current settings; a nil merge saves
-// g as given.
-func (a *App) SaveGoal(ctx context.Context, id int, g api.GoalInput, merge func(old, next api.GoalInput) api.GoalInput) (int, error) {
+// g as given. The goal is validated as it will be saved.
+func (a *App) SaveGoal(ctx context.Context, id int, g model.GoalInput, merge func(old, next model.GoalInput) model.GoalInput) (int, error) {
 	if err := a.requireOnline(); err != nil {
 		return 0, err
 	}
@@ -60,7 +72,7 @@ func (a *App) SaveGoal(ctx context.Context, id int, g api.GoalInput, merge func(
 			return 0, err
 		}
 		if merge != nil {
-			g = merge(old, g)
+			g = merge(mapGoalInput(old), g)
 		}
 	} else {
 		privacy, err := a.privacy(ctx, true)
@@ -69,10 +81,16 @@ func (a *App) SaveGoal(ctx context.Context, id int, g api.GoalInput, merge func(
 		}
 		g.PrivacySettingID = privacy
 	}
-	return a.hc.SaveGoal(ctx, id, g)
+	if err := g.Validate(); err != nil {
+		return 0, err
+	}
+	return a.hc.SaveGoal(ctx, id, apiGoalInput(g))
 }
 
-func (a *App) GetBookDetail(ctx context.Context, id int, refresh bool) (*api.BookDetail, error) {
+// GetBookDetail returns a book's community metadata, from the cache unless
+// refresh is set or nothing is cached. The cache keeps Hardcover's response
+// as received, so it is mapped the same way whichever path it comes from.
+func (a *App) GetBookDetail(ctx context.Context, id int, refresh bool) (*model.BookDetail, error) {
 	key := fmt.Sprintf("book_detail_%d", id)
 	if !refresh {
 		raw, err := a.store.GetState(key)
@@ -82,7 +100,8 @@ func (a *App) GetBookDetail(ctx context.Context, id int, refresh bool) (*api.Boo
 		if raw != "" {
 			var b api.BookDetail
 			if json.Unmarshal([]byte(raw), &b) == nil {
-				return &b, nil
+				d := mapBookDetail(b)
+				return &d, nil
 			}
 		}
 	}
@@ -100,7 +119,8 @@ func (a *App) GetBookDetail(ctx context.Context, id int, refresh bool) (*api.Boo
 	if err := a.store.SetState(key, string(raw)); err != nil {
 		return nil, err
 	}
-	return b, nil
+	d := mapBookDetail(*b)
+	return &d, nil
 }
 
 // trendingFetchLimit is the API maximum. Curation drops many of the raw
@@ -135,11 +155,7 @@ func (a *App) TrendingBooks(ctx context.Context, period string, limit int, raw b
 	}
 	out := make([]model.SearchResult, 0, len(books))
 	for _, b := range books {
-		r := model.SearchResult{ID: b.ID, Title: b.Title, Pages: b.Pages, Slug: b.Slug, Rating: b.Rating, Ratings: b.RatingsCount}
-		for _, c := range b.Contributions {
-			r.Authors = append(r.Authors, c.Author.Name)
-		}
-		out = append(out, r)
+		out = append(out, mapTrendingBook(b))
 	}
 	return out, nil
 }
