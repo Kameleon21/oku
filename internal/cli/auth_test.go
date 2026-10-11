@@ -43,7 +43,7 @@ func stubAuthBackend(t *testing.T, current func(context.Context) (auth.Credentia
 		t.Fatal("unexpected call to promptToken")
 		return "", nil
 	}
-	authBackend.remember = func(int) error { return nil }
+	authBackend.remember = func(int) (bool, error) { return false, nil }
 
 	authBackend.current = func(ctx context.Context) (auth.Credential, error) {
 		if current == nil {
@@ -347,8 +347,8 @@ func TestLoginAsAnotherAccountClearsTheCache(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	if out.String() != "Login successful.\n" {
-		t.Fatalf("login output = %q, want only the confirmation", out.String())
+	if want := "Login successful.\nSigned in as a different account; cleared the cached library. Run oku sync.\n"; out.String() != want {
+		t.Fatalf("login output = %q, want %q", out.String(), want)
 	}
 
 	db, err = store.New(dbPath)
@@ -361,5 +361,37 @@ func TestLoginAsAnotherAccountClearsTheCache(t *testing.T) {
 	}
 	if v, _ := db.GetState("user_id"); v != "2" {
 		t.Fatalf("user_id = %q, want B", v)
+	}
+}
+
+func TestAuthStatusNotesAClearedCache(t *testing.T) {
+	cred := auth.Credential{Kind: auth.KindPersonalAPIKey, TokenSource: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "hc_pat_b"})}
+	for name, tt := range map[string]struct {
+		cleared bool
+		err     error
+		want    bool
+	}{
+		"cleared":      {cleared: true, want: true},
+		"same account": {},
+		"no data dir":  {err: errors.New("create data dir: read-only file system")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stubStatus(t, cred, "b")
+			authBackend.remember = func(int) (bool, error) { return tt.cleared, tt.err }
+
+			var stdout, stderr bytes.Buffer
+			cmd := newAuthStatusCmd()
+			cmd.SetOut(&stdout)
+			cmd.SetErr(&stderr)
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("status: %v", err)
+			}
+			if got := strings.Contains(stderr.String(), "cleared the cached library"); got != tt.want || (!tt.want && stderr.Len() != 0) {
+				t.Fatalf("stderr = %q, want the note: %v", stderr.String(), tt.want)
+			}
+			if !strings.Contains(stdout.String(), "Logged in to Hardcover as b") {
+				t.Fatalf("stdout = %q, want the status", stdout.String())
+			}
+		})
 	}
 }

@@ -61,7 +61,7 @@ var authBackend = struct {
 	current     func(context.Context) (auth.Credential, error)
 	verify      func(context.Context, oauth2.TokenSource) (int, string, *oauth2.Token, error)
 	logout      func(context.Context, func(auth.LogoutReport, string)) (auth.LogoutReport, error)
-	remember    func(userID int) error
+	remember    func(userID int) (cleared bool, err error)
 }{
 	login:       auth.Login,
 	promptToken: auth.PromptToken,
@@ -83,20 +83,30 @@ func recordSignedInUser(cmd *cobra.Command) {
 	if err == nil {
 		id, _, _, err = authBackend.verify(ctx, cred.TokenSource)
 	}
+	var cleared bool
 	if err == nil {
-		err = authBackend.remember(id)
+		cleared, err = authBackend.remember(id)
 	}
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not check which account is signed in: %v\n", err)
+	}
+	noteClearedCache(cmd, cleared)
+}
+
+// noteClearedCache tells the user, when it happened, that signing in as
+// another account dropped the cached library.
+func noteClearedCache(cmd *cobra.Command, cleared bool) {
+	if cleared {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Signed in as a different account; cleared the cached library. Run oku sync.")
 	}
 }
 
 // rememberSignedInUser records userID in the local cache (see
 // App.RememberUser).
-func rememberSignedInUser(userID int) error {
+func rememberSignedInUser(userID int) (bool, error) {
 	a, err := initLocalApp()
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer a.Close()
 	return a.RememberUser(userID)
@@ -182,8 +192,10 @@ func newAuthStatusCmd() *cobra.Command {
 			}
 			// The account is known now at no extra cost; recording it keeps
 			// another account's cache from showing. Status only reports, so
-			// a failure to record is left to the next login or sync.
-			_ = authBackend.remember(userID)
+			// a failure to record (no usable data dir, say) is left to the
+			// next login or sync.
+			cleared, err := authBackend.remember(userID)
+			noteClearedCache(cmd, err == nil && cleared)
 
 			out := cmd.OutOrStdout()
 			fmt.Fprintf(out, "Logged in to Hardcover as %s\n", username)

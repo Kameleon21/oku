@@ -85,6 +85,11 @@ type Model struct {
 	// the reader's back (the launch refresh, the reconcile): it turns the
 	// spinner but does not refuse writes (see busy).
 	background int
+	// writing counts the part of inflight that is a write.
+	writing int
+	// refetch holds an overtaken refresh's retry until the writes running
+	// when it landed have landed too; refetchReconcile is its kind.
+	refetch, refetchReconcile bool
 
 	// spinning reports whether the spinner tick loop is armed. It only runs
 	// while work is in flight, so an idle dashboard does not re-render a
@@ -101,9 +106,9 @@ type Model struct {
 
 	dirty          bool
 	lastMutationAt time.Time
-	// writes counts the writes that have finished. A forced refresh is
-	// stamped with it when it starts, so a refresh a write overtook can be
-	// told apart when it lands (see applyLibraryLoaded).
+	// writes counts write events: one when a write starts and one when it
+	// lands. A forced refresh is stamped with it when it starts, so a
+	// refresh a write overtook can be told apart (see applyLibraryLoaded).
 	writes int
 
 	// toast is the footer's message, and undo what U would reverse while it
@@ -460,12 +465,17 @@ func (m *Model) applyLibraryLoaded(msg libraryLoadedMsg) tea.Cmd {
 		}
 		return m.showToast(toastError, msg.err.Error())
 	}
-	if msg.refreshed && msg.writes != m.writes {
-		// A write finished while this refresh was out, so its shelves may
-		// predate the write, and so may the cache rows it replaced. What is
-		// on screen stays, dirty stays, and Hardcover, which has the write,
-		// is asked again.
-		return m.refreshLibrary(msg.reconcile)
+	if msg.refreshed && (msg.writes != m.writes || m.writing > 0) {
+		// A write started or landed while this refresh was out, or is
+		// still running, so its shelves may predate the write, and so may
+		// the cache rows it replaced. What is on screen stays, dirty stays,
+		// and Hardcover, which has the write, is asked again once no write
+		// is running (see finish).
+		if m.writing > 0 {
+			m.refetch, m.refetchReconcile = true, m.refetchReconcile || msg.reconcile
+			return nil
+		}
+		return m.refetchLibrary(msg.reconcile)
 	}
 	m.shared.reading = msg.reading
 	m.shared.oku = msg.oku
@@ -527,7 +537,6 @@ func (m *Model) applyOpDone(msg opDoneMsg) tea.Cmd {
 	if msg.err == nil && msg.markDirty {
 		m.dirty = true
 		m.lastMutationAt = m.shared.now()
-		m.writes++
 	}
 	if msg.reload {
 		library := loadLibraryCmd(m.ctx, m.backend, false)
@@ -582,11 +591,11 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 		return m.openHelp()
 
 	case reqRunOp:
-		return m.run(r.cmd)
+		return m.runWrite(r.cmd)
 
 	case reqSync:
 		m.syncing = true
-		return m.run(syncAllAndReloadCmd(m.ctx, m.backend))
+		return m.runWrite(syncAllAndReloadCmd(m.ctx, m.backend))
 
 	case reqRefresh:
 		if r.local {
@@ -595,6 +604,12 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 		return m.run(refreshLibraryCmd(m.ctx, m.backend, m.writes, false))
 
 	case reqUndo:
+		// Refused only while a write runs, not while the reload a write
+		// started does: the undo sets an absolute status or page, so it
+		// does not depend on what the reload brings.
+		if m.writing > 0 {
+			return m.showToast(toastWarn, inFlightNotice)
+		}
 		return m.runUndo()
 
 	case reqDensity:
@@ -607,13 +622,13 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 			return m.showToast(toastWarn, inFlightNotice)
 		}
 		b := r.book
-		return m.run(quickProgressCmd(m.ctx, m.backend, b.Book.ID, b.Book.Title, currentPage(b), r.delta))
+		return m.runWrite(quickProgressCmd(m.ctx, m.backend, b.Book.ID, b.Book.Title, currentPage(b), r.delta))
 
 	case reqSetPage:
 		if m.busy() {
 			return m.refuse(opProgress, r.token)
 		}
-		return m.run(stamped(updateProgressCmd(m.ctx, m.backend, r.bookID, r.title, r.prevPage, r.raw), r.token))
+		return m.runWrite(stamped(updateProgressCmd(m.ctx, m.backend, r.bookID, r.title, r.prevPage, r.raw), r.token))
 
 	case reqChangeStatus:
 		b := r.book
@@ -621,7 +636,7 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 		if r.confirm {
 			return m.push(newConfirmModal(fmt.Sprintf("Mark '%s' as %s?", b.Book.Title, r.to.Label()), change))
 		}
-		return m.run(change)
+		return m.runWrite(change)
 
 	case reqReview:
 		if m.busy() {
@@ -630,11 +645,11 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 			return m.refuse(opReview, r.token)
 		}
 		toastCmd := m.showToast(toastInfo, reviewSavePendingMessage(r.review))
-		save := m.run(stamped(submitReviewRatingCmd(m.ctx, m.backend, r.bookID, r.rating, r.review), r.token))
+		save := m.runWrite(stamped(submitReviewRatingCmd(m.ctx, m.backend, r.bookID, r.rating, r.review), r.token))
 		return tea.Batch(save, toastCmd)
 
 	case reqAddFromSearch:
-		return m.run(addFromSearchCmd(m.ctx, m.backend, r.result.ID, r.to))
+		return m.runWrite(addFromSearchCmd(m.ctx, m.backend, r.result.ID, r.to))
 
 	case reqSearch:
 		toastCmd := m.showToast(toastInfo, fmt.Sprintf("%s mode (%s): searching for %q...",
@@ -744,60 +759,88 @@ func (m *Model) mergeRecentSearches(loaded []string) {
 // that forgot to, or a result nothing handled, used to leave the count stuck
 // and every later request refused.
 type resultMsg struct {
-	msg        tea.Msg
-	background bool
+	msg  tea.Msg
+	lane lane
 }
+
+// lane is how the runner counts a command besides inflight: work the reader
+// waits on, a write (which the forced refreshes watch for), or a read that
+// runs in the background.
+type lane int
+
+const (
+	laneForeground lane = iota
+	laneWrite
+	laneBackground
+)
 
 // runCmd is a command the runner started. It is a named type with a method
 // rather than a closure so that one function starts every command, whatever
 // the call site: a test can tell the runner's work apart from a tick by that
 // function alone, and run it without waiting on the tick.
 type runCmd struct {
-	cmd        tea.Cmd
-	background bool
+	cmd  tea.Cmd
+	lane lane
 }
 
-func (c runCmd) run() tea.Msg { return resultMsg{msg: c.cmd(), background: c.background} }
+func (c runCmd) run() tea.Msg { return resultMsg{msg: c.cmd(), lane: c.lane} }
 
 // run starts cmds, counting each one in flight until finish has handled
 // its result, and (re)starts the spinner tick loop. Ticks and the
 // best-effort history write do not go through here: they are not work the
 // reader waits on. Nil commands are skipped, and nothing to run is nil.
 func (m *Model) run(cmds ...tea.Cmd) tea.Cmd {
-	out := make([]tea.Cmd, 0, len(cmds)+1)
-	for _, cmd := range cmds {
-		if cmd == nil {
-			continue
-		}
-		m.inflight++
-		out = append(out, runCmd{cmd: cmd}.run)
-	}
-	return tea.Batch(append(out, m.startSpinner())...)
+	return m.start(laneForeground, cmds...)
+}
+
+// runWrite is run for a command that changes the library, here or on
+// Hardcover. Its start and its landing are both write events.
+func (m *Model) runWrite(cmds ...tea.Cmd) tea.Cmd {
+	m.writes++
+	return m.start(laneWrite, cmds...)
 }
 
 // runBackground is run for reads the reader does not wait on: they are
 // counted, so the spinner turns, but busy leaves them out.
 func (m *Model) runBackground(cmds ...tea.Cmd) tea.Cmd {
+	return m.start(laneBackground, cmds...)
+}
+
+func (m *Model) start(l lane, cmds ...tea.Cmd) tea.Cmd {
 	out := make([]tea.Cmd, 0, len(cmds)+1)
 	for _, cmd := range cmds {
 		if cmd == nil {
 			continue
 		}
 		m.inflight++
-		m.background++
-		out = append(out, runCmd{cmd: cmd, background: true}.run)
+		switch l {
+		case laneWrite:
+			m.writing++
+		case laneBackground:
+			m.background++
+		}
+		out = append(out, runCmd{cmd: cmd, lane: l}.run)
 	}
 	return tea.Batch(append(out, m.startSpinner())...)
 }
 
 // refreshLibrary fetches every shelf from Hardcover in the background,
-// stamped with the writes finished so far. reconcile makes it the
+// stamped with the write events so far. reconcile makes it the
 // background reconcile, whose success alone clears dirty.
 func (m *Model) refreshLibrary(reconcile bool) tea.Cmd {
 	if reconcile {
 		m.reconciling = true
 	}
 	return m.runBackground(refreshLibraryCmd(m.ctx, m.backend, m.writes, reconcile))
+}
+
+// refetchLibrary retries an overtaken refresh. Offline it is left to the
+// reconcile, which dirty still asks for.
+func (m *Model) refetchLibrary(reconcile bool) tea.Cmd {
+	if !m.backend.Online() {
+		return nil
+	}
+	return m.refreshLibrary(reconcile)
 }
 
 // finish releases the slot of the command that answered with res and
@@ -809,19 +852,25 @@ func (m *Model) refreshLibrary(reconcile bool) tea.Cmd {
 // be released without them being run.
 func (m *Model) finish(res resultMsg) tea.Cmd {
 	m.endLoading()
-	if res.background && m.background > 0 {
+	var refetch tea.Cmd
+	switch {
+	case res.lane == laneWrite && m.writing > 0:
+		m.writing--
+		m.writes++
+		if m.writing == 0 && m.refetch {
+			refetch = m.refetchLibrary(m.refetchReconcile)
+			m.refetch, m.refetchReconcile = false, false
+		}
+	case res.lane == laneBackground && m.background > 0:
 		m.background--
 	}
 	switch msg := res.msg.(type) {
 	case nil:
-		return nil
+		return refetch
 	case tea.BatchMsg:
-		if res.background {
-			return m.runBackground(msg...)
-		}
-		return m.run(msg...)
+		return tea.Batch(m.start(res.lane, msg...), refetch)
 	}
-	return m.updateCommon(res.msg)
+	return tea.Batch(m.updateCommon(res.msg), refetch)
 }
 
 // endLoading records that one in-flight command has produced its result.

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -56,8 +57,8 @@ func TestAnotherAccountClearsTheCachedLibrary(t *testing.T) {
 	a := newTestAppWith(t, hc)
 	seedAccount(t, a, "1")
 
-	if err := a.RememberUser(2); err != nil {
-		t.Fatal(err)
+	if cleared, err := a.RememberUser(2); err != nil || !cleared {
+		t.Fatalf("RememberUser() = %v, %v; want a clear", cleared, err)
 	}
 
 	for _, status := range []model.Status{model.StatusCurrentlyReading, model.StatusRead} {
@@ -101,8 +102,8 @@ func TestRememberUserKeepsTheCacheWithoutAPreviousAccount(t *testing.T) {
 			a := newTestAppWith(t, hc)
 			seedAccount(t, a, stored)
 
-			if err := a.RememberUser(2); err != nil {
-				t.Fatal(err)
+			if cleared, err := a.RememberUser(2); err != nil || cleared {
+				t.Fatalf("RememberUser() = %v, %v; want no clear", cleared, err)
 			}
 			if books, _ := a.CachedBooks(model.StatusCurrentlyReading); len(books) != 1 {
 				t.Fatalf("cached reading = %+v, want Dune kept", books)
@@ -131,5 +132,22 @@ func TestSyncAllNoticesAnotherAccount(t *testing.T) {
 	}
 	if v, _ := a.store.GetState(userIDKey); v != "2" {
 		t.Fatalf("user_id = %q, want the new account", v)
+	}
+}
+
+func TestSyncAllGoesOnWhenTheAccountCheckFails(t *testing.T) {
+	hc := newFakeHardcover()
+	a := newTestAppWith(t, hc)
+	seedAccount(t, a, "1")
+	hc.errs = map[string]error{"GetMe": errors.New("timeout")}
+
+	if err := a.SyncAll(context.Background()); err != nil {
+		t.Fatalf("SyncAll() = %v, want the sync to go on without the account check", err)
+	}
+	if got := hc.called("ListUserBooks"); len(got) != len(model.AllStatuses) {
+		t.Fatalf("ListUserBooks calls = %v, want every status synced", got)
+	}
+	if v, _ := a.store.GetState(userIDKey); v != "1" {
+		t.Fatalf("user_id = %q, want the recorded account kept", v)
 	}
 }

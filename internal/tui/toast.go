@@ -120,9 +120,9 @@ func (m *Model) runUndo() tea.Cmd {
 	m.undo = nil
 	switch u.op {
 	case opStatus:
-		return m.run(changeStatusCmd(m.ctx, m.backend, u.bookID, u.title, u.fromStatus, u.toStatus))
+		return m.runWrite(changeStatusCmd(m.ctx, m.backend, u.bookID, u.title, u.fromStatus, u.toStatus))
 	case opProgress:
-		return m.run(updateProgressCmd(m.ctx, m.backend, u.bookID, u.title, u.fromPage, strconv.Itoa(u.toPage)))
+		return m.runWrite(updateProgressCmd(m.ctx, m.backend, u.bookID, u.title, u.fromPage, strconv.Itoa(u.toPage)))
 	}
 	return nil
 }

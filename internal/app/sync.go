@@ -13,14 +13,14 @@ func (a *App) SyncAll(ctx context.Context) error {
 		return err
 	}
 
-	// A full sync is where a change of account is noticed, so the previous
-	// account's books, stamps and queue do not outlive it.
-	id, _, err := a.hc.GetMe(ctx)
-	if err != nil {
-		return fmt.Errorf("sync account: %w", err)
-	}
-	if err := a.RememberUser(id); err != nil {
-		return err
+	// A full sync also checks which account is signed in, so a previous
+	// account's books, stamps and queue do not outlive it. The check is a
+	// backstop to the one at login: when it cannot be made the sync goes on
+	// without it, and fails only on the library itself.
+	if id, _, err := a.hc.GetMe(ctx); err == nil {
+		if _, err := a.RememberUser(id); err != nil {
+			return err
+		}
 	}
 
 	for _, s := range model.AllStatuses {

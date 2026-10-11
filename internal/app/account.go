@@ -21,23 +21,25 @@ func accountStateKeys() []string {
 	return keys
 }
 
-// RememberUser records the Hardcover account the client is signed in as.
-// When a different account was recorded before, everything cached for it is
-// dropped first, so its library is never shown as the new account's. With
-// no account recorded yet nothing is dropped. The new ID is stored last: a
-// clear that fails is retried the next time.
-func (a *App) RememberUser(id int) error {
+// RememberUser records the Hardcover account the client is signed in as and
+// reports whether that dropped a previous account's cache. When a different
+// account was recorded before, everything cached for it is dropped first, so
+// its library is never shown as the new account's. With no account recorded
+// yet nothing is dropped. The new ID is stored last: a clear that fails is
+// retried the next time.
+func (a *App) RememberUser(id int) (cleared bool, err error) {
 	prev, err := a.store.GetState(userIDKey)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if p, err := strconv.Atoi(strings.TrimSpace(prev)); err == nil && p > 0 && p != id {
 		if err := a.store.ClearAccount(accountStateKeys()); err != nil {
-			return fmt.Errorf("clear the previous account's cache: %w", err)
+			return false, fmt.Errorf("clear the previous account's cache: %w", err)
 		}
+		cleared = true
 	}
 	if err := a.store.SetState(userIDKey, strconv.Itoa(id)); err != nil {
-		return fmt.Errorf("record the signed-in account: %w", err)
+		return cleared, fmt.Errorf("record the signed-in account: %w", err)
 	}
-	return nil
+	return cleared, nil
 }

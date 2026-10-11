@@ -29,7 +29,11 @@ type fakeBackend struct {
 	errs    map[string]error
 
 	books map[model.Status][]model.UserBook
-	queue []int
+	// hardcover, when set, is Hardcover's own copy of the library, apart
+	// from the cache in books: a refreshing ListBooks returns it and
+	// replaces the cached shelf with it, the way App does.
+	hardcover map[model.Status][]model.UserBook
+	queue     []int
 
 	stats    *model.ReadingStats
 	notes    map[int]string
@@ -164,7 +168,19 @@ func (f *fakeBackend) ListBooks(ctx context.Context, status model.Status, refres
 	if err != nil {
 		return nil, err
 	}
+	if refresh && f.hardcover != nil {
+		f.books[status] = copyShelf(f.hardcover[status])
+	}
 	return f.shelf(status), nil
+}
+
+// copyShelf is a shelf that shares no rows with books.
+func copyShelf(books []model.UserBook) []model.UserBook {
+	out := make([]model.UserBook, 0, len(books))
+	for _, b := range books {
+		out = append(out, cloneBook(b))
+	}
+	return out
 }
 
 func (f *fakeBackend) ListAllCachedUserBooks() ([]model.UserBook, error) {

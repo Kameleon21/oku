@@ -718,6 +718,7 @@ func TestBackgroundReconcileClearsDirtyOnlyOnSuccess(t *testing.T) {
 
 func TestUnrelatedLibraryLoadDoesNotClearDirty(t *testing.T) {
 	m := newTestModel()
+	fakeOf(m).online = true
 	m.shared.loaded = true
 	m.dirty = true
 	m.lastMutationAt = time.Now().Add(-2 * backgroundSyncWindow)
@@ -729,7 +730,8 @@ func TestUnrelatedLibraryLoadDoesNotClearDirty(t *testing.T) {
 
 	// A status change lands while the reconcile is still running and triggers
 	// its own cache reload, whose result arrives first.
-	m.Update(opDoneMsg{op: opStatus, info: "Status changed", reload: true, markDirty: true})
+	m.runWrite(func() tea.Msg { return nil })
+	m.Update(resultMsg{msg: opDoneMsg{op: opStatus, info: "Status changed", reload: true, markDirty: true}, lane: laneWrite})
 	m.Update(libraryLoadedMsg{})
 
 	if !m.dirty {

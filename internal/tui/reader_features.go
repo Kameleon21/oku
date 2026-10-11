@@ -105,7 +105,7 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		if cmd := m.requireOnline(); cmd != nil {
 			return cmd, true
 		}
-		return m.run(queueMoveCmd(m.ctx, m.backend, r.bookID, r.delta)), true
+		return m.runWrite(queueMoveCmd(m.ctx, m.backend, r.bookID, r.delta)), true
 	case reqQueueRefresh:
 		if m.busy() {
 			return m.showToast(toastWarn, inFlightNotice), true
