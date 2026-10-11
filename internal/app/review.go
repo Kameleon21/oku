@@ -11,10 +11,11 @@ import (
 
 // RateBook updates a rating for a book in the user's library.
 func (a *App) RateBook(ctx context.Context, bookID int, rating float64) error {
-	if err := a.requireOnline(); err != nil {
+	if err := model.ValidateRating(rating); err != nil {
 		return err
 	}
-	if err := model.ValidateRating(rating); err != nil {
+
+	if err := a.requireOnline(); err != nil {
 		return err
 	}
 
@@ -45,10 +46,11 @@ func (a *App) RateBook(ctx context.Context, bookID int, rating float64) error {
 
 // ReviewBook updates both rating and review text for a book in the user's library.
 func (a *App) ReviewBook(ctx context.Context, bookID int, rating float64, review string) error {
-	if err := a.requireOnline(); err != nil {
+	if err := model.ValidateRating(rating); err != nil {
 		return err
 	}
-	if err := model.ValidateRating(rating); err != nil {
+
+	if err := a.requireOnline(); err != nil {
 		return err
 	}
 

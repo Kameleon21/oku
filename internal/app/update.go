@@ -11,11 +11,11 @@ import (
 // UpdateProgress updates the reading progress for a book.
 // If bookID is 0, uses the single active book.
 func (a *App) UpdateProgress(ctx context.Context, bookID int, pageUpdate model.PageUpdate) (int, error) {
-	if err := a.requireOnline(); err != nil {
-		return 0, err
-	}
 	resolvedID, err := a.ResolveBookID(bookID)
 	if err != nil {
+		return 0, err
+	}
+	if err := a.requireOnline(); err != nil {
 		return 0, err
 	}
 

@@ -17,10 +17,9 @@ import (
 // fakeHardcover is an in-memory Hardcover. Library rows live in userBooks
 // keyed by status; inserts land there so a follow-up sync sees them. Every
 // call is recorded in calls as "Method(args)" so tests can assert what was
-// sent. err fails every method; errs fails a single method by name.
+// sent; errs fails a single method by name.
 type fakeHardcover struct {
 	calls []string
-	err   error
 	errs  map[string]error
 
 	userID    int
@@ -44,8 +43,12 @@ type fakeHardcover struct {
 	details map[int]*api.BookDetail
 	trend   []api.APIBook
 
-	queueListID int
-	queue       []api.RankedBook
+	// queueListID is 0 until the ranked list exists. queued and
+	// positionUpdates hold each QueueBooks and SetQueuePositions payload.
+	queueListID     int
+	queue           []api.RankedBook
+	queued          [][]api.RankedBook
+	positionUpdates [][]api.RankedBook
 
 	library []api.APIUserBook
 	isbns   map[string]int
@@ -55,12 +58,11 @@ var _ Hardcover = (*fakeHardcover)(nil)
 
 func newFakeHardcover() *fakeHardcover {
 	return &fakeHardcover{
-		userID:      1,
-		username:    "reader",
-		privacy:     1,
-		userBooks:   map[model.Status][]api.APIUserBook{},
-		nextID:      1000,
-		queueListID: 77,
+		userID:    1,
+		username:  "reader",
+		privacy:   1,
+		userBooks: map[model.Status][]api.APIUserBook{},
+		nextID:    1000,
 	}
 }
 
@@ -74,9 +76,6 @@ func (f *fakeHardcover) record(method string, args ...any) error {
 		call += fmt.Sprint(a)
 	}
 	f.calls = append(f.calls, call+")")
-	if f.err != nil {
-		return f.err
-	}
 	return f.errs[method]
 }
 
@@ -187,7 +186,11 @@ func (f *fakeHardcover) GoalSettings(ctx context.Context, id int) (api.GoalInput
 	if err := f.record("GoalSettings", id); err != nil {
 		return api.GoalInput{}, err
 	}
-	return f.goalSettings[id], nil
+	g, ok := f.goalSettings[id]
+	if !ok {
+		return api.GoalInput{}, fmt.Errorf("goal %d not found in your account", id)
+	}
+	return g, nil
 }
 
 func (f *fakeHardcover) SaveGoal(ctx context.Context, id int, g api.GoalInput) (int, error) {
@@ -233,10 +236,17 @@ func (f *fakeHardcover) Trending(ctx context.Context, duration string, limit int
 	return f.trend, nil
 }
 
-// ReadingQueue mirrors the API's ordering: by position, then row ID.
+// ReadingQueue mirrors the API: without the list it returns 0 and no rows
+// unless create is set, and rows are ordered by position, then row ID.
 func (f *fakeHardcover) ReadingQueue(ctx context.Context, create bool) (int, []api.RankedBook, error) {
 	if err := f.record("ReadingQueue", create); err != nil {
 		return 0, nil, err
+	}
+	if f.queueListID == 0 {
+		if !create {
+			return 0, []api.RankedBook{}, nil
+		}
+		f.queueListID = 77
 	}
 	rows := append([]api.RankedBook{}, f.queue...)
 	sort.SliceStable(rows, func(i, j int) bool {
@@ -249,9 +259,10 @@ func (f *fakeHardcover) ReadingQueue(ctx context.Context, create bool) (int, []a
 }
 
 func (f *fakeHardcover) QueueBooks(ctx context.Context, listID int, books []api.RankedBook) error {
-	if err := f.record("QueueBooks", listID, books); err != nil {
+	if err := f.record("QueueBooks", listID); err != nil {
 		return err
 	}
+	f.queued = append(f.queued, append([]api.RankedBook(nil), books...))
 	for _, b := range books {
 		f.nextID++
 		b.ID = f.nextID
@@ -261,9 +272,10 @@ func (f *fakeHardcover) QueueBooks(ctx context.Context, listID int, books []api.
 }
 
 func (f *fakeHardcover) SetQueuePositions(ctx context.Context, listID int, rows []api.RankedBook) error {
-	if err := f.record("SetQueuePositions", listID, rows); err != nil {
+	if err := f.record("SetQueuePositions", listID); err != nil {
 		return err
 	}
+	f.positionUpdates = append(f.positionUpdates, append([]api.RankedBook(nil), rows...))
 	for _, r := range rows {
 		for i := range f.queue {
 			if f.queue[i].ID == r.ID {

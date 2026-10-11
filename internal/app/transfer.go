@@ -274,14 +274,14 @@ type ImportResult struct {
 // ImportBooks previews by default. Existing books are always skipped, preserving
 // ratings, progress and reviews. A failed partially-added row is explicitly reported.
 func (a *App) ImportBooks(ctx context.Context, rows []TransferBook, apply bool) ([]ImportResult, error) {
-	if err := a.requireOnline(); err != nil {
-		return nil, err
-	}
 	if _, err := validateImport(rows); err != nil {
 		return nil, err
 	}
 	if len(rows) == 0 {
 		return []ImportResult{}, nil
+	}
+	if err := a.requireOnline(); err != nil {
+		return nil, err
 	}
 	existing, err := a.hc.ExportLibrary(ctx)
 	if err != nil {

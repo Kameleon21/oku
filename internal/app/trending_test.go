@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 
@@ -69,5 +70,13 @@ func TestTrendingBooksRejectsBadLimit(t *testing.T) {
 	}
 	if len(hc.calls) != 0 {
 		t.Fatalf("bad limits reached Hardcover: %v", hc.calls)
+	}
+
+	// Bad input is reported as such even without a client.
+	offline := newTestApp(t)
+	for _, limit := range []int{-1, 0, 101} {
+		if _, err := offline.TrendingBooks(context.Background(), "week", limit, false); err == nil || errors.Is(err, ErrOffline) {
+			t.Errorf("offline limit %d: err = %v, want a limit error", limit, err)
+		}
 	}
 }

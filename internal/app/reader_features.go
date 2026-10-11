@@ -48,7 +48,8 @@ func (a *App) ListGoals(ctx context.Context) ([]api.APIGoal, error) {
 
 // SaveGoal creates g when id is 0, using the account's privacy setting.
 // Otherwise it updates goal id with merge(current, g), so the caller decides
-// which of g's fields overwrite the goal's current settings.
+// which of g's fields overwrite the goal's current settings; a nil merge saves
+// g as given.
 func (a *App) SaveGoal(ctx context.Context, id int, g api.GoalInput, merge func(old, next api.GoalInput) api.GoalInput) (int, error) {
 	if err := a.requireOnline(); err != nil {
 		return 0, err
@@ -58,7 +59,9 @@ func (a *App) SaveGoal(ctx context.Context, id int, g api.GoalInput, merge func(
 		if err != nil {
 			return 0, err
 		}
-		g = merge(old, g)
+		if merge != nil {
+			g = merge(old, g)
+		}
 	} else {
 		privacy, err := a.hc.GetAccountPrivacySetting(ctx)
 		if err != nil {
@@ -109,11 +112,11 @@ const trendingFetchLimit = 100
 // its highest-ranked remaining book, because the raw list is usually
 // dominated by every volume of one or two popular series.
 func (a *App) TrendingBooks(ctx context.Context, period string, limit int, raw bool) ([]model.SearchResult, error) {
-	if err := a.requireOnline(); err != nil {
-		return nil, err
-	}
 	if limit < 1 || limit > trendingFetchLimit {
 		return nil, fmt.Errorf("limit must be 1-%d", trendingFetchLimit)
+	}
+	if err := a.requireOnline(); err != nil {
+		return nil, err
 	}
 	fetch := trendingFetchLimit
 	if raw {
@@ -193,9 +196,6 @@ func SortQueue(books []model.UserBook, ids []int) {
 // MoveQueueBook updates one adjacent pair. Missing shelf books are appended to
 // the private ranked list; reading status remains independent of priority.
 func (a *App) MoveQueueBook(ctx context.Context, bookID, delta int) ([]int, error) {
-	if err := a.requireOnline(); err != nil {
-		return nil, err
-	}
 	if delta != -1 && delta != 1 {
 		return nil, fmt.Errorf("queue direction must be -1 or 1")
 	}
@@ -211,6 +211,9 @@ func (a *App) MoveQueueBook(ctx context.Context, bookID, delta int) ([]int, erro
 	}
 	if !found {
 		return nil, fmt.Errorf("book is not on the want-to-read shelf")
+	}
+	if err := a.requireOnline(); err != nil {
+		return nil, err
 	}
 	listID, rows, err := a.hc.ReadingQueue(ctx, true)
 	if err != nil {

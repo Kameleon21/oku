@@ -331,6 +331,7 @@ func TestReviewBookUpdatesHardcoverThenCache(t *testing.T) {
 
 func TestMoveQueueBookQueuesMissingShelfBooksThenSwaps(t *testing.T) {
 	hc := newFakeHardcover()
+	hc.queueListID = 77
 	hc.queue = []api.RankedBook{{ID: 11, BookID: 1, Position: 1}, {ID: 12, BookID: 2, Position: 2}}
 	a := newTestAppWith(t, hc)
 	for i, id := range []int{1, 2, 3} {
@@ -342,8 +343,14 @@ func TestMoveQueueBookQueuesMissingShelfBooksThenSwaps(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertCalls(t, hc, "ReadingQueue", "ReadingQueue(true)", "ReadingQueue(false)")
-	assertCalls(t, hc, "QueueBooks", "QueueBooks(77, [{0 3 3}])")
-	assertCalls(t, hc, "SetQueuePositions", "SetQueuePositions(77, [{1001 3 2} {12 2 3}])")
+	assertCalls(t, hc, "QueueBooks", "QueueBooks(77)")
+	if want := [][]api.RankedBook{{{BookID: 3, Position: 3}}}; !reflect.DeepEqual(hc.queued, want) {
+		t.Fatalf("queued %+v, want %+v", hc.queued, want)
+	}
+	assertCalls(t, hc, "SetQueuePositions", "SetQueuePositions(77)")
+	if want := [][]api.RankedBook{{{ID: 1001, BookID: 3, Position: 2}, {ID: 12, BookID: 2, Position: 3}}}; !reflect.DeepEqual(hc.positionUpdates, want) {
+		t.Fatalf("position updates %+v, want %+v", hc.positionUpdates, want)
+	}
 	if !reflect.DeepEqual(ids, []int{1, 3, 2}) {
 		t.Fatalf("ids = %v, want [1 3 2]", ids)
 	}
@@ -354,6 +361,7 @@ func TestMoveQueueBookQueuesMissingShelfBooksThenSwaps(t *testing.T) {
 
 func TestMoveQueueBookAtEdgeChangesNothingRemotely(t *testing.T) {
 	hc := newFakeHardcover()
+	hc.queueListID = 77
 	hc.queue = []api.RankedBook{{ID: 11, BookID: 1, Position: 1}, {ID: 12, BookID: 2, Position: 2}}
 	a := newTestAppWith(t, hc)
 	upsertBookWithStatus(t, a, 100, 1, model.StatusWantToRead, "One")
@@ -372,6 +380,7 @@ func TestMoveQueueBookAtEdgeChangesNothingRemotely(t *testing.T) {
 
 func TestMoveQueueBookRejectsBadInput(t *testing.T) {
 	hc := newFakeHardcover()
+	hc.queueListID = 77
 	hc.queue = []api.RankedBook{{ID: 11, BookID: 1, Position: 1}, {ID: 12, BookID: 2, Position: 1}}
 	a := newTestAppWith(t, hc)
 	upsertBookWithStatus(t, a, 100, 1, model.StatusWantToRead, "One")
@@ -523,7 +532,9 @@ func TestOfflineAppReturnsErrOffline(t *testing.T) {
 				t.Fatal("Online() = true without a client")
 			}
 			upsertBookWithStatus(t, a, 100, 1, model.StatusCurrentlyReading, "Dune")
+			upsertBookWithStatus(t, a, 101, 2, model.StatusWantToRead, "Queued")
 			ctx := context.Background()
+			newRows := []TransferBook{{BookID: 3, Status: "oku"}}
 			ops := map[string]func() error{
 				"ChangeStatus":   func() error { return a.ChangeStatus(ctx, 1, model.StatusRead) },
 				"UpdateProgress": func() error { _, err := a.UpdateProgress(ctx, 1, model.PageUpdate{Absolute: 5}); return err },
@@ -538,10 +549,10 @@ func TestOfflineAppReturnsErrOffline(t *testing.T) {
 				"GetBookDetail":  func() error { _, err := a.GetBookDetail(ctx, 1, false); return err },
 				"TrendingBooks":  func() error { _, err := a.TrendingBooks(ctx, "week", 5, false); return err },
 				"RefreshQueue":   func() error { _, err := a.RefreshQueue(ctx); return err },
-				"MoveQueueBook":  func() error { _, err := a.MoveQueueBook(ctx, 1, 1); return err },
+				"MoveQueueBook":  func() error { _, err := a.MoveQueueBook(ctx, 2, 1); return err },
 				"AddJournal":     func() error { _, err := a.AddJournalEntry(ctx, 1, "note", "hi"); return err },
 				"ExportBooks":    func() error { _, err := a.ExportBooks(ctx); return err },
-				"ImportBooks":    func() error { _, err := a.ImportBooks(ctx, nil, false); return err },
+				"ImportBooks":    func() error { _, err := a.ImportBooks(ctx, newRows, false); return err },
 			}
 			for op, fn := range ops {
 				if err := fn(); !errors.Is(err, ErrOffline) {
@@ -552,5 +563,69 @@ func TestOfflineAppReturnsErrOffline(t *testing.T) {
 				t.Fatalf("offline calls changed the cache: %+v", ub)
 			}
 		})
+	}
+}
+
+func TestSaveGoalNilMergeSavesInputAsGiven(t *testing.T) {
+	hc := newFakeHardcover()
+	hc.goalSettings = map[int]api.GoalInput{5: {Goal: 10, Metric: "book", Description: "old"}}
+	a := newTestAppWith(t, hc)
+	g := api.GoalInput{Goal: 30, Metric: "page"}
+
+	if _, err := a.SaveGoal(context.Background(), 5, g, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(hc.savedGoals, []api.GoalInput{g}) {
+		t.Fatalf("saved %+v, want %+v", hc.savedGoals, g)
+	}
+}
+
+func TestSaveGoalUnknownGoalSavesNothing(t *testing.T) {
+	hc := newFakeHardcover()
+	a := newTestAppWith(t, hc)
+	_, err := a.SaveGoal(context.Background(), 5, api.GoalInput{Goal: 30}, func(old, next api.GoalInput) api.GoalInput { return next })
+	if err == nil || !strings.Contains(err.Error(), "goal 5 not found") {
+		t.Fatalf("err = %v, want goal not found", err)
+	}
+	assertCalls(t, hc, "SaveGoal")
+}
+
+func TestRefreshQueueWithoutListCachesEmptyOrder(t *testing.T) {
+	hc := newFakeHardcover()
+	a := newTestAppWith(t, hc)
+	if err := a.saveQueue([]int{4, 5}); err != nil {
+		t.Fatal(err)
+	}
+
+	ids, err := a.RefreshQueue(context.Background())
+	if err != nil || len(ids) != 0 {
+		t.Fatalf("ids = %v, err = %v; want an empty queue", ids, err)
+	}
+	assertCalls(t, hc, "ReadingQueue", "ReadingQueue(false)")
+	if cached, _ := a.CachedQueueOrder(); len(cached) != 0 {
+		t.Fatalf("cached order = %v, want empty", cached)
+	}
+}
+
+func TestOfflineAppReportsBadInputFirst(t *testing.T) {
+	a := newTestApp(t)
+	upsertBookWithStatus(t, a, 100, 1, model.StatusRead, "Dune")
+	ctx := context.Background()
+	checks := map[string]error{
+		"RateBook":      a.RateBook(ctx, 1, 9),
+		"ReviewBook":    a.ReviewBook(ctx, 1, 9, "x"),
+		"MoveQueueBook": func() error { _, err := a.MoveQueueBook(ctx, 1, 1); return err }(),
+		"ImportBooks": func() error {
+			_, err := a.ImportBooks(ctx, []TransferBook{{BookID: 1, Status: "invented"}}, false)
+			return err
+		}(),
+	}
+	for op, err := range checks {
+		if err == nil || errors.Is(err, ErrOffline) {
+			t.Errorf("%s: err = %v, want the validation error", op, err)
+		}
+	}
+	if ids, err := a.ImportBooks(ctx, nil, false); err != nil || len(ids) != 0 {
+		t.Errorf("empty import offline = %v, %v; want no results and no error", ids, err)
 	}
 }

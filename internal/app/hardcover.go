@@ -53,14 +53,14 @@ var _ Hardcover = (*api.Client)(nil)
 // without a client, as local-only commands are.
 var ErrOffline = errors.New("Hardcover is unavailable")
 
-// Online reports whether the App can reach Hardcover.
+// Online reports whether the App can reach Hardcover. A nil App is offline.
 func (a *App) Online() bool {
-	return a.hc != nil
+	return a != nil && a.hc != nil
 }
 
 // requireOnline returns ErrOffline when there is no Hardcover client.
 func (a *App) requireOnline() error {
-	if a.hc == nil {
+	if !a.Online() {
 		return ErrOffline
 	}
 	return nil

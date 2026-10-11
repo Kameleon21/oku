@@ -145,7 +145,7 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 	case reqTrending:
 		return m.beginLoading(func() tea.Msg {
 			if m.app == nil || !m.app.Online() {
-				return searchLoadedMsg{seq: r.seq, err: fmt.Errorf("Hardcover is unavailable")}
+				return searchLoadedMsg{seq: r.seq, err: app.ErrOffline}
 			}
 			books, err := m.app.TrendingBooks(m.ctx, "week", 20, false)
 			return searchLoadedMsg{results: books, query: "Trending this week", mode: model.SearchModeBook, seq: r.seq, err: err}
@@ -168,7 +168,7 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 			return m.refuse(opJournal, r.token), true
 		}
 		if m.app == nil || !m.app.Online() {
-			return request(opDoneMsg{op: opJournal, seq: r.token, err: fmt.Errorf("Hardcover is unavailable")}), true
+			return request(opDoneMsg{op: opJournal, seq: r.token, err: app.ErrOffline}), true
 		}
 		return m.beginLoading(func() tea.Msg {
 			_, err := m.app.AddJournalEntry(m.ctx, r.bookID, r.event, r.text)

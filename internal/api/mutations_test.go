@@ -171,3 +171,42 @@ func TestInsertProgressJournalErrorsWithoutJournal(t *testing.T) {
 		t.Fatal("InsertProgressJournal should error when no reading_journal is returned")
 	}
 }
+
+func TestInsertUserBookReturnsUserBookID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"insert_user_book":{"id":100,"user_book":{"id":100},"error":null}}}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{
+		gql:   graphql.NewClient(srv.URL),
+		token: "Bearer test",
+	}
+
+	id, err := c.InsertUserBook(t.Context(), 10, 1)
+	if err != nil {
+		t.Fatalf("InsertUserBook returned error: %v", err)
+	}
+	if id != 100 {
+		t.Fatalf("InsertUserBook id = %d, want 100", id)
+	}
+}
+
+func TestUpdateUserBookRatingReportsAPIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"update_user_book":{"id":null,"error":"rating refused"}}}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{
+		gql:   graphql.NewClient(srv.URL),
+		token: "Bearer test",
+	}
+
+	err := c.UpdateUserBookRating(t.Context(), 100, 4)
+	if err == nil || !strings.Contains(err.Error(), "rating refused") {
+		t.Fatalf("UpdateUserBookRating error = %v, want one containing %q", err, "rating refused")
+	}
+}

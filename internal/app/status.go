@@ -18,11 +18,11 @@ var ErrCacheRefresh = errors.New("book updated on Hardcover but the local cache 
 // ChangeStatus changes a book's status. If bookID is 0, uses the single active book.
 // If the book has no user_book entry yet, creates one via InsertUserBook.
 func (a *App) ChangeStatus(ctx context.Context, bookID int, status model.Status) error {
-	if err := a.requireOnline(); err != nil {
-		return err
-	}
 	resolvedID, err := a.ResolveBookID(bookID)
 	if err != nil {
+		return err
+	}
+	if err := a.requireOnline(); err != nil {
 		return err
 	}
 
