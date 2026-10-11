@@ -27,9 +27,6 @@ type fakeBackend struct {
 
 	books map[model.Status][]model.UserBook
 	queue []int
-	// stale makes ListCachedBooks report the cache out of date, which asks
-	// the dashboard for a refresh.
-	stale bool
 
 	stats    *model.ReadingStats
 	notes    map[int]string
@@ -129,22 +126,22 @@ func (f *fakeBackend) Online() bool {
 	return f.online
 }
 
-func (f *fakeBackend) ListCachedBooks(status model.Status) ([]model.UserBook, bool, error) {
+func (f *fakeBackend) CachedBooks(status model.Status) ([]model.UserBook, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if err := f.call("ListCachedBooks", status); err != nil {
-		return nil, false, err
+	if err := f.call("CachedBooks", status); err != nil {
+		return nil, err
 	}
-	return f.shelf(status), f.stale, nil
+	return f.shelf(status), nil
 }
 
-// ListBooks only reaches for Hardcover when asked to refresh or when the
-// cache is stale, the way App does.
+// ListBooks only reaches for Hardcover when asked to refresh; App does the
+// same when the cache is fresh.
 func (f *fakeBackend) ListBooks(ctx context.Context, status model.Status, refresh bool) ([]model.UserBook, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var err error
-	if refresh || f.stale {
+	if refresh {
 		err = f.remote("ListBooks", status, refresh)
 	} else {
 		err = f.call("ListBooks", status, refresh)

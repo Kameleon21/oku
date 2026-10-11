@@ -269,7 +269,7 @@ func TestEveryCommandLeavesTheCountWhereItFoundIt(t *testing.T) {
 		"online":  func(*fakeBackend) {},
 		"offline": func(fb *fakeBackend) { fb.online = false },
 		"failing": func(fb *fakeBackend) {
-			for _, method := range []string{"ListCachedBooks", "ListBooks", "ListAllCachedUserBooks",
+			for _, method := range []string{"CachedBooks", "ListBooks", "ListAllCachedUserBooks",
 				"CachedQueueOrder", "SyncAll", "ChangeStatus", "UpdateProgress", "ReviewBook",
 				"AddJournalEntry", "MoveQueueBook", "RefreshQueue", "SearchBooks", "TrendingBooks", "GetBookDetail",
 				"BookJournal", "GetReadingStats", "ListPrivateNotes", "SavePrivateNote", "RecentSearches",

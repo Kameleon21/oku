@@ -20,7 +20,7 @@ type backend interface {
 
 	// The library: the cached shelves the dashboard opens on, the fresh ones
 	// a reload brings in, and the sync that refreshes everything.
-	ListCachedBooks(status model.Status) ([]model.UserBook, bool, error)
+	CachedBooks(status model.Status) ([]model.UserBook, error)
 	ListBooks(ctx context.Context, status model.Status, refresh bool) ([]model.UserBook, error)
 	ListAllCachedUserBooks() ([]model.UserBook, error)
 	CachedQueueOrder() ([]int, error)
@@ -68,9 +68,7 @@ type noBackend struct{}
 
 func (noBackend) Online() bool { return false }
 
-func (noBackend) ListCachedBooks(model.Status) ([]model.UserBook, bool, error) {
-	return nil, false, errNoBackend
-}
+func (noBackend) CachedBooks(model.Status) ([]model.UserBook, error) { return nil, errNoBackend }
 func (noBackend) ListBooks(context.Context, model.Status, bool) ([]model.UserBook, error) {
 	return nil, errNoBackend
 }

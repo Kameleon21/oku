@@ -30,16 +30,14 @@ func (a *App) ListBooks(ctx context.Context, status model.Status, refresh bool) 
 		return nil, err
 	}
 
-	// Refresh when the status was never synced or its sync is stale. An
-	// empty shelf that was synced recently is up to date: refetching it on
-	// every load would cost a request for nothing.
+	// Refresh when cache is empty or stale.
 	if !refresh {
 		var stale bool
 		stale, err = a.isStatusCacheStale(status)
 		if err != nil {
 			return nil, err
 		}
-		if stale {
+		if len(books) == 0 || stale {
 			if err := a.syncStatus(ctx, status); err != nil {
 				return nil, err
 			}
@@ -71,7 +69,7 @@ func (a *App) ListCachedBooks(status model.Status) ([]model.UserBook, bool, erro
 	if err != nil {
 		return nil, false, err
 	}
-	return books, stale, nil
+	return books, len(books) == 0 || stale, nil
 }
 
 func (a *App) isStatusCacheStale(status model.Status) (bool, error) {

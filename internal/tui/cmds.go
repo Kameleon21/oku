@@ -109,17 +109,20 @@ type timerOpDoneMsg struct {
 
 // ── Tea Commands ───────────────────────────────────────────────────────────
 
+// loadCachedLibraryCmd is the launch load: the cached shelves at once, then,
+// when Hardcover can be reached, a refresh of all three whatever their age,
+// so changes made on the website show within seconds of opening.
 func loadCachedLibraryCmd(a backend) tea.Cmd {
 	return func() tea.Msg {
-		reading, readingStale, err := a.ListCachedBooks(model.StatusCurrentlyReading)
+		reading, err := a.CachedBooks(model.StatusCurrentlyReading)
 		if err != nil {
 			return libraryLoadedMsg{err: err}
 		}
-		oku, okuStale, err := a.ListCachedBooks(model.StatusWantToRead)
+		oku, err := a.CachedBooks(model.StatusWantToRead)
 		if err != nil {
 			return libraryLoadedMsg{err: err}
 		}
-		paused, pausedStale, err := a.ListCachedBooks(model.StatusPaused)
+		paused, err := a.CachedBooks(model.StatusPaused)
 		if err != nil {
 			return libraryLoadedMsg{err: err}
 		}
@@ -130,7 +133,7 @@ func loadCachedLibraryCmd(a backend) tea.Cmd {
 		return libraryLoadedMsg{paused: paused, queueOrder: order,
 			reading:      reading,
 			oku:          oku,
-			needsRefresh: readingStale || okuStale || pausedStale,
+			needsRefresh: a.Online(),
 		}
 	}
 }
@@ -145,10 +148,14 @@ func loadLibraryCmd(ctx context.Context, a backend, refresh bool) tea.Cmd {
 		if err != nil {
 			return libraryLoadedMsg{err: err}
 		}
-		// Paused is fetched only when its own cache is stale, never forced:
-		// status changes keep it current locally, and the Paused tab has a
-		// refresh of its own, so a forced refresh would only cost a request.
-		paused, err := a.ListBooks(ctx, model.StatusPaused, false)
+		// Paused is fetched only by a forced refresh. A reload after a write
+		// reads it from the cache, which the write has already patched: the
+		// shelf is usually empty, and ListBooks would refetch an empty
+		// shelf on every reload.
+		paused, err := a.CachedBooks(model.StatusPaused)
+		if refresh {
+			paused, err = a.ListBooks(ctx, model.StatusPaused, true)
+		}
 		if err != nil {
 			return libraryLoadedMsg{err: err}
 		}

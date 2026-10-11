@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -60,33 +59,58 @@ func TestPausedShelfAndResumeRequest(t *testing.T) {
 	}
 }
 
-// TestPausedShelfLoadsLikeTheOthers: the cached load reports the paused
-// shelf's staleness with the other two, and the refreshing load brings
-// paused in through the staleness-aware path instead of forcing a fetch.
-func TestPausedShelfLoadsLikeTheOthers(t *testing.T) {
-	fb := newFakeBackend()
-	fb.add(model.UserBook{StatusID: model.StatusPaused, Book: model.Book{ID: 7, Title: "Paused"}})
+// TestLaunchRefreshesEveryShelf: opening the dashboard shows the cache and
+// then refreshes reading, want-to-read and paused from Hardcover however
+// fresh the cache is, so changes made on the website show up.
+func TestLaunchRefreshesEveryShelf(t *testing.T) {
+	m := newTestModel()
+	fb := fakeOf(m)
+	fb.online = true
+	fb.add(dune, foundation, meditation)
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	drain(t, m, m.Init())
 
-	cached := loadCachedLibraryCmd(fb)().(libraryLoadedMsg)
-	if cached.err != nil || len(cached.paused) != 1 || cached.needsRefresh {
-		t.Fatalf("fresh cached load = %+v, want the paused book and no refresh", cached)
+	for _, status := range []model.Status{model.StatusCurrentlyReading, model.StatusWantToRead, model.StatusPaused} {
+		if !fb.called("CachedBooks", status) || !fb.called("ListBooks", status, true) {
+			t.Fatalf("calls = %v, want %s read from the cache and then refreshed", fb.calls, status)
+		}
 	}
-	if !fb.called("ListCachedBooks", model.StatusPaused) {
-		t.Fatalf("calls = %v, want paused read with its staleness", fb.calls)
+	if m.isLoading() || m.toast.text != "" {
+		t.Fatalf("after launch: inflight = %d, toast = %q; want settled and quiet", m.inflight, m.toast.text)
 	}
+}
 
-	fb.stale = true
-	if cached := loadCachedLibraryCmd(fb)().(libraryLoadedMsg); !cached.needsRefresh {
-		t.Fatal("a stale cache should ask for a refresh")
-	}
+func TestOfflineLaunchSkipsTheRefresh(t *testing.T) {
+	m := newTestModel()
+	fb := fakeOf(m)
+	fb.add(dune)
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	drain(t, m, m.Init())
 
-	fb.calls = nil
-	refreshed := loadLibraryCmd(context.Background(), fb, true)().(libraryLoadedMsg)
-	if refreshed.err != nil || len(refreshed.paused) != 1 {
-		t.Fatalf("refreshing load = %+v, want the paused book", refreshed)
+	if fb.called("ListBooks") {
+		t.Fatalf("calls = %v, want no refresh while offline", fb.calls)
 	}
-	if !fb.called("ListBooks", model.StatusPaused, false) || fb.called("ListBooks", model.StatusPaused, true) {
-		t.Fatalf("calls = %v, want paused listed without forcing a refresh", fb.calls)
+	if len(m.shared.reading) != 1 || m.toast.text != "" {
+		t.Fatalf("reading = %v, toast = %q; want the cached shelf and no toast", m.shared.reading, m.toast.text)
+	}
+}
+
+// TestReloadAfterWriteReadsPausedFromTheCache: the write already patched the
+// cache, so the reload must not spend a request on the (usually empty)
+// paused shelf.
+func TestReloadAfterWriteReadsPausedFromTheCache(t *testing.T) {
+	m, fb := loadedDashboard(t)
+	op := changeStatusCmd(m.ctx, m.backend, 1, "Dune", dune.StatusID, model.StatusPaused)
+	drain(t, m, send(t, m, request(reqRunOp{cmd: op})))
+
+	if !fb.called("ChangeStatus") || !fb.called("CachedBooks", model.StatusPaused) {
+		t.Fatalf("calls = %v, want the write and a reload of the paused shelf from the cache", fb.calls)
+	}
+	if fb.called("ListBooks", model.StatusPaused) {
+		t.Fatalf("calls = %v, want no paused request on the reload", fb.calls)
+	}
+	if len(m.shared.paused) != 1 || m.shared.paused[0].BookID != 1 {
+		t.Fatalf("paused = %v, want Dune", m.shared.paused)
 	}
 }
 
