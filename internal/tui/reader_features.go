@@ -58,19 +58,18 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		} else if r.selection.Result != nil {
 			id = r.selection.Result.ID
 		}
-		if id == 0 || m.app == nil || !m.app.Online() {
-			return m.showToast(toastWarn, "Hardcover is unavailable"), true
+		if id == 0 {
+			return m.showToast(toastWarn, app.ErrOffline.Error()), true
 		}
-		detail := func() tea.Msg { b, err := m.app.GetBookDetail(m.ctx, id, false); return detailLoadedMsg{id, b, err} }
+		if cmd := m.requireOnline(); cmd != nil {
+			return cmd, true
+		}
+		detail := bookDetailCmd(m.ctx, m.backend, id)
 		if r.selection.Book != nil {
-			return m.beginLoading(detail, func() tea.Msg {
-				entries, err := m.app.BookJournal(m.ctx, id)
-				return journalLoadedMsg{id, entries, err}
-			}), true
+			return m.run(detail, bookJournalCmd(m.ctx, m.backend, id)), true
 		}
-		return m.beginLoading(detail), true
+		return m.run(detail), true
 	case detailLoadedMsg:
-		m.endLoading()
 		if r.err != nil {
 			return m.showToast(toastError, r.err.Error()), true
 		}
@@ -81,7 +80,6 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		m.detail.stamp++
 		return nil, true
 	case journalLoadedMsg:
-		m.endLoading()
 		if r.err != nil {
 			return m.showToast(toastError, "Load journal: "+r.err.Error()), true
 		}
@@ -92,15 +90,11 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		m.detail.stamp++
 		return nil, true
 	case reqPausedShelf:
-		if m.app == nil || !m.app.Online() {
-			return m.showToast(toastWarn, "Hardcover is unavailable"), true
+		if cmd := m.requireOnline(); cmd != nil {
+			return cmd, true
 		}
-		return m.beginLoading(func() tea.Msg {
-			books, err := m.app.ListBooks(m.ctx, model.StatusPaused, true)
-			return pausedLoadedMsg{books, err}
-		}), true
+		return m.run(pausedShelfCmd(m.ctx, m.backend)), true
 	case pausedLoadedMsg:
-		m.endLoading()
 		if r.err != nil {
 			return m.showToast(toastError, r.err.Error()), true
 		}
@@ -110,23 +104,19 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		if m.isLoading() {
 			return m.showToast(toastWarn, inFlightNotice), true
 		}
-		if m.app == nil || !m.app.Online() {
-			return m.showToast(toastWarn, "Hardcover is unavailable"), true
+		if cmd := m.requireOnline(); cmd != nil {
+			return cmd, true
 		}
-		return m.beginLoading(func() tea.Msg {
-			ids, err := m.app.MoveQueueBook(m.ctx, r.bookID, r.delta)
-			return queueLoadedMsg{ids, r.bookID, err}
-		}), true
+		return m.run(queueMoveCmd(m.ctx, m.backend, r.bookID, r.delta)), true
 	case reqQueueRefresh:
 		if m.isLoading() {
 			return m.showToast(toastWarn, inFlightNotice), true
 		}
-		if m.app == nil || !m.app.Online() {
-			return m.showToast(toastWarn, "Hardcover is unavailable"), true
+		if cmd := m.requireOnline(); cmd != nil {
+			return cmd, true
 		}
-		return m.beginLoading(func() tea.Msg { ids, err := m.app.RefreshQueue(m.ctx); return queueLoadedMsg{ids: ids, err: err} }), true
+		return m.run(queueRefreshCmd(m.ctx, m.backend)), true
 	case queueLoadedMsg:
-		m.endLoading()
 		if r.err != nil {
 			return m.showToast(toastError, r.err.Error()), true
 		}
@@ -143,37 +133,25 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		}
 		return tea.Batch(cmd, m.showToast(toastSuccess, "Reading queue saved")), true
 	case reqTrending:
-		return m.beginLoading(func() tea.Msg {
-			if m.app == nil || !m.app.Online() {
-				return searchLoadedMsg{seq: r.seq, err: app.ErrOffline}
-			}
-			books, err := m.app.TrendingBooks(m.ctx, "week", 20, false)
-			return searchLoadedMsg{results: books, query: "Trending this week", mode: model.SearchModeBook, seq: r.seq, err: err}
-		}), true
+		// Not refused up front: the search pane reports a failed fetch
+		// itself, offline included, the way it does for a search.
+		return m.run(trendingCmd(m.ctx, m.backend, r.seq)), true
 	case reqPrivateNote:
 		if m.isLoading() {
 			return m.refuse(opPrivateNote, r.token), true
 		}
-		return m.beginLoading(func() tea.Msg {
-			var err error
-			if m.app == nil {
-				err = fmt.Errorf("local storage is unavailable")
-			} else {
-				err = m.app.SavePrivateNote(r.bookID, r.text)
-			}
-			return opDoneMsg{op: opPrivateNote, seq: r.token, bookID: r.bookID, privateNote: r.text, err: err, info: "Private note saved on this device"}
-		}), true
+		return m.run(savePrivateNoteCmd(m.backend, r.bookID, r.token, r.text)), true
 	case reqJournal:
 		if m.isLoading() {
 			return m.refuse(opJournal, r.token), true
 		}
-		if m.app == nil || !m.app.Online() {
+		if !m.backend.Online() {
+			// The modal is drawn over the status bar, so the refusal goes to
+			// it as its own failed result rather than as a toast; it is not
+			// work, so it is not counted.
 			return request(opDoneMsg{op: opJournal, seq: r.token, err: app.ErrOffline}), true
 		}
-		return m.beginLoading(func() tea.Msg {
-			_, err := m.app.AddJournalEntry(m.ctx, r.bookID, r.event, r.text)
-			return opDoneMsg{op: opJournal, seq: r.token, err: err, info: "Saved " + r.event}
-		}), true
+		return m.run(addJournalEntryCmd(m.ctx, m.backend, r.bookID, r.token, r.event, r.text)), true
 	}
 	return nil, false
 }

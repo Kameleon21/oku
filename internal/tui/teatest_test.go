@@ -17,22 +17,19 @@ import (
 // by the synchronous goldens, which have no goroutines to race.
 func TestDashboardRunsInAProgram(t *testing.T) {
 	d := demoData(fixedNow)
-	// No app: the loads report their own errors, and the messages below are
-	// what a real load would have delivered.
-	m := New(context.Background(), nil, DensityDefault, "test")
+	// The demo library behind a fake backend: Init's loads run for real,
+	// through the runner, and land as they would over the store.
+	fb := newFakeBackend()
+	fb.add(d.reading...)
+	fb.add(d.oku...)
+	fb.add(d.shelf[311])
+	fb.stats, fb.sessions = d.stats, d.sessions
+	fb.timer = &model.TimerState{BookID: 101, StartedAt: fixedNow.Add(-90 * time.Second)}
+	fb.lastSync = fixedNow.Add(-2 * time.Minute)
+	m := newModel(context.Background(), fb, DensityDefault, "test")
 	m.shared.now = func() time.Time { return fixedNow }
 
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(120, 40))
-
-	tm.Send(libraryLoadedMsg{reading: d.reading, oku: d.oku})
-	tm.Send(localDataLoadedMsg{
-		readingStats:   d.stats,
-		recentSessions: d.sessions,
-		shelf:          d.shelf,
-		timerState:     &model.TimerState{BookID: 101, StartedAt: fixedNow.Add(-90 * time.Second)},
-		timerBook:      &d.reading[0].Book,
-		lastSyncAt:     fixedNow.Add(-2 * time.Minute),
-	})
 
 	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
 		return bytes.Contains(b, []byte("Reading (")) && bytes.Contains(b, []byte("The Communist Manifesto"))

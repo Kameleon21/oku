@@ -94,7 +94,7 @@ func TestPrivateNoteSavesWithoutHardcover(t *testing.T) {
 	}
 	defer db.Close()
 	m := finishedModel(t, 80, 24)
-	m.app = app.New(nil, db, config.Config{}) // No API client: saving must remain fully local.
+	m.backend = app.New(nil, db, config.Config{}) // No API client: saving must remain fully local.
 	send(t, m, runeKey('n'))
 	n := m.topModal().(*journalModal)
 	n.text.SetValue("My private thoughts")
@@ -109,11 +109,11 @@ func TestPrivateNoteSavesWithoutHardcover(t *testing.T) {
 	if !handled || work == nil {
 		t.Fatal("private save request was not handled")
 	}
-	done, ok := work().(opDoneMsg)
+	done, ok := work().(resultMsg).msg.(opDoneMsg)
 	if !ok || done.err != nil || done.op != opPrivateNote {
 		t.Fatalf("save result: %+v", done)
 	}
-	m.Update(done)
+	m.Update(resultMsg{done})
 	notes, err := db.ListPrivateNotes()
 	if err != nil || notes[req.bookID] != req.text {
 		t.Fatalf("persisted notes: %v, %v", notes, err)

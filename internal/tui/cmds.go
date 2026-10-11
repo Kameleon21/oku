@@ -29,7 +29,10 @@ type libraryLoadedMsg struct {
 	// reconcile marks the background reconcile's own result: only that one
 	// may clear dirty, since any other load can land while it is in flight.
 	reconcile bool
-	err       error
+	// quiet marks a load started by a warned write (see quietly): its
+	// failure leaves the warning up rather than replacing it.
+	quiet bool
+	err   error
 }
 
 type searchLoadedMsg struct {
@@ -93,6 +96,8 @@ type localDataLoadedMsg struct {
 	// shelf is every cached user book by book id: what the search detail
 	// reads to say a result is already in the library.
 	shelf map[int]model.UserBook
+	// quiet marks a load started by a warned write (see quietly).
+	quiet bool
 	err   error
 }
 
@@ -104,11 +109,8 @@ type timerOpDoneMsg struct {
 
 // ── Tea Commands ───────────────────────────────────────────────────────────
 
-func loadCachedLibraryCmd(a *app.App) tea.Cmd {
+func loadCachedLibraryCmd(a backend) tea.Cmd {
 	return func() tea.Msg {
-		if a == nil {
-			return libraryLoadedMsg{err: fmt.Errorf("dashboard app is not initialized")}
-		}
 		reading, readingStale, err := a.ListCachedBooks(model.StatusCurrentlyReading)
 		if err != nil {
 			return libraryLoadedMsg{err: err}
@@ -133,11 +135,8 @@ func loadCachedLibraryCmd(a *app.App) tea.Cmd {
 	}
 }
 
-func loadLibraryCmd(ctx context.Context, a *app.App, refresh bool) tea.Cmd {
+func loadLibraryCmd(ctx context.Context, a backend, refresh bool) tea.Cmd {
 	return func() tea.Msg {
-		if a == nil {
-			return libraryLoadedMsg{err: fmt.Errorf("dashboard app is not initialized")}
-		}
 		reading, err := a.ListBooks(ctx, model.StatusCurrentlyReading, refresh)
 		if err != nil {
 			return libraryLoadedMsg{err: err}
@@ -164,7 +163,7 @@ func loadLibraryCmd(ctx context.Context, a *app.App, refresh bool) tea.Cmd {
 // reconcileLibraryCmd is the background reconcile's refresh: it stamps its
 // result so that a library load started by something else cannot be mistaken
 // for the reconcile finishing.
-func reconcileLibraryCmd(ctx context.Context, a *app.App) tea.Cmd {
+func reconcileLibraryCmd(ctx context.Context, a backend) tea.Cmd {
 	refresh := loadLibraryCmd(ctx, a, true)
 	return func() tea.Msg {
 		msg := refresh()
@@ -176,17 +175,34 @@ func reconcileLibraryCmd(ctx context.Context, a *app.App) tea.Cmd {
 	}
 }
 
+// quietly marks a load started by a write that reached Hardcover but could
+// not refresh the cache: the cache may still be broken, so the load's own
+// failure leaves the warning that already says to sync, and its undo, up
+// instead of replacing them with an error toast. Only the marked load is
+// quiet; an unrelated load failing meanwhile still reports itself.
+func quietly(cmd tea.Cmd) tea.Cmd {
+	return func() tea.Msg {
+		switch msg := cmd().(type) {
+		case libraryLoadedMsg:
+			msg.quiet = true
+			return msg
+		case localDataLoadedMsg:
+			msg.quiet = true
+			return msg
+		default:
+			return msg
+		}
+	}
+}
+
 // recentSessionsLimit is how much timer history a local load brings in: the
 // Timer pane shows five, the rest is there for a per-book view.
 const recentSessionsLimit = 50
 
 // loadLocalDataCmd reads everything the dashboard shows from the local
 // store. now is the clock the demo data is built around.
-func loadLocalDataCmd(a *app.App, now func() time.Time) tea.Cmd {
+func loadLocalDataCmd(a backend, now func() time.Time) tea.Cmd {
 	return func() tea.Msg {
-		if a == nil {
-			return localDataLoadedMsg{err: fmt.Errorf("app not initialized")}
-		}
 		stats, err := a.GetReadingStats()
 		if err != nil {
 			return localDataLoadedMsg{err: err}
@@ -245,10 +261,7 @@ func loadLocalDataCmd(a *app.App, now func() time.Time) tea.Cmd {
 
 // saveRecentSearchesCmd persists the search history off the update loop. It is
 // best effort: a failing write must not interrupt a search.
-func saveRecentSearchesCmd(a *app.App, queries []string) tea.Cmd {
-	if a == nil {
-		return nil
-	}
+func saveRecentSearchesCmd(a backend, queries []string) tea.Cmd {
 	snapshot := append([]string(nil), queries...)
 	return func() tea.Msg {
 		if raw, err := encodeRecentSearches(snapshot); err == nil {
@@ -258,7 +271,7 @@ func saveRecentSearchesCmd(a *app.App, queries []string) tea.Cmd {
 	}
 }
 
-func searchCmd(ctx context.Context, a *app.App, query string, mode model.SearchMode, seq int) tea.Cmd {
+func searchCmd(ctx context.Context, a backend, query string, mode model.SearchMode, seq int) tea.Cmd {
 	return func() tea.Msg {
 		results, err := a.SearchBooks(ctx, query, 10, mode)
 		return searchLoadedMsg{
@@ -273,7 +286,7 @@ func searchCmd(ctx context.Context, a *app.App, query string, mode model.SearchM
 
 // updateProgressCmd sets a book's page. prevPage is where the book stood, so
 // the result can offer to put it back.
-func updateProgressCmd(ctx context.Context, a *app.App, bookID int, title string, prevPage int, rawPage string) tea.Cmd {
+func updateProgressCmd(ctx context.Context, a backend, bookID int, title string, prevPage int, rawPage string) tea.Cmd {
 	return func() tea.Msg {
 		p, err := model.ParsePage(rawPage)
 		if err != nil {
@@ -293,7 +306,7 @@ func updateProgressCmd(ctx context.Context, a *app.App, bookID int, title string
 	}
 }
 
-func submitReviewRatingCmd(ctx context.Context, a *app.App, bookID int, rating float64, review string) tea.Cmd {
+func submitReviewRatingCmd(ctx context.Context, a backend, bookID int, rating float64, review string) tea.Cmd {
 	return func() tea.Msg {
 		err := a.ReviewBook(ctx, bookID, rating, review)
 		info := fmt.Sprintf("Updated review and rating (%s)", model.StarString(rating))
@@ -350,7 +363,7 @@ func reviewSavePendingMessage(review string) string {
 
 // quickProgressCmd moves a book's page by delta. prevPage is where the book
 // stood, so the result can offer to put it back.
-func quickProgressCmd(ctx context.Context, a *app.App, bookID int, title string, prevPage, delta int) tea.Cmd {
+func quickProgressCmd(ctx context.Context, a backend, bookID int, title string, prevPage, delta int) tea.Cmd {
 	return func() tea.Msg {
 		if delta == 0 {
 			return opDoneMsg{op: opProgress}
@@ -378,7 +391,7 @@ func quickProgressCmd(ctx context.Context, a *app.App, bookID int, title string,
 
 // changeStatusCmd moves a book from one shelf to another. Both are reported
 // so the result can offer to move it back.
-func changeStatusCmd(ctx context.Context, a *app.App, bookID int, title string, from, to model.Status) tea.Cmd {
+func changeStatusCmd(ctx context.Context, a backend, bookID int, title string, from, to model.Status) tea.Cmd {
 	return func() tea.Msg {
 		err := a.ChangeStatus(ctx, bookID, to)
 		return writeDone(err, opDoneMsg{
@@ -394,7 +407,7 @@ func changeStatusCmd(ctx context.Context, a *app.App, bookID int, title string, 
 	}
 }
 
-func addFromSearchCmd(ctx context.Context, a *app.App, bookID int, status model.Status) tea.Cmd {
+func addFromSearchCmd(ctx context.Context, a backend, bookID int, status model.Status) tea.Cmd {
 	return func() tea.Msg {
 		err := a.ChangeStatus(ctx, bookID, status)
 		return writeDone(err, opDoneMsg{
@@ -406,7 +419,74 @@ func addFromSearchCmd(ctx context.Context, a *app.App, bookID int, status model.
 	}
 }
 
-func syncAllAndReloadCmd(ctx context.Context, a *app.App) tea.Cmd {
+// bookDetailCmd fetches the rich detail of one book, and bookJournalCmd the
+// reader's own notes and quotes on it; both land in the detail pane.
+func bookDetailCmd(ctx context.Context, a backend, id int) tea.Cmd {
+	return func() tea.Msg {
+		b, err := a.GetBookDetail(ctx, id, false)
+		return detailLoadedMsg{id, b, err}
+	}
+}
+
+func bookJournalCmd(ctx context.Context, a backend, id int) tea.Cmd {
+	return func() tea.Msg {
+		entries, err := a.BookJournal(ctx, id)
+		return journalLoadedMsg{id, entries, err}
+	}
+}
+
+// pausedShelfCmd refreshes the paused shelf from Hardcover.
+func pausedShelfCmd(ctx context.Context, a backend) tea.Cmd {
+	return func() tea.Msg {
+		books, err := a.ListBooks(ctx, model.StatusPaused, true)
+		return pausedLoadedMsg{books, err}
+	}
+}
+
+// queueMoveCmd moves a book up or down the reading queue; queueRefreshCmd
+// fetches the queue as Hardcover has it.
+func queueMoveCmd(ctx context.Context, a backend, bookID, delta int) tea.Cmd {
+	return func() tea.Msg {
+		ids, err := a.MoveQueueBook(ctx, bookID, delta)
+		return queueLoadedMsg{ids, bookID, err}
+	}
+}
+
+func queueRefreshCmd(ctx context.Context, a backend) tea.Cmd {
+	return func() tea.Msg {
+		ids, err := a.RefreshQueue(ctx)
+		return queueLoadedMsg{ids: ids, err: err}
+	}
+}
+
+// trendingCmd fetches this week's trending books as a search result, stamped
+// with the search section's seq like any other.
+func trendingCmd(ctx context.Context, a backend, seq int) tea.Cmd {
+	return func() tea.Msg {
+		books, err := a.TrendingBooks(ctx, "week", 20, false)
+		return searchLoadedMsg{results: books, query: "Trending this week", mode: model.SearchModeBook, seq: seq, err: err}
+	}
+}
+
+// savePrivateNoteCmd keeps a note on this device; token marks the result as
+// the note modal's own.
+func savePrivateNoteCmd(a backend, bookID, token int, text string) tea.Cmd {
+	return func() tea.Msg {
+		err := a.SavePrivateNote(bookID, text)
+		return opDoneMsg{op: opPrivateNote, seq: token, bookID: bookID, privateNote: text, err: err, info: "Private note saved on this device"}
+	}
+}
+
+// addJournalEntryCmd posts a note or a quote to the book's journal on
+// Hardcover; token marks the result as the journal modal's own.
+func addJournalEntryCmd(ctx context.Context, a backend, bookID, token int, event, text string) tea.Cmd {
+	return func() tea.Msg {
+		_, err := a.AddJournalEntry(ctx, bookID, event, text)
+		return opDoneMsg{op: opJournal, seq: token, err: err, info: "Saved " + event}
+	}
+}
+
+func syncAllAndReloadCmd(ctx context.Context, a backend) tea.Cmd {
 	return func() tea.Msg {
 		if err := a.SyncAll(ctx); err != nil {
 			return opDoneMsg{op: opSync, err: err}
@@ -431,11 +511,8 @@ func timerTickCmd() tea.Cmd {
 	})
 }
 
-func startTimerForBookCmd(a *app.App, bookID int) tea.Cmd {
+func startTimerForBookCmd(a backend, bookID int) tea.Cmd {
 	return func() tea.Msg {
-		if a == nil {
-			return timerOpDoneMsg{err: fmt.Errorf("app not initialized")}
-		}
 		if bookID <= 0 {
 			return timerOpDoneMsg{err: fmt.Errorf("invalid book selection")}
 		}
@@ -454,11 +531,8 @@ func startTimerForBookCmd(a *app.App, bookID int) tea.Cmd {
 	}
 }
 
-func stopTimerCmd(a *app.App) tea.Cmd {
+func stopTimerCmd(a backend) tea.Cmd {
 	return func() tea.Msg {
-		if a == nil {
-			return timerOpDoneMsg{err: fmt.Errorf("app not initialized")}
-		}
 		session, err := a.TimerStop()
 		if err != nil {
 			return timerOpDoneMsg{err: err}

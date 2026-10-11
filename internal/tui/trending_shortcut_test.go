@@ -61,30 +61,16 @@ func TestTrendingFailureClearsLoadingAndKeepsPreviousResults(t *testing.T) {
 	s.focusInput()
 	s.input.SetValue("new draft")
 	req := s.handleKey(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})().(reqTrending)
-	cmd, _ := m.handleReaderRequest(req) // No API configured: exercise the real error command.
-	var deliver func(tea.Cmd) bool
-	deliver = func(cmd tea.Cmd) bool {
-		if cmd == nil {
-			return false
-		}
-		switch msg := cmd().(type) {
-		case tea.BatchMsg:
-			for _, child := range msg {
-				if deliver(child) {
-					return true
-				}
-			}
-		case searchLoadedMsg:
-			if msg.err == nil {
-				t.Fatal("expected missing API error")
-			}
-			send(t, m, msg)
-			return true
-		}
-		return false
+	cmd, _ := m.handleReaderRequest(req) // No Hardcover behind the fake: exercise the real error command.
+	if cmd == nil {
+		t.Fatal("the request should start the fetch")
 	}
-	if !deliver(cmd) {
-		t.Fatal("error did not produce a search result message")
+	drain(t, m, cmd)
+	if !fakeOf(m).called("TrendingBooks") {
+		t.Fatal("the fetch should have reached the backend")
+	}
+	if m.toast.level != toastError || m.toast.text != "Hardcover is unavailable" {
+		t.Fatalf("toast = %+v, want the offline failure reported", m.toast)
 	}
 	if s.loading || m.isLoading() || s.input.Value() != "new draft" || s.lastQuery != "previous" || len(s.results) != 1 || s.results[0].ID != 8 {
 		t.Fatal("failure left spinner running or erased previous state")

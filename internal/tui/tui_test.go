@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"image/color"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -32,8 +33,8 @@ func openReview(m *Model, book model.UserBook) *reviewModal {
 	return m.topModal().(*reviewModal)
 }
 
-func TestLoadLibraryCmdWithNilAppReturnsError(t *testing.T) {
-	cmd := loadLibraryCmd(context.Background(), nil, false)
+func TestLoadLibraryCmdWithNoBackendReturnsError(t *testing.T) {
+	cmd := loadLibraryCmd(context.Background(), noBackend{}, false)
 	if cmd == nil {
 		t.Fatal("loadLibraryCmd() returned nil cmd")
 	}
@@ -44,12 +45,12 @@ func TestLoadLibraryCmdWithNilAppReturnsError(t *testing.T) {
 		t.Fatalf("loadLibraryCmd() msg type = %T, want libraryLoadedMsg", msg)
 	}
 	if loaded.err == nil {
-		t.Fatal("expected libraryLoadedMsg error for nil app")
+		t.Fatal("expected libraryLoadedMsg error without a backend")
 	}
 }
 
-func TestLoadCachedLibraryCmdWithNilAppReturnsError(t *testing.T) {
-	cmd := loadCachedLibraryCmd(nil)
+func TestLoadCachedLibraryCmdWithNoBackendReturnsError(t *testing.T) {
+	cmd := loadCachedLibraryCmd(noBackend{})
 	if cmd == nil {
 		t.Fatal("loadCachedLibraryCmd() returned nil cmd")
 	}
@@ -60,7 +61,7 @@ func TestLoadCachedLibraryCmdWithNilAppReturnsError(t *testing.T) {
 		t.Fatalf("loadCachedLibraryCmd() msg type = %T, want libraryLoadedMsg", msg)
 	}
 	if loaded.err == nil {
-		t.Fatal("expected libraryLoadedMsg error for nil app")
+		t.Fatal("expected libraryLoadedMsg error without a backend")
 	}
 }
 
@@ -157,7 +158,7 @@ func TestSearchLoadedMsgTransitionsToResults(t *testing.T) {
 	searchOf(m).focusInput()
 	searchOf(m).queryMode = model.SearchModeAuthor
 
-	send(t, m, searchLoadedMsg{
+	finish(t, m, searchLoadedMsg{
 		results: []model.SearchResult{{ID: 1, Title: "Dune"}},
 		query:   "dune",
 		mode:    model.SearchModeAuthor,
@@ -363,7 +364,7 @@ func TestAsyncResultsAreAppliedInEveryMode(t *testing.T) {
 			tt.open(m)
 			top := m.topModal()
 
-			send(t, m, searchLoadedMsg{
+			finish(t, m, searchLoadedMsg{
 				results: []model.SearchResult{{ID: 1, Title: "Dune"}},
 				query:   "dune",
 				mode:    model.SearchModeBook,
@@ -466,7 +467,7 @@ func TestTimerOpDoneReleasesItsSlot(t *testing.T) {
 	m.inflight = 1
 	m.push(newTimerPickerModal(m.shared, 0))
 
-	_, cmd := m.Update(timerOpDoneMsg{info: "Timer started — Dune"})
+	cmd := finish(t, m, timerOpDoneMsg{info: "Timer started — Dune"})
 
 	// The timer operation's slot is released; only the local-data reload it
 	// starts is left in flight.
@@ -483,7 +484,7 @@ func TestTimerOpDoneReleasesItsSlot(t *testing.T) {
 		t.Fatal("timer operations should reload local data")
 	}
 
-	m.Update(localDataLoadedMsg{})
+	finish(t, m, localDataLoadedMsg{})
 	if m.isLoading() {
 		t.Fatal("loading should clear once the reload lands")
 	}
@@ -503,7 +504,7 @@ func TestLocalDataClearsLoadingAndArmsTimerTick(t *testing.T) {
 		t.Fatal("timerTicking should be cleared when no timer runs")
 	}
 
-	_, cmd = m.Update(localDataLoadedMsg{
+	cmd = finish(t, m, localDataLoadedMsg{
 		timerState: &model.TimerState{BookID: 1, StartedAt: time.Now()},
 		timerBook:  &model.Book{ID: 1, Title: "Dune"},
 	})
@@ -531,10 +532,10 @@ func TestSpinnerStopsWhenNothingIsInFlight(t *testing.T) {
 	if m.spinning {
 		t.Fatal("spinning should be cleared once nothing is in flight")
 	}
-	if m.beginLoading(loadLocalDataCmd(m.app, m.shared.now)) == nil {
+	if m.run(loadLocalDataCmd(m.backend, m.shared.now)) == nil {
 		t.Fatal("starting new work should re-arm the spinner")
 	}
-	if cmd := m.beginLoading(loadLocalDataCmd(m.app, m.shared.now)); cmd == nil {
+	if cmd := m.run(loadLocalDataCmd(m.backend, m.shared.now)); cmd == nil {
 		t.Fatal("the second operation should still be batched")
 	} else if !m.spinning || m.inflight != 2 {
 		t.Fatalf("inflight = %d, spinning = %v: a second operation must be counted without a second tick loop", m.inflight, m.spinning)
@@ -543,19 +544,29 @@ func TestSpinnerStopsWhenNothingIsInFlight(t *testing.T) {
 
 func TestOverlappingLoadsKeepLoadingUntilBothFinish(t *testing.T) {
 	m := newTestModel()
-	if cmd := m.beginLoading(loadLocalDataCmd(m.app, m.shared.now), loadLibraryCmd(m.ctx, m.app, false)); cmd == nil {
-		t.Fatal("beginLoading() returned no command")
+	cmd := m.run(loadLocalDataCmd(m.backend, m.shared.now), loadLibraryCmd(m.ctx, m.backend, false))
+	if cmd == nil {
+		t.Fatal("run() returned no command")
 	}
-	if !m.isLoading() {
-		t.Fatal("two commands are in flight")
+	if m.inflight != 2 {
+		t.Fatalf("inflight = %d, want the two commands counted", m.inflight)
 	}
 
-	m.Update(localDataLoadedMsg{})
+	// The two results land one at a time, the local one first.
+	var results []tea.Cmd
+	for _, c := range cmd().(tea.BatchMsg) {
+		if reflect.ValueOf(c).Pointer() == runFn {
+			results = append(results, c)
+		}
+	}
+	if len(results) != 2 {
+		t.Fatalf("the batch holds %d runner commands, want 2", len(results))
+	}
+	m.Update(results[0]())
 	if !m.isLoading() {
 		t.Fatal("the first result must not clear loading while the second load runs")
 	}
-
-	m.Update(libraryLoadedMsg{})
+	m.Update(results[1]())
 	if m.isLoading() {
 		t.Fatal("loading should clear once every command has reported")
 	}
@@ -592,7 +603,7 @@ func TestReviewSaveFailureKeepsModalOpen(t *testing.T) {
 	review.text.SetValue("Strong first half.")
 
 	send(t, m, tea.KeyPressMsg{Mod: tea.ModCtrl, Code: 's'})
-	m.Update(opDoneMsg{op: opReview, seq: review.token, err: errors.New("save failed")})
+	finish(t, m, opDoneMsg{op: opReview, seq: review.token, err: errors.New("save failed")})
 
 	if m.isLoading() {
 		t.Fatal("a failed save should neither stay in flight nor trigger a reload")
@@ -1291,11 +1302,19 @@ func TestSearchSuggestionsComeFromHistoryOnly(t *testing.T) {
 		t.Fatalf("a fresh dashboard suggests %#v, want nothing until the user searches", got)
 	}
 
-	// A nil app must not panic on the way to the (skipped) save.
-	if cmd := m.addRecentSearchQuery("east of eden"); cmd != nil {
-		t.Fatal("addRecentSearchQuery() should not try to save without a store")
+	// The save is best effort and off the update loop: it is not counted as
+	// work, and the history is suggested before it has landed.
+	cmd := m.addRecentSearchQuery("east of eden")
+	if cmd == nil {
+		t.Fatal("addRecentSearchQuery() should write the history back")
+	}
+	if m.isLoading() {
+		t.Fatal("the history write must not count as work in flight")
 	}
 	searchOf(m).updateSuggestions()
+	if cmd(); decodeRecentSearches(fakeOf(m).history)[0] != "east of eden" {
+		t.Fatalf("stored history = %q, want the query saved", fakeOf(m).history)
+	}
 
 	got := searchOf(m).input.AvailableSuggestions()
 	if len(got) != 1 || got[0] != "east of eden" {
@@ -1565,7 +1584,7 @@ func TestConfirmationDoesNotSwallowAsyncResults(t *testing.T) {
 	send(t, m, runeKey('x'))
 	m.inflight = 1
 
-	m.Update(libraryLoadedMsg{
+	finish(t, m, libraryLoadedMsg{
 		reading: []model.UserBook{{Book: model.Book{ID: 9, Title: "Ubik"}}},
 	})
 
@@ -2261,7 +2280,7 @@ func TestCacheRefreshFailureIsASuccessWithAWarning(t *testing.T) {
 	m := renderedDashboard(120, 40)
 	m.setTab(tabReading)
 	before := m.inflight
-	m.Update(msg)
+	_, reload := m.Update(msg)
 
 	if !m.dirty {
 		t.Fatal("the change reached Hardcover, so the library is dirty")
@@ -2284,19 +2303,61 @@ func TestCacheRefreshFailureIsASuccessWithAWarning(t *testing.T) {
 
 	// The cache is still broken, so the reload the result started fails.
 	// That must not replace the warning, nor take the undo with it.
-	m.Update(libraryLoadedMsg{err: errors.New("database is closed")})
-	m.Update(localDataLoadedMsg{err: errors.New("database is closed")})
+	fb := fakeOf(m)
+	fb.errs["ListBooks"] = errors.New("database is closed")
+	fb.errs["GetReadingStats"] = errors.New("database is closed")
+	drain(t, m, reload)
+	if !fb.called("ListBooks") || !fb.called("GetReadingStats") {
+		t.Fatalf("calls = %v, want both reloads attempted", fb.calls)
+	}
 	if m.toast.level != toastWarn || m.undo == nil {
 		t.Fatalf("toast = %+v, undo = %+v; want the warning and its undo still up", m.toast, m.undo)
 	}
 	if bar := stripANSI(m.footer(m.lay)); !strings.Contains(bar, "press s to sync") || !strings.Contains(bar, "U undo") {
 		t.Fatalf("status bar = %q, want the warning and the undo hint", bar)
 	}
+	if m.isLoading() {
+		t.Fatalf("inflight = %d after the reload failed, want 0", m.inflight)
+	}
 
 	// A later, unrelated load error toasts as it always has.
-	m.Update(libraryLoadedMsg{err: errors.New("disk full")})
+	finish(t, m, libraryLoadedMsg{err: errors.New("disk full")})
 	if m.toast.level != toastError || m.undo != nil {
 		t.Fatalf("toast = %+v, want the unrelated load error", m.toast)
+	}
+}
+
+// TestUnrelatedLoadStillToastsDuringAWarnedReload: only the reload a warned
+// write started is quiet. Another load that fails while that reload is
+// still pending reports itself, and the warned reload failing afterwards
+// does not disturb what it said.
+func TestUnrelatedLoadStillToastsDuringAWarnedReload(t *testing.T) {
+	m := renderedDashboard(120, 40)
+	m.setTab(tabReading)
+	_, reload := m.Update(writeDone(app.ErrCacheRefresh, opDoneMsg{
+		op: opStatus, info: "Status changed to Read", reload: true, markDirty: true,
+		bookID: 1, title: "Dune", prevStatus: model.StatusCurrentlyReading, newStatus: model.StatusRead,
+	}))
+	if m.inflight != 2 || m.toast.level != toastWarn {
+		t.Fatalf("inflight = %d, toast = %+v: want the warned reload pending behind the warning", m.inflight, m.toast)
+	}
+
+	// The background reconcile, say, fails first.
+	m.inflight++
+	finish(t, m, libraryLoadedMsg{reconcile: true, err: errors.New("disk full")})
+	if m.toast.level != toastError || m.toast.text != "disk full" || m.undo != nil {
+		t.Fatalf("toast = %+v, undo = %+v: want the unrelated failure reported", m.toast, m.undo)
+	}
+
+	fb := fakeOf(m)
+	fb.errs["ListBooks"] = errors.New("database is closed")
+	fb.errs["GetReadingStats"] = errors.New("database is closed")
+	drain(t, m, reload)
+	if m.toast.text != "disk full" {
+		t.Fatalf("toast = %+v, want the warned reload's own failure kept quiet", m.toast)
+	}
+	if m.isLoading() {
+		t.Fatalf("inflight = %d, want 0", m.inflight)
 	}
 }
 
