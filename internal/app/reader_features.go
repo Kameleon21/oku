@@ -23,7 +23,7 @@ func (a *App) AddJournalEntry(ctx context.Context, bookID int, event, text strin
 		return 0, fmt.Errorf("text cannot be empty")
 	}
 	// Unlike progress telemetry, personal notes must never fall back to public.
-	privacy, err := a.hc.GetAccountPrivacySetting(ctx)
+	privacy, err := a.privacy(ctx, true)
 	if err != nil {
 		return 0, fmt.Errorf("cannot determine journal privacy: %w", err)
 	}
@@ -63,7 +63,7 @@ func (a *App) SaveGoal(ctx context.Context, id int, g api.GoalInput, merge func(
 			g = merge(old, g)
 		}
 	} else {
-		privacy, err := a.hc.GetAccountPrivacySetting(ctx)
+		privacy, err := a.privacy(ctx, true)
 		if err != nil {
 			return 0, err
 		}

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -9,54 +10,17 @@ import (
 	"github.com/Kameleon21/oku/internal/model"
 )
 
-// ErrCacheRefresh reports that a write reached Hardcover but the local cache
-// could not be refreshed afterwards. The remote change stands, so callers
-// should report success and warn rather than fail. The message is user-facing:
-// the TUI renders err.Error() verbatim.
-var ErrCacheRefresh = errors.New("book updated on Hardcover but the local cache could not be refreshed; run `oku sync`")
-
 // ChangeStatus changes a book's status. If bookID is 0, uses the single active book.
 // If the book has no user_book entry yet, creates one via InsertUserBook.
 func (a *App) ChangeStatus(ctx context.Context, bookID int, status model.Status) error {
-	resolvedID, err := a.ResolveBookID(bookID)
-	if err != nil {
-		return err
+	resolvedID, ub, err := a.loadForWrite(bookID)
+	if errors.Is(err, errNotCached) {
+		return a.addToLibrary(ctx, resolvedID, status)
 	}
-	if err := a.requireOnline(); err != nil {
-		return err
-	}
-
-	ub, err := a.store.GetUserBookByBookID(resolvedID)
 	if err != nil {
 		return err
 	}
 
-	if ub == nil {
-		// Book not in user's library yet — insert it.
-		_, err := a.hc.InsertUserBook(ctx, resolvedID, int(status))
-		if err != nil {
-			return fmt.Errorf("add book to library: %w", err)
-		}
-		// The remote status change is the real event, even if a later cache
-		// step fails.
-		if statusCountsAsActivity(status) {
-			a.logLocalJournal(journalEventFinished)
-		}
-		// Refresh status cache so we get full book metadata from API.
-		syncErr := a.syncStatus(ctx, status)
-		if err := a.updateActiveBooksForStatus(resolvedID, status); err != nil {
-			return err
-		}
-		if syncErr != nil {
-			// The insert already happened remotely, so this must not read as a
-			// plain failure (a retry would add the book twice) nor as a clean
-			// success (the book is missing from the cached list).
-			return fmt.Errorf("%w: %v", ErrCacheRefresh, syncErr)
-		}
-		return nil
-	}
-
-	// Update existing user_book status.
 	if err := a.hc.UpdateUserBookStatus(ctx, ub.ID, int(status)); err != nil {
 		return fmt.Errorf("update status: %w", err)
 	}
@@ -68,10 +32,24 @@ func (a *App) ChangeStatus(ctx context.Context, bookID int, status model.Status)
 	// matching what the API now holds.
 	ub.StatusID = status
 	ub.UpdatedAt = time.Now().UTC()
-	if err := a.store.UpsertUserBook(*ub); err != nil {
-		return err
+	upsertErr := a.store.UpsertUserBook(*ub)
+	activeErr := a.updateActiveBooksForStatus(resolvedID, status)
+	return cacheRefreshed(cmp.Or(upsertErr, activeErr))
+}
+
+// addToLibrary inserts a book that is not in the user's library yet with the
+// given status, then syncs that status so the cache holds Hardcover's full
+// row.
+func (a *App) addToLibrary(ctx context.Context, bookID int, status model.Status) error {
+	if _, err := a.hc.InsertUserBook(ctx, bookID, int(status)); err != nil {
+		return fmt.Errorf("add book to library: %w", err)
 	}
-	return a.updateActiveBooksForStatus(resolvedID, status)
+	if statusCountsAsActivity(status) {
+		a.logLocalJournal(journalEventFinished)
+	}
+	syncErr := a.syncStatus(ctx, status)
+	activeErr := a.updateActiveBooksForStatus(bookID, status)
+	return cacheRefreshed(cmp.Or(syncErr, activeErr))
 }
 
 func (a *App) updateActiveBooksForStatus(bookID int, status model.Status) error {

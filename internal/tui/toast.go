@@ -82,29 +82,39 @@ func (m *Model) showUndoToast(text string, undo undoAction) tea.Cmd {
 }
 
 // toastFor reports an operation's result: its error, or its info with an
-// undo when the result says how to reverse it.
+// undo when the result says how to reverse it. A warning turns the toast into
+// a warning and follows the info, undo and all.
 func (m *Model) toastFor(msg opDoneMsg) tea.Cmd {
 	if msg.err != nil {
 		return m.showToast(toastError, msg.err.Error())
 	}
+	text := msg.info
+	var undo *undoAction
 	switch {
 	case msg.op == opStatus && msg.bookID > 0 && msg.prevStatus != 0 && msg.prevStatus != msg.newStatus:
-		return m.showUndoToast(
-			fmt.Sprintf("Moved '%s' to %s", msg.title, msg.newStatus.Label()),
-			undoAction{op: opStatus, bookID: msg.bookID, title: msg.title,
-				toStatus: msg.prevStatus, fromStatus: msg.newStatus},
-		)
+		text = fmt.Sprintf("Moved '%s' to %s", msg.title, msg.newStatus.Label())
+		undo = &undoAction{op: opStatus, bookID: msg.bookID, title: msg.title,
+			toStatus: msg.prevStatus, fromStatus: msg.newStatus}
 	case msg.op == opProgress && msg.bookID > 0 && msg.prevPage != msg.newPage:
-		return m.showUndoToast(
-			fmt.Sprintf("Page %d", msg.newPage),
-			undoAction{op: opProgress, bookID: msg.bookID, title: msg.title,
-				toPage: msg.prevPage, fromPage: msg.newPage},
-		)
+		text = fmt.Sprintf("Page %d", msg.newPage)
+		undo = &undoAction{op: opProgress, bookID: msg.bookID, title: msg.title,
+			toPage: msg.prevPage, fromPage: msg.newPage}
 	}
-	if msg.info == "" {
+	level := toastSuccess
+	if msg.warn != "" {
+		level = toastWarn
+		if text == "" {
+			text = msg.warn
+		} else {
+			text += "; " + msg.warn
+		}
+	}
+	if text == "" {
 		return nil
 	}
-	return m.showToast(toastSuccess, msg.info)
+	cmd := m.showToast(level, text)
+	m.undo = undo
+	return cmd
 }
 
 // runUndo reverses the change the current toast reports, if there is one.

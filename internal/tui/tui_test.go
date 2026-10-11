@@ -14,6 +14,7 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/Kameleon21/oku/internal/app"
 	"github.com/Kameleon21/oku/internal/model"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -2237,6 +2238,48 @@ func TestStatusChangeOffersUndoWhileTheToastIsUp(t *testing.T) {
 	before = expired.inflight
 	if cmd := send(t, expired, runeKey('U')); cmd != nil || expired.inflight != before {
 		t.Fatal("U after the toast expired must not change anything")
+	}
+}
+
+// TestCacheRefreshFailureIsASuccessWithAWarning: a status change that
+// reached Hardcover but could not refresh the cache must not read as a
+// failure, or a retry would repeat it. It reloads, marks dirty and offers
+// undo like a success, under a warning.
+func TestCacheRefreshFailureIsASuccessWithAWarning(t *testing.T) {
+	ok := opDoneMsg{
+		op: opStatus, info: "Status changed to Read", reload: true, markDirty: true,
+		bookID: 1, title: "Dune", prevStatus: model.StatusCurrentlyReading, newStatus: model.StatusRead,
+	}
+	if failed := writeDone(errors.New("rejected"), ok); failed.err == nil || failed.reload || failed.markDirty || failed.bookID != 0 {
+		t.Fatalf("plain failure = %+v, want only the error", failed)
+	}
+	msg := writeDone(fmt.Errorf("%w: database is closed", app.ErrCacheRefresh), ok)
+	if msg.err != nil || msg.warn == "" {
+		t.Fatalf("cache refresh failure = %+v, want a warning and no error", msg)
+	}
+
+	m := renderedDashboard(120, 40)
+	m.setTab(tabReading)
+	before := m.inflight
+	m.Update(msg)
+
+	if !m.dirty {
+		t.Fatal("the change reached Hardcover, so the library is dirty")
+	}
+	if m.inflight <= before {
+		t.Fatal("the result should reload the library")
+	}
+	if m.undo == nil || m.undo.toStatus != model.StatusCurrentlyReading || m.undo.fromStatus != model.StatusRead {
+		t.Fatalf("undo = %+v, want the way back to Currently Reading", m.undo)
+	}
+	if m.toast.level != toastWarn {
+		t.Fatalf("toast level = %v, want a warning", m.toast.level)
+	}
+	bar := stripANSI(m.footer(m.lay))
+	for _, want := range []string{"Moved 'Dune' to Read", "press s to sync", "U undo"} {
+		if !strings.Contains(bar, want) {
+			t.Fatalf("status bar = %q, want %q", bar, want)
+		}
 	}
 }
 

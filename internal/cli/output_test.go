@@ -2,9 +2,12 @@ package cli
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/Kameleon21/oku/internal/app"
 	"github.com/Kameleon21/oku/internal/model"
 	"github.com/charmbracelet/colorprofile"
 )
@@ -98,5 +101,40 @@ func TestOutputKeepsColourWhenItIsForced(t *testing.T) {
 	}
 	if !strings.ContainsRune(buf.String(), 0x1b) {
 		t.Fatalf("CLICOLOR_FORCE should keep the colour:\n%q", buf.String())
+	}
+}
+
+func TestFinishWrite(t *testing.T) {
+	var warned bytes.Buffer
+	prev := stderr
+	stderr = &warned
+	t.Cleanup(func() { stderr = prev })
+
+	cases := []struct {
+		name     string
+		err      error
+		wantErr  bool
+		reported bool
+		warning  string
+	}{
+		{"success", nil, false, true, ""},
+		{"plain failure", errors.New("update status: rejected"), true, false, ""},
+		{"cache refresh failure", fmt.Errorf("%w: database is closed", app.ErrCacheRefresh), false, true, "Warning: " + app.ErrCacheRefresh.Error() + ": database is closed\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			warned.Reset()
+			reported := false
+			err := finishWrite(tc.err, func() { reported = true })
+			if (err != nil) != tc.wantErr || reported != tc.reported {
+				t.Fatalf("err = %v, reported = %v; want error %v, reported %v", err, reported, tc.wantErr, tc.reported)
+			}
+			if got := warned.String(); got != tc.warning {
+				t.Fatalf("stderr = %q, want %q", got, tc.warning)
+			}
+			if tc.wantErr && !strings.Contains(err.Error(), "rejected") {
+				t.Fatalf("err = %v, want the original error", err)
+			}
+		})
 	}
 }

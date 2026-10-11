@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -627,5 +628,120 @@ func TestOfflineAppReportsBadInputFirst(t *testing.T) {
 	}
 	if ids, err := a.ImportBooks(ctx, nil, false); err != nil || len(ids) != 0 {
 		t.Errorf("empty import offline = %v, %v; want no results and no error", ids, err)
+	}
+}
+
+// TestWriteThroughFailurePolicy pins the one policy every write-through
+// mutation follows: a failure before or from the remote write is a plain
+// error that leaves the cache alone, and a local failure after a successful
+// remote write is ErrCacheRefresh.
+func TestWriteThroughFailurePolicy(t *testing.T) {
+	ctx := context.Background()
+	reading := func(t *testing.T, a *App) {
+		upsertBookWithStatus(t, a, 100, 1, model.StatusCurrentlyReading, "Dune")
+	}
+	cases := []struct {
+		name   string
+		method string
+		setup  func(t *testing.T, a *App)
+		run    func(a *App) (page int, err error)
+		// wantPage is what UpdateProgress reports; 0 for the others.
+		wantPage int
+		prefix   string
+	}{
+		{
+			name: "ChangeStatus update", method: "UpdateUserBookStatus", setup: reading,
+			run:    func(a *App) (int, error) { return 0, a.ChangeStatus(ctx, 1, model.StatusRead) },
+			prefix: "update status: ",
+		},
+		{
+			name: "ChangeStatus insert", method: "InsertUserBook", setup: func(*testing.T, *App) {},
+			run:    func(a *App) (int, error) { return 0, a.ChangeStatus(ctx, 42, model.StatusCurrentlyReading) },
+			prefix: "add book to library: ",
+		},
+		{
+			name: "UpdateProgress open read", method: "UpdateReadProgress",
+			setup: func(t *testing.T, a *App) {
+				reading(t, a)
+				if err := a.store.UpsertUserBookRead(model.UserBookRead{ID: 500, UserBookID: 100, ProgressPages: 20}); err != nil {
+					t.Fatal(err)
+				}
+			},
+			run:      func(a *App) (int, error) { return a.UpdateProgress(ctx, 1, model.PageUpdate{Absolute: 50}) },
+			wantPage: 50, prefix: "update progress: ",
+		},
+		{
+			name: "UpdateProgress new read", method: "InsertUserBookRead", setup: reading,
+			run:      func(a *App) (int, error) { return a.UpdateProgress(ctx, 1, model.PageUpdate{Absolute: 50}) },
+			wantPage: 50, prefix: "update progress: ",
+		},
+		{
+			name: "RateBook", method: "UpdateUserBookRating", setup: reading,
+			run:    func(a *App) (int, error) { return 0, a.RateBook(ctx, 1, 4.5) },
+			prefix: "update rating: ",
+		},
+		{
+			name: "ReviewBook", method: "UpdateUserBookReviewAndRating", setup: reading,
+			run:    func(a *App) (int, error) { return 0, a.ReviewBook(ctx, 1, 4, "Spice") },
+			prefix: "update review: ",
+		},
+	}
+
+	// snapshot is everything a mutation could change locally.
+	snapshot := func(t *testing.T, a *App) string {
+		t.Helper()
+		ub, err := a.store.GetUserBookByBookID(1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inserted, err := a.store.GetUserBookByBookID(42)
+		if err != nil {
+			t.Fatal(err)
+		}
+		read, err := a.store.GetLatestRead(100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids, err := a.GetActiveBookIDs()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fmt.Sprintf("%+v %+v %+v %v %d", ub, inserted, read, ids, localJournalCount(t, a))
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name+"/remote write fails", func(t *testing.T) {
+			hc := newFakeHardcover()
+			hc.errs = map[string]error{tc.method: errors.New("rejected")}
+			a := newTestAppWith(t, hc)
+			tc.setup(t, a)
+			before := snapshot(t, a)
+
+			_, err := tc.run(a)
+			if err == nil || errors.Is(err, ErrCacheRefresh) || !strings.HasPrefix(err.Error(), tc.prefix) {
+				t.Fatalf("err = %v, want a plain %q error", err, tc.prefix)
+			}
+			if after := snapshot(t, a); after != before {
+				t.Fatalf("a rejected write changed the cache:\nbefore %s\nafter  %s", before, after)
+			}
+		})
+
+		t.Run(tc.name+"/cache fails after remote write", func(t *testing.T) {
+			hc := newFakeHardcover()
+			a := newTestAppWith(t, hc)
+			tc.setup(t, a)
+			hc.afterWrite = func() { _ = a.store.Close() }
+
+			page, err := tc.run(a)
+			if !errors.Is(err, ErrCacheRefresh) {
+				t.Fatalf("err = %v, want ErrCacheRefresh", err)
+			}
+			if got := hc.called(tc.method); len(got) != 1 {
+				t.Fatalf("%s calls = %q, want the one remote write", tc.method, got)
+			}
+			if page != tc.wantPage {
+				t.Fatalf("page = %d, want %d alongside the warning", page, tc.wantPage)
+			}
+		})
 	}
 }

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -48,14 +49,66 @@ func TestStatusCountsAsActivity(t *testing.T) {
 	}
 }
 
-func TestAccountPrivacySettingIDUsesCachedValue(t *testing.T) {
+func TestLenientPrivacyPrefersCacheThenFetchesThenFallsBack(t *testing.T) {
+	// Offline, so the cached value can only come from state.
 	a := newTestApp(t)
 	if err := a.store.SetState(privacySettingKey, "3"); err != nil {
 		t.Fatalf("SetState: %v", err)
 	}
+	if got, err := a.privacy(t.Context(), false); got != 3 || err != nil {
+		t.Fatalf("privacy = %d, %v; want cached 3", got, err)
+	}
 
-	// a.hc is nil, so a lookup would fall back to public — the cached value must win.
-	if got := a.accountPrivacySettingID(t.Context()); got != 3 {
-		t.Fatalf("accountPrivacySettingID = %d, want cached 3", got)
+	hc := newFakeHardcover()
+	hc.privacy = 2
+	a = newTestAppWith(t, hc)
+	if got, err := a.privacy(t.Context(), false); got != 2 || err != nil {
+		t.Fatalf("privacy = %d, %v; want fetched 2", got, err)
+	}
+	if v, _ := a.store.GetState(privacySettingKey); v != "2" {
+		t.Fatalf("privacy cached as %q, want 2", v)
+	}
+
+	hc = newFakeHardcover()
+	hc.errs = map[string]error{"GetAccountPrivacySetting": errors.New("down")}
+	a = newTestAppWith(t, hc)
+	if got, err := a.privacy(t.Context(), false); got != privacyPublic || err != nil {
+		t.Fatalf("privacy = %d, %v; want the public fallback", got, err)
+	}
+	if v, _ := a.store.GetState(privacySettingKey); v != "" {
+		t.Fatalf("fallback cached as %q, want nothing", v)
+	}
+}
+
+func TestStrictPrivacyFetchesFreshAndNeverFallsBack(t *testing.T) {
+	hc := newFakeHardcover()
+	hc.privacy = 2
+	a := newTestAppWith(t, hc)
+	if err := a.store.SetState(privacySettingKey, "3"); err != nil {
+		t.Fatalf("SetState: %v", err)
+	}
+	if got, err := a.privacy(t.Context(), true); got != 2 || err != nil {
+		t.Fatalf("privacy = %d, %v; want fresh 2 over cached 3", got, err)
+	}
+	if v, _ := a.store.GetState(privacySettingKey); v != "2" {
+		t.Fatalf("privacy cached as %q, want refreshed 2", v)
+	}
+
+	hc.errs = map[string]error{"GetAccountPrivacySetting": errors.New("down")}
+	if got, err := a.privacy(t.Context(), true); err == nil {
+		t.Fatalf("privacy = %d, want an error rather than the cached or public value", got)
+	}
+	hc.errs = nil
+	hc.privacy = 0
+	if got, err := a.privacy(t.Context(), true); err == nil {
+		t.Fatalf("privacy = %d, want an error for an unset account setting", got)
+	}
+
+	offline := newTestApp(t)
+	if err := offline.store.SetState(privacySettingKey, "3"); err != nil {
+		t.Fatalf("SetState: %v", err)
+	}
+	if _, err := offline.privacy(t.Context(), true); !errors.Is(err, ErrOffline) {
+		t.Fatalf("err = %v, want ErrOffline", err)
 	}
 }

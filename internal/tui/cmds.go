@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -64,6 +65,10 @@ type opDoneMsg struct {
 	reload      bool
 	markDirty   bool
 	privateNote string
+
+	// warn is set when a change reached Hardcover but the local cache could
+	// not be refreshed. The result is otherwise a success.
+	warn string
 
 	// What a status change or a progress update did to which book, so the
 	// result can offer to undo it. Zero for every other operation.
@@ -275,10 +280,7 @@ func updateProgressCmd(ctx context.Context, a *app.App, bookID int, title string
 			return opDoneMsg{op: opProgress, err: err}
 		}
 		newPage, err := a.UpdateProgress(ctx, bookID, p)
-		if err != nil {
-			return opDoneMsg{op: opProgress, err: err}
-		}
-		return opDoneMsg{
+		return writeDone(err, opDoneMsg{
 			op:        opProgress,
 			info:      fmt.Sprintf("Progress updated to page %d", newPage),
 			reload:    true,
@@ -287,26 +289,43 @@ func updateProgressCmd(ctx context.Context, a *app.App, bookID int, title string
 			title:     title,
 			prevPage:  prevPage,
 			newPage:   newPage,
-		}
+		})
 	}
 }
 
 func submitReviewRatingCmd(ctx context.Context, a *app.App, bookID int, rating float64, review string) tea.Cmd {
 	return func() tea.Msg {
-		if err := a.ReviewBook(ctx, bookID, rating, review); err != nil {
-			return opDoneMsg{op: opReview, err: err}
-		}
+		err := a.ReviewBook(ctx, bookID, rating, review)
 		info := fmt.Sprintf("Updated review and rating (%s)", model.StarString(rating))
 		if strings.TrimSpace(review) == "" {
 			info = fmt.Sprintf("Updated rating (%s)", model.StarString(rating))
 		}
-		return opDoneMsg{
+		return writeDone(err, opDoneMsg{
 			op:        opReview,
 			info:      info,
 			reload:    true,
 			markDirty: true,
-		}
+		})
 	}
+}
+
+// cacheWarning is the toast's note for a change that reached Hardcover while
+// the local cache could not be refreshed.
+const cacheWarning = "press s to sync"
+
+// writeDone is the result of a write-through mutation: ok when it worked,
+// ok with a warning when only the local cache lags behind Hardcover (the
+// change stands, so it reloads, marks dirty and offers undo all the same),
+// and a plain failure otherwise.
+func writeDone(err error, ok opDoneMsg) opDoneMsg {
+	switch {
+	case err == nil:
+		return ok
+	case errors.Is(err, app.ErrCacheRefresh):
+		ok.warn = cacheWarning
+		return ok
+	}
+	return opDoneMsg{op: ok.op, err: err}
 }
 
 // stamped marks an operation's result with the modal session that started
@@ -340,14 +359,11 @@ func quickProgressCmd(ctx context.Context, a *app.App, bookID int, title string,
 			Delta:    delta,
 			Relative: true,
 		})
-		if err != nil {
-			return opDoneMsg{op: opProgress, err: err}
-		}
 		sign := ""
 		if delta > 0 {
 			sign = "+"
 		}
-		return opDoneMsg{
+		return writeDone(err, opDoneMsg{
 			op:        opProgress,
 			info:      fmt.Sprintf("Progress %s%d → page %d", sign, delta, newPage),
 			reload:    true,
@@ -356,7 +372,7 @@ func quickProgressCmd(ctx context.Context, a *app.App, bookID int, title string,
 			title:     title,
 			prevPage:  prevPage,
 			newPage:   newPage,
-		}
+		})
 	}
 }
 
@@ -364,10 +380,8 @@ func quickProgressCmd(ctx context.Context, a *app.App, bookID int, title string,
 // so the result can offer to move it back.
 func changeStatusCmd(ctx context.Context, a *app.App, bookID int, title string, from, to model.Status) tea.Cmd {
 	return func() tea.Msg {
-		if err := a.ChangeStatus(ctx, bookID, to); err != nil {
-			return opDoneMsg{op: opStatus, err: err}
-		}
-		return opDoneMsg{
+		err := a.ChangeStatus(ctx, bookID, to)
+		return writeDone(err, opDoneMsg{
 			op:         opStatus,
 			info:       fmt.Sprintf("Status changed to %s", to.Label()),
 			reload:     true,
@@ -376,21 +390,19 @@ func changeStatusCmd(ctx context.Context, a *app.App, bookID int, title string, 
 			title:      title,
 			prevStatus: from,
 			newStatus:  to,
-		}
+		})
 	}
 }
 
 func addFromSearchCmd(ctx context.Context, a *app.App, bookID int, status model.Status) tea.Cmd {
 	return func() tea.Msg {
-		if err := a.ChangeStatus(ctx, bookID, status); err != nil {
-			return opDoneMsg{op: opStatus, err: err}
-		}
-		return opDoneMsg{
+		err := a.ChangeStatus(ctx, bookID, status)
+		return writeDone(err, opDoneMsg{
 			op:        opStatus,
 			info:      fmt.Sprintf("Added to %s", status.Label()),
 			reload:    true,
 			markDirty: true,
-		}
+		})
 	}
 }
 

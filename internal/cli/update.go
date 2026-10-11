@@ -30,11 +30,9 @@ func newUpdateCmd() *cobra.Command {
 			defer a.Close()
 
 			newPage, err := a.UpdateProgress(ctx(), bookID, pageUpdate)
-			if err != nil {
-				return err
-			}
-			outPrintf("Progress updated to page %s\n", pageStyle().Render(fmt.Sprintf("%d", newPage)))
-			return nil
+			return finishWrite(err, func() {
+				outPrintf("Progress updated to page %s\n", pageStyle().Render(fmt.Sprintf("%d", newPage)))
+			})
 		},
 	}
 	cmd.Flags().StringVar(&page, "page", "", "Page number (123, +10, -5)")

@@ -15,21 +15,9 @@ func (a *App) RateBook(ctx context.Context, bookID int, rating float64) error {
 		return err
 	}
 
-	if err := a.requireOnline(); err != nil {
-		return err
-	}
-
-	resolvedID, err := a.ResolveBookID(bookID)
+	_, ub, err := a.loadForWrite(bookID)
 	if err != nil {
 		return err
-	}
-
-	ub, err := a.store.GetUserBookByBookID(resolvedID)
-	if err != nil {
-		return err
-	}
-	if ub == nil {
-		return fmt.Errorf("book ID %d not found in cache. Run: oku sync", resolvedID)
 	}
 
 	if err := a.hc.UpdateUserBookRating(ctx, ub.ID, rating); err != nil {
@@ -38,10 +26,7 @@ func (a *App) RateBook(ctx context.Context, bookID int, rating float64) error {
 
 	ub.Rating = rating
 	ub.UpdatedAt = time.Now().UTC()
-	if err := a.store.UpsertUserBook(*ub); err != nil {
-		return err
-	}
-	return nil
+	return cacheRefreshed(a.store.UpsertUserBook(*ub))
 }
 
 // ReviewBook updates both rating and review text for a book in the user's library.
@@ -50,21 +35,9 @@ func (a *App) ReviewBook(ctx context.Context, bookID int, rating float64, review
 		return err
 	}
 
-	if err := a.requireOnline(); err != nil {
-		return err
-	}
-
-	resolvedID, err := a.ResolveBookID(bookID)
+	_, ub, err := a.loadForWrite(bookID)
 	if err != nil {
 		return err
-	}
-
-	ub, err := a.store.GetUserBookByBookID(resolvedID)
-	if err != nil {
-		return err
-	}
-	if ub == nil {
-		return fmt.Errorf("book ID %d not found in cache. Run: oku sync", resolvedID)
 	}
 
 	reviewedAt := time.Now().UTC()
@@ -76,10 +49,7 @@ func (a *App) ReviewBook(ctx context.Context, bookID int, rating float64, review
 	ub.Review = review
 	ub.ReviewedAt = &reviewedAt
 	ub.UpdatedAt = reviewedAt
-	if err := a.store.UpsertUserBook(*ub); err != nil {
-		return err
-	}
-	return nil
+	return cacheRefreshed(a.store.UpsertUserBook(*ub))
 }
 
 // GetUserBookForTitle returns a single cached user book by title match.
