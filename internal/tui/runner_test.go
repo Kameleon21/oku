@@ -51,7 +51,7 @@ func loadedDashboard(t *testing.T) (*Model, *fakeBackend) {
 	if len(m.shared.reading) != 2 || len(m.shared.oku) != 1 {
 		t.Fatalf("reading = %d, oku = %d, want the fake's shelves", len(m.shared.reading), len(m.shared.oku))
 	}
-	fb.calls = nil
+	fb.calls, fb.remotes = nil, nil
 	return m, fb
 }
 

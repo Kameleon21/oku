@@ -23,7 +23,10 @@ type fakeBackend struct {
 	mu     sync.Mutex
 	online bool
 	calls  []string
-	errs   map[string]error
+	// remotes holds the calls that went to Hardcover, so a test can tell a
+	// fetch from a cached read of the same method.
+	remotes []string
+	errs    map[string]error
 
 	books map[model.Status][]model.UserBook
 	queue []int
@@ -76,8 +79,19 @@ func (f *fakeBackend) add(books ...model.UserBook) {
 func (f *fakeBackend) called(method string, args ...any) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	return matches(f.calls, method, args...)
+}
+
+// calledRemote is called for the calls that went to Hardcover.
+func (f *fakeBackend) calledRemote(method string, args ...any) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return matches(f.remotes, method, args...)
+}
+
+func matches(calls []string, method string, args ...any) bool {
 	want := strings.TrimSuffix(describe(method, args...), ")")
-	for _, c := range f.calls {
+	for _, c := range calls {
 		if strings.HasPrefix(c, want) {
 			return true
 		}
@@ -106,6 +120,7 @@ func (f *fakeBackend) remote(method string, args ...any) error {
 	if !f.online {
 		return app.ErrOffline
 	}
+	f.remotes = append(f.remotes, describe(method, args...))
 	return err
 }
 

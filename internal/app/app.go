@@ -82,7 +82,8 @@ func (a *App) SaveRecentSearches(raw string) error {
 	return a.store.SetState(recentSearchesKey, raw)
 }
 
-// ValidateToken calls GetMe to verify the token works and caches the user ID.
+// ValidateToken calls GetMe to verify the token works and records the user,
+// dropping the previous account's cache when the user has changed.
 func (a *App) ValidateToken(ctx context.Context) (int, string, error) {
 	if err := a.requireOnline(); err != nil {
 		return 0, "", err
@@ -91,8 +92,10 @@ func (a *App) ValidateToken(ctx context.Context) (int, string, error) {
 	if err != nil {
 		return 0, "", fmt.Errorf("token validation failed: %w", err)
 	}
-	_ = a.store.SetState("user_id", strconv.Itoa(id))
-	_ = a.store.SetState("username", username)
+	if err := a.rememberUser(id); err != nil {
+		return 0, "", err
+	}
+	_ = a.store.SetState(usernameKey, username)
 	return id, username, nil
 }
 

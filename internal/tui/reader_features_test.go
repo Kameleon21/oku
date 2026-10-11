@@ -71,7 +71,7 @@ func TestLaunchRefreshesEveryShelf(t *testing.T) {
 	drain(t, m, m.Init())
 
 	for _, status := range []model.Status{model.StatusCurrentlyReading, model.StatusWantToRead, model.StatusPaused} {
-		if !fb.called("CachedBooks", status) || !fb.called("ListBooks", status, true) {
+		if !fb.called("CachedBooks", status) || !fb.calledRemote("ListBooks", status, true) {
 			t.Fatalf("calls = %v, want %s read from the cache and then refreshed", fb.calls, status)
 		}
 	}
@@ -87,7 +87,7 @@ func TestOfflineLaunchSkipsTheRefresh(t *testing.T) {
 	m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	drain(t, m, m.Init())
 
-	if fb.called("ListBooks") {
+	if fb.called("ListBooks") || len(fb.remotes) != 0 {
 		t.Fatalf("calls = %v, want no refresh while offline", fb.calls)
 	}
 	if len(m.shared.reading) != 1 || m.toast.text != "" {
@@ -106,8 +106,8 @@ func TestReloadAfterWriteReadsPausedFromTheCache(t *testing.T) {
 	if !fb.called("ChangeStatus") || !fb.called("CachedBooks", model.StatusPaused) {
 		t.Fatalf("calls = %v, want the write and a reload of the paused shelf from the cache", fb.calls)
 	}
-	if fb.called("ListBooks", model.StatusPaused) {
-		t.Fatalf("calls = %v, want no paused request on the reload", fb.calls)
+	if fb.called("ListBooks", model.StatusPaused) || fb.calledRemote("ListBooks", model.StatusPaused) {
+		t.Fatalf("remote calls = %v, want no paused request on the reload", fb.remotes)
 	}
 	if len(m.shared.paused) != 1 || m.shared.paused[0].BookID != 1 {
 		t.Fatalf("paused = %v, want Dune", m.shared.paused)

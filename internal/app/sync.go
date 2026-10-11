@@ -12,6 +12,17 @@ func (a *App) SyncAll(ctx context.Context) error {
 	if err := a.requireOnline(); err != nil {
 		return err
 	}
+
+	// A full sync is where a change of account is noticed, so the previous
+	// account's books, stamps and queue do not outlive it.
+	id, _, err := a.hc.GetMe(ctx)
+	if err != nil {
+		return fmt.Errorf("sync account: %w", err)
+	}
+	if err := a.rememberUser(id); err != nil {
+		return err
+	}
+
 	for _, s := range model.AllStatuses {
 		if err := a.syncStatusOnly(ctx, s); err != nil {
 			return fmt.Errorf("sync %s: %w", s, err)
