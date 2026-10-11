@@ -188,7 +188,7 @@ func (c *Client) Trending(ctx context.Context, duration string, limit int) ([]AP
 	if len(resp.Result.IDs) == 0 {
 		return []APIBook{}, nil
 	}
-	req = graphql.NewRequest(`query($ids:[Int!]!) { books(where:{id:{_in:$ids}}) { id title slug pages rating ratings_count contributions { author { name } } } }`)
+	req = graphql.NewRequest(`query($ids:[Int!]!) { books(where:{id:{_in:$ids}}) { id title slug pages rating ratings_count contributions { author { name } } featured_book_series { series { id } } } }`)
 	req.Var("ids", resp.Result.IDs)
 	var books struct {
 		Books []APIBook `json:"books"`

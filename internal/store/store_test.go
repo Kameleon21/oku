@@ -706,3 +706,20 @@ func columnExists(t *testing.T, s *Store, table, column string) bool {
 	}
 	return false
 }
+
+func TestLibraryBookIDsCoversEveryShelf(t *testing.T) {
+	s := testStore(t)
+	for i, status := range []model.Status{model.StatusWantToRead, model.StatusRead} {
+		ub := model.UserBook{ID: i + 1, BookID: 100 + i, StatusID: status, Book: model.Book{ID: 100 + i, Title: "Book"}, UpdatedAt: time.Now()}
+		if err := s.UpsertUserBook(ub); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ids, err := s.LibraryBookIDs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 2 || !ids[100] || !ids[101] {
+		t.Fatalf("ids %v", ids)
+	}
+}

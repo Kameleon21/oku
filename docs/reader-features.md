@@ -43,11 +43,14 @@ oku book 123
 oku book 123 --refresh --json
 oku trending --week
 oku trending --period month --limit 30 --json
+oku trending --raw
 ```
 
 Book detail includes description, headline, community ratings distribution and editions count. Details are cached; `--refresh` reloads them. Dashboard **Enter** loads this information into the scrollable detail pane. Use j/k to scroll and Esc to return.
 
 In Search, press **Ctrl+D** while typing to browse this week's trending books. Your query draft is preserved. When the results have focus, **Shift+D** (uppercase D) loads trending; press **i** to return to your draft. Shift+D types a capital D while the text input is active. Existing detail and add-to-shelf keys work on discovery results. CLI periods are `week`, `month`, `three_month`, `one_year`, and `all`.
+
+Trending is curated so it stays useful when a few popular series dominate Hardcover's list: anything already in your library (including DNF and ignored books) is skipped, and each series shows only its highest-ranked book you don't have yet. Oku fetches Hardcover's top 100 to fill the list after filtering, so you may see fewer results than `--limit` asks for. Filtering uses your local cache, so run `oku sync` to keep it current. `--raw` shows Hardcover's unfiltered ranking.
 
 ## Want-to-read priority
 

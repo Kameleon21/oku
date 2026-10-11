@@ -144,10 +144,10 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		return tea.Batch(cmd, m.showToast(toastSuccess, "Reading queue saved")), true
 	case reqTrending:
 		return m.beginLoading(func() tea.Msg {
-			if m.app == nil || m.app.API == nil {
+			if m.app == nil || m.app.API == nil || m.app.Store == nil {
 				return searchLoadedMsg{seq: r.seq, err: fmt.Errorf("Hardcover is unavailable")}
 			}
-			books, err := m.app.TrendingBooks(m.ctx, "week", 20)
+			books, err := m.app.TrendingBooks(m.ctx, "week", 20, false)
 			return searchLoadedMsg{results: books, query: "Trending this week", mode: model.SearchModeBook, seq: r.seq, err: err}
 		}), true
 	case reqPrivateNote:

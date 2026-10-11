@@ -77,6 +77,15 @@ type APIBook struct {
 	CachedTags     json.RawMessage   `json:"cached_tags"`
 	Contributions  []APIContribution `json:"contributions"`
 	Image          *APIImage         `json:"image"`
+	FeaturedSeries *APIBookSeries    `json:"featured_book_series"`
+}
+
+// APIBookSeries is a book's membership in a series. FeaturedSeries is only
+// populated by queries that request featured_book_series.
+type APIBookSeries struct {
+	Series struct {
+		ID int `json:"id"`
+	} `json:"series"`
 }
 
 // APIContribution represents an author contribution to a book.
