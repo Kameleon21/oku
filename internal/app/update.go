@@ -15,8 +15,11 @@ func (a *App) UpdateProgress(ctx context.Context, bookID int, pageUpdate model.P
 	if err != nil {
 		return 0, err
 	}
+	if err := a.requireOnline(); err != nil {
+		return 0, err
+	}
 
-	ub, err := a.Store.GetUserBookByBookID(resolvedID)
+	ub, err := a.store.GetUserBookByBookID(resolvedID)
 	if err != nil {
 		return 0, err
 	}
@@ -26,7 +29,7 @@ func (a *App) UpdateProgress(ctx context.Context, bookID int, pageUpdate model.P
 
 	// Get current page from latest read.
 	currentPage := 0
-	latestRead, err := a.Store.GetLatestRead(ub.ID)
+	latestRead, err := a.store.GetLatestRead(ub.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -39,11 +42,11 @@ func (a *App) UpdateProgress(ctx context.Context, bookID int, pageUpdate model.P
 
 	// Update an existing read entry when available, otherwise create one.
 	if latestRead != nil && latestRead.ID > 0 {
-		if err := a.API.UpdateReadProgress(ctx, latestRead.ID, newPage); err != nil {
+		if err := a.hc.UpdateReadProgress(ctx, latestRead.ID, newPage); err != nil {
 			return 0, fmt.Errorf("update progress: %w", err)
 		}
 		latestRead.ProgressPages = newPage
-		if err := a.Store.UpsertUserBookRead(*latestRead); err != nil {
+		if err := a.store.UpsertUserBookRead(*latestRead); err != nil {
 			return 0, err
 		}
 		a.logLocalJournal(journalEventProgress)
@@ -51,7 +54,7 @@ func (a *App) UpdateProgress(ctx context.Context, bookID int, pageUpdate model.P
 		return newPage, nil
 	}
 
-	read, err := a.API.InsertUserBookRead(ctx, ub.ID, newPage)
+	read, err := a.hc.InsertUserBookRead(ctx, ub.ID, newPage)
 	if err != nil {
 		return 0, fmt.Errorf("update progress: %w", err)
 	}
@@ -71,7 +74,7 @@ func (a *App) UpdateProgress(ctx context.Context, bookID int, pageUpdate model.P
 			newRead.FinishedAt = &t
 		}
 	}
-	if err := a.Store.UpsertUserBookRead(newRead); err != nil {
+	if err := a.store.UpsertUserBookRead(newRead); err != nil {
 		return 0, err
 	}
 

@@ -30,7 +30,7 @@ func (a *App) TimerStart(bookID int) error {
 	if err != nil {
 		return fmt.Errorf("marshal timer state: %w", err)
 	}
-	return a.Store.SetState(activeTimerKey, string(raw))
+	return a.store.SetState(activeTimerKey, string(raw))
 }
 
 // TimerStop ends the current timer, records the session, and returns it.
@@ -53,18 +53,18 @@ func (a *App) TimerStop() (*model.ReadingSession, error) {
 
 	// Look up book title for display.
 	if state.BookID > 0 {
-		if b, err := a.Store.GetBookByID(state.BookID); err == nil && b != nil {
+		if b, err := a.store.GetBookByID(state.BookID); err == nil && b != nil {
 			session.BookTitle = b.Title
 		}
 	}
 
-	id, err := a.Store.InsertSession(session)
+	id, err := a.store.InsertSession(session)
 	if err != nil {
 		return nil, fmt.Errorf("save session: %w", err)
 	}
 	session.ID = id
 
-	if err := a.Store.DeleteState(activeTimerKey); err != nil {
+	if err := a.store.DeleteState(activeTimerKey); err != nil {
 		return nil, fmt.Errorf("clear timer state: %w", err)
 	}
 
@@ -73,7 +73,7 @@ func (a *App) TimerStop() (*model.ReadingSession, error) {
 
 // TimerStatus returns the current timer state, or nil if no timer is running.
 func (a *App) TimerStatus() (*model.TimerState, error) {
-	raw, err := a.Store.GetState(activeTimerKey)
+	raw, err := a.store.GetState(activeTimerKey)
 	if err != nil {
 		return nil, err
 	}
@@ -100,12 +100,12 @@ func (a *App) TimerStats(weeks int) (model.WeeklyStats, error) {
 	startOfWeek := time.Date(now.Year(), now.Month(), now.Day()-weekday, 0, 0, 0, 0, now.Location())
 	from := startOfWeek.AddDate(0, 0, -(weeks-1)*7)
 
-	return a.Store.GetWeeklyStats(from, now)
+	return a.store.GetWeeklyStats(from, now)
 }
 
 // TimerList returns the most recent reading sessions.
 func (a *App) TimerList(limit int) ([]model.ReadingSession, error) {
-	return a.Store.ListSessions(limit)
+	return a.store.ListSessions(limit)
 }
 
 // GetHeatmap returns daily activity data for the given number of weeks,
@@ -117,11 +117,11 @@ func (a *App) GetHeatmap(weeks int) ([]model.DayActivity, error) {
 	}
 	now := time.Now()
 	from := now.AddDate(0, 0, -weeks*7)
-	acts, err := a.Store.GetDailyActivity(from, now)
+	acts, err := a.store.GetDailyActivity(from, now)
 	if err != nil {
 		return nil, err
 	}
-	days, err := a.Store.GetJournalDays(from, now)
+	days, err := a.store.GetJournalDays(from, now)
 	if err != nil {
 		return nil, err
 	}

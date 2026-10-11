@@ -1,24 +1,17 @@
 package app
 
 import (
-	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/Kameleon21/oku/internal/model"
-	"github.com/Kameleon21/oku/internal/store"
 )
 
+// newTestApp returns an offline App over a fresh store.
 func newTestApp(t *testing.T) *App {
 	t.Helper()
-	dir := t.TempDir()
-	s, err := store.New(filepath.Join(dir, "test.db"))
-	if err != nil {
-		t.Fatalf("store.New: %v", err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
-	return &App{Store: s}
+	return newTestAppWith(t, nil)
 }
 
 func upsertReadingBook(t *testing.T, a *App, userBookID, bookID int, title string) {
@@ -35,14 +28,14 @@ func upsertReadingBook(t *testing.T, a *App, userBookID, bookID int, title strin
 		},
 		UpdatedAt: time.Now(),
 	}
-	if err := a.Store.UpsertUserBook(ub); err != nil {
+	if err := a.store.UpsertUserBook(ub); err != nil {
 		t.Fatalf("UpsertUserBook: %v", err)
 	}
 }
 
 func TestGetActiveBookIDsMigratesLegacyState(t *testing.T) {
 	a := newTestApp(t)
-	if err := a.Store.SetState(activeBookIDKey, "42"); err != nil {
+	if err := a.store.SetState(activeBookIDKey, "42"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -54,7 +47,7 @@ func TestGetActiveBookIDsMigratesLegacyState(t *testing.T) {
 		t.Fatalf("GetActiveBookIDs() = %v, want [42]", ids)
 	}
 
-	raw, err := a.Store.GetState(activeBookIDsKey)
+	raw, err := a.store.GetState(activeBookIDsKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +55,7 @@ func TestGetActiveBookIDsMigratesLegacyState(t *testing.T) {
 		t.Fatalf("active_book_ids = %q, want [42]", raw)
 	}
 
-	legacy, err := a.Store.GetState(activeBookIDKey)
+	legacy, err := a.store.GetState(activeBookIDKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +66,7 @@ func TestGetActiveBookIDsMigratesLegacyState(t *testing.T) {
 
 func TestRemovedBookDoesNotResurrectFromLegacyState(t *testing.T) {
 	a := newTestApp(t)
-	if err := a.Store.SetState(activeBookIDKey, "42"); err != nil {
+	if err := a.store.SetState(activeBookIDKey, "42"); err != nil {
 		t.Fatal(err)
 	}
 

@@ -22,7 +22,7 @@ func TestListCachedBooksReportsRefreshState(t *testing.T) {
 		t.Fatal("cache without sync state should need refresh")
 	}
 
-	if err := a.Store.SetState(
+	if err := a.store.SetState(
 		syncStateKey(model.StatusCurrentlyReading),
 		time.Now().UTC().Format(time.RFC3339),
 	); err != nil {

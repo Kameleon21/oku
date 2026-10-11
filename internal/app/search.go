@@ -9,13 +9,16 @@ import (
 // SearchBooks queries the Hardcover API for books matching the query and mode.
 // Search always hits the API (not cache) since it uses Typesense.
 func (a *App) SearchBooks(ctx context.Context, query string, limit int, mode model.SearchMode) ([]model.SearchResult, error) {
+	if err := a.requireOnline(); err != nil {
+		return nil, err
+	}
 	if limit <= 0 {
 		limit = 10
 	}
 	if mode == "" {
 		mode = model.SearchModeBook
 	}
-	results, err := a.API.SearchBooks(ctx, query, limit, mode)
+	results, err := a.hc.SearchBooks(ctx, query, limit, mode)
 	if err != nil {
 		return nil, err
 	}
@@ -31,7 +34,7 @@ func (a *App) SearchBooks(ctx context.Context, query string, limit int, mode mod
 	}
 
 	// Enrich search hits with ratings/engagement metadata when available.
-	byID, err := a.API.GetBookRatingsByIDs(ctx, ids)
+	byID, err := a.hc.GetBookRatingsByIDs(ctx, ids)
 	if err != nil {
 		// Keep search usable even if enrichment query fails.
 		return results, nil

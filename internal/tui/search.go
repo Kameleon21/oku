@@ -15,12 +15,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// recentSearchesKey is the store state key the search history is kept under,
-// and maxRecentSearches caps how much of it is remembered.
-const (
-	recentSearchesKey = "recent_searches"
-	maxRecentSearches = 10
-)
+// maxRecentSearches caps how much search history is remembered.
+const maxRecentSearches = 10
 
 // searchFocus is where the keyboard is on the Search tab. There are two
 // states and no modes: either the input has it and every key is a

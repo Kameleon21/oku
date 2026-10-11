@@ -20,12 +20,12 @@ func TestLastSyncAtIsTheNewestStatusStamp(t *testing.T) {
 		model.StatusCurrentlyReading: older,
 		model.StatusWantToRead:       newer,
 	} {
-		if err := a.Store.SetState(syncStateKey(status), at.Format(time.RFC3339)); err != nil {
+		if err := a.store.SetState(syncStateKey(status), at.Format(time.RFC3339)); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// A stamp that does not parse is skipped, not fatal.
-	if err := a.Store.SetState(syncStateKey(model.StatusRead), "not a time"); err != nil {
+	if err := a.store.SetState(syncStateKey(model.StatusRead), "not a time"); err != nil {
 		t.Fatal(err)
 	}
 

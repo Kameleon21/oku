@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
-	"encoding/json"
-	"io"
-	"net/http"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -82,41 +80,23 @@ func TestQueueCacheRoundTrip(t *testing.T) {
 	}
 }
 
-type transferTransport func(*http.Request) (*http.Response, error)
+// mutatingCalls are the fake's write methods; a preview must issue none.
+var mutatingCalls = []string{"InsertUserBook", "UpdateUserBookStatus", "UpdateUserBookRating", "UpdateUserBookReviewAndRating", "ImportReads", "CreateJournalEntry", "QueueBooks", "SetQueuePositions", "SaveGoal"}
 
-func (f transferTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-func installTransferAPI(t *testing.T, a *App, respond func(string) string) {
+func assertNoMutations(t *testing.T, hc *fakeHardcover) {
 	t.Helper()
-	original := http.DefaultTransport
-	http.DefaultTransport = transferTransport(func(r *http.Request) (*http.Response, error) {
-		var body struct {
-			Query string `json:"query"`
+	for _, m := range mutatingCalls {
+		if got := hc.called(m); len(got) > 0 {
+			t.Fatalf("issued mutation %v", got)
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(respond(body.Query))), Request: r}, nil
-	})
-	a.API = api.NewClient("test-token")
-	http.DefaultTransport = original
+	}
 }
+
 func TestImportPreviewNeverMutatesAndSkipsExistingDuplicates(t *testing.T) {
-	a := newTestApp(t)
-	installTransferAPI(t, a, func(q string) string {
-		if strings.Contains(q, "mutation") {
-			t.Fatal("preview issued mutation")
-		}
-		switch {
-		case strings.Contains(q, "me {"):
-			return `{"data":{"me":[{"id":1}]}}`
-		case strings.Contains(q, "user_books("):
-			return `{"data":{"user_books":[{"id":5,"book":{"id":9}}]}}`
-		case strings.Contains(q, "books_by_pk"):
-			return `{"data":{"books_by_pk":{"id":10,"title":"New"}}}`
-		}
-		t.Fatal(q)
-		return ""
-	})
+	hc := newFakeHardcover()
+	hc.library = []api.APIUserBook{{ID: 5, Book: api.APIBook{ID: 9}}}
+	hc.details = map[int]*api.BookDetail{10: {APIBook: api.APIBook{ID: 10, Title: "New"}}}
+	a := newTestAppWith(t, hc)
 	rows := []TransferBook{{BookID: 9, Status: "reading"}, {BookID: 10, Status: "oku"}, {BookID: 10, Status: "oku"}, {Title: "No ISBN", Status: "finished"}}
 	result, err := a.ImportBooks(context.Background(), rows, false)
 	if err != nil {
@@ -128,43 +108,32 @@ func TestImportPreviewNeverMutatesAndSkipsExistingDuplicates(t *testing.T) {
 			t.Errorf("row %d: %#v", i, r)
 		}
 	}
+	if result[1].Title != "New" {
+		t.Errorf("added row title = %q, want Hardcover's %q", result[1].Title, "New")
+	}
+	assertNoMutations(t, hc)
 }
 func TestImportReportsPartialAndStopsAfterMetadataFailure(t *testing.T) {
-	a := newTestApp(t)
-	inserts := 0
-	installTransferAPI(t, a, func(q string) string {
-		switch {
-		case strings.Contains(q, "me {"):
-			return `{"data":{"me":[{"id":1}]}}`
-		case strings.Contains(q, "query") && strings.Contains(q, "user_books("):
-			return `{"data":{"user_books":[]}}`
-		case strings.Contains(q, "books_by_pk"):
-			return `{"data":{"books_by_pk":{"id":10,"title":"New"}}}`
-		case strings.Contains(q, "insert_user_book("):
-			inserts++
-			return `{"data":{"insert_user_book":{"id":100,"user_book":{"id":100}}}}`
-		case strings.Contains(q, "update_user_book("):
-			return `{"data":{"update_user_book":{"id":null,"error":"rating refused"}}}`
-		}
-		t.Fatal(q)
-		return ""
-	})
+	hc := newFakeHardcover()
+	hc.errs = map[string]error{"UpdateUserBookRating": errors.New("rating refused")}
+	a := newTestAppWith(t, hc)
 	result, err := a.ImportBooks(context.Background(), []TransferBook{{BookID: 10, Status: "reading", Rating: 4}, {BookID: 11, Status: "oku"}}, true)
-	if err == nil || inserts != 1 || result[0].Action != "partial" {
+	inserts := len(hc.called("InsertUserBook"))
+	if err == nil || inserts != 1 || result[0].Action != "partial" || result[1].Action != "not_attempted" {
 		t.Fatalf("result %#v inserts %d err %v", result, inserts, err)
+	}
+	if got := hc.called("ListUserBooks"); len(got) != 0 {
+		t.Fatalf("synced after a stopped import: %v", got)
 	}
 }
 func TestPersonalJournalDoesNotFallBackToPublic(t *testing.T) {
-	a := newTestApp(t)
-	installTransferAPI(t, a, func(q string) string {
-		if strings.Contains(q, "mutation") {
-			t.Fatal("saved without knowing privacy")
-		}
-		return `{"data":{"me":[{"id":1,"account_privacy_setting_id":null}]}}`
-	})
+	hc := newFakeHardcover()
+	hc.errs = map[string]error{"GetAccountPrivacySetting": errors.New("account privacy setting missing")}
+	a := newTestAppWith(t, hc)
 	if _, err := a.AddJournalEntry(context.Background(), 1, "note", "Private thought"); err == nil {
 		t.Fatal("expected privacy lookup error")
 	}
+	assertNoMutations(t, hc)
 }
 
 func TestImportAcceptsLiveHardcoverReviewTimestamp(t *testing.T) {

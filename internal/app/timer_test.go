@@ -21,7 +21,7 @@ func insertSessionDaysAgo(t *testing.T, a *App, daysAgo, minutes int) {
 	t.Helper()
 	start := time.Now().UTC().AddDate(0, 0, -daysAgo).Truncate(24 * time.Hour).Add(12 * time.Hour)
 	end := start.Add(time.Duration(minutes) * time.Minute)
-	if _, err := a.Store.InsertSession(model.ReadingSession{
+	if _, err := a.store.InsertSession(model.ReadingSession{
 		BookID:    1,
 		StartedAt: start,
 		EndedAt:   &end,
@@ -33,7 +33,7 @@ func insertSessionDaysAgo(t *testing.T, a *App, daysAgo, minutes int) {
 func insertJournalDaysAgo(t *testing.T, a *App, daysAgo int, event string) {
 	t.Helper()
 	at := time.Now().UTC().AddDate(0, 0, -daysAgo).Truncate(24 * time.Hour).Add(12 * time.Hour)
-	if err := a.Store.InsertLocalJournal(at, event); err != nil {
+	if err := a.store.InsertLocalJournal(at, event); err != nil {
 		t.Fatalf("InsertLocalJournal: %v", err)
 	}
 }

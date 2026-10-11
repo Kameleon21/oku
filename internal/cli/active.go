@@ -15,7 +15,7 @@ func newActiveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer a.Store.Close()
+			defer a.Close()
 
 			books, err := a.GetActiveBooks()
 			if err != nil {
@@ -40,7 +40,7 @@ func newSetActiveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer a.Store.Close()
+			defer a.Close()
 
 			if err := a.AddActiveBook(bookID); err != nil {
 				return err

@@ -19,30 +19,85 @@ const (
 	activeBookIDsKey = "active_book_ids"
 )
 
-// App is the core engine that orchestrates the API client and local store.
+// App is the core engine that orchestrates Hardcover and the local store.
 type App struct {
-	API    *api.Client
-	Store  *store.Store
-	Config config.Config
+	hc    Hardcover
+	store *store.Store
+	cfg   config.Config
 }
 
-// New creates a new App instance.
-func New(apiClient *api.Client, db *store.Store, cfg config.Config) *App {
-	return &App{
-		API:    apiClient,
-		Store:  db,
-		Config: cfg,
+// New creates a new App instance. A nil hc, including a nil *api.Client,
+// makes the App offline: local reads work and Hardcover calls return
+// ErrOffline.
+func New(hc Hardcover, db *store.Store, cfg config.Config) *App {
+	if c, ok := hc.(*api.Client); ok && c == nil {
+		hc = nil
 	}
+	return &App{
+		hc:    hc,
+		store: db,
+		cfg:   cfg,
+	}
+}
+
+// Close releases the local store.
+func (a *App) Close() error {
+	if a == nil || a.store == nil {
+		return nil
+	}
+	return a.store.Close()
+}
+
+// DefaultList is the configured status `oku list` shows without arguments.
+func (a *App) DefaultList() string {
+	return a.cfg.DefaultList
+}
+
+// CachedBook returns a book from the local cache, or nil when it is absent.
+func (a *App) CachedBook(id int) (*model.Book, error) {
+	return a.store.GetBookByID(id)
+}
+
+// CachedUserBook returns the cached library entry for a book, or nil when the
+// book is not in the cached library.
+func (a *App) CachedUserBook(bookID int) (*model.UserBook, error) {
+	return a.store.GetUserBookByBookID(bookID)
+}
+
+// SavePrivateNote stores a note that stays on this device.
+func (a *App) SavePrivateNote(bookID int, text string) error {
+	return a.store.SavePrivateNote(bookID, text)
+}
+
+// ListPrivateNotes returns every private note keyed by book ID.
+func (a *App) ListPrivateNotes() (map[int]string, error) {
+	return a.store.ListPrivateNotes()
+}
+
+const recentSearchesKey = "recent_searches"
+
+// RecentSearches returns the stored search history in the encoding the
+// caller saved it with, or "" when there is none.
+func (a *App) RecentSearches() (string, error) {
+	return a.store.GetState(recentSearchesKey)
+}
+
+// SaveRecentSearches replaces the stored search history.
+func (a *App) SaveRecentSearches(raw string) error {
+	return a.store.SetState(recentSearchesKey, raw)
 }
 
 // ValidateToken calls GetMe to verify the token works and caches the user ID.
 func (a *App) ValidateToken(ctx context.Context) (int, string, error) {
-	id, username, err := a.API.GetMe(ctx)
+	if err := a.requireOnline(); err != nil {
+		return 0, "", err
+	}
+	id, username, err := a.hc.GetMe(ctx)
 	if err != nil {
 		return 0, "", fmt.Errorf("token validation failed: %w", err)
 	}
-	_ = a.Store.SetState("user_id", strconv.Itoa(id))
-	_ = a.Store.SetState("username", username)
+	_ = a.store.SetState("user_id", strconv.Itoa(id))
+	_ = a.store.SetState("username", username)
 	return id, username, nil
 }
 
@@ -57,7 +112,7 @@ func (a *App) GetActiveBookIDs() ([]int, error) {
 	}
 
 	// Migrate legacy single active ID if present.
-	val, err := a.Store.GetState(activeBookIDKey)
+	val, err := a.store.GetState(activeBookIDKey)
 	if err != nil {
 		return nil, err
 	}
@@ -70,13 +125,13 @@ func (a *App) GetActiveBookIDs() ([]int, error) {
 		// Drop the legacy key once migrated, otherwise clearing the active
 		// list later resurrects this book via the fallback above.
 		if err := a.saveActiveBookIDs(ids); err == nil {
-			_ = a.Store.DeleteState(activeBookIDKey)
+			_ = a.store.DeleteState(activeBookIDKey)
 		}
 		return ids, nil
 	}
 
 	// Bootstrap from currently reading books in cache.
-	books, err := a.Store.ListUserBooks(model.StatusCurrentlyReading)
+	books, err := a.store.ListUserBooks(model.StatusCurrentlyReading)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +172,7 @@ func (a *App) GetActiveBooks() ([]model.UserBook, error) {
 	validIDs := make([]int, 0, len(ids))
 
 	for _, id := range ids {
-		ub, err := a.Store.GetUserBookByBookID(id)
+		ub, err := a.store.GetUserBookByBookID(id)
 		if err != nil {
 			return nil, err
 		}
@@ -183,7 +238,7 @@ func (a *App) ResolveBookID(bookID int) (int, error) {
 }
 
 func (a *App) getStoredActiveBookIDs() ([]int, error) {
-	val, err := a.Store.GetState(activeBookIDsKey)
+	val, err := a.store.GetState(activeBookIDsKey)
 	if err != nil {
 		return nil, err
 	}
@@ -216,13 +271,13 @@ func (a *App) getStoredActiveBookIDs() ([]int, error) {
 func (a *App) saveActiveBookIDs(ids []int) error {
 	ids = sanitizeActiveIDs(ids)
 	if len(ids) == 0 {
-		return a.Store.SetState(activeBookIDsKey, "")
+		return a.store.SetState(activeBookIDsKey, "")
 	}
 	raw, err := json.Marshal(ids)
 	if err != nil {
 		return err
 	}
-	return a.Store.SetState(activeBookIDsKey, string(raw))
+	return a.store.SetState(activeBookIDsKey, string(raw))
 }
 
 func sanitizeActiveIDs(ids []int) []int {

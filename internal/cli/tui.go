@@ -14,7 +14,7 @@ func runDashboard(version string) error {
 	if err != nil {
 		return err
 	}
-	defer a.Store.Close()
+	defer a.Close()
 
 	return tui.Run(ctx(), a, currentOutputDensity(), version)
 }

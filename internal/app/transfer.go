@@ -33,7 +33,10 @@ type LibraryExport struct {
 }
 
 func (a *App) ExportBooks(ctx context.Context) (LibraryExport, error) {
-	rows, err := a.API.ExportLibrary(ctx)
+	if err := a.requireOnline(); err != nil {
+		return LibraryExport{}, err
+	}
+	rows, err := a.hc.ExportLibrary(ctx)
 	if err != nil {
 		return LibraryExport{}, err
 	}
@@ -277,7 +280,10 @@ func (a *App) ImportBooks(ctx context.Context, rows []TransferBook, apply bool) 
 	if len(rows) == 0 {
 		return []ImportResult{}, nil
 	}
-	existing, err := a.API.ExportLibrary(ctx)
+	if err := a.requireOnline(); err != nil {
+		return nil, err
+	}
+	existing, err := a.hc.ExportLibrary(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -301,7 +307,7 @@ func (a *App) ImportBooks(ctx context.Context, rows []TransferBook, apply bool) 
 				results[i] = r
 				continue
 			}
-			id, err = a.API.LookupISBN(ctx, b.ISBN)
+			id, err = a.hc.LookupISBN(ctx, b.ISBN)
 			if err != nil {
 				var matchErr *api.ISBNMatchError
 				if !errors.As(err, &matchErr) {
@@ -318,7 +324,7 @@ func (a *App) ImportBooks(ctx context.Context, rows []TransferBook, apply bool) 
 			r.Action = "skip"
 			r.Detail = "already in library or duplicated in input"
 		} else {
-			detail, e := a.API.BookDetail(ctx, id)
+			detail, e := a.hc.BookDetail(ctx, id)
 			if e != nil {
 				return results, fmt.Errorf("validate book %d: %w", id, e)
 			}
@@ -342,7 +348,7 @@ func (a *App) ImportBooks(ctx context.Context, rows []TransferBook, apply bool) 
 			continue
 		}
 		status, _ := model.StatusFromString(b.Status)
-		uid, e := a.API.InsertUserBook(ctx, resolved[i], int(status))
+		uid, e := a.hc.InsertUserBook(ctx, resolved[i], int(status))
 		if e != nil {
 			results[i].Action = "failed"
 			results[i].Detail = e.Error()
@@ -354,12 +360,12 @@ func (a *App) ImportBooks(ctx context.Context, rows []TransferBook, apply bool) 
 			if date == "" {
 				date = time.Now().Format("2006-01-02")
 			}
-			e = a.API.UpdateUserBookReviewAndRating(ctx, uid, b.Rating, b.Review, date)
+			e = a.hc.UpdateUserBookReviewAndRating(ctx, uid, b.Rating, b.Review, date)
 		} else if b.Rating > 0 {
-			e = a.API.UpdateUserBookRating(ctx, uid, b.Rating)
+			e = a.hc.UpdateUserBookRating(ctx, uid, b.Rating)
 		}
 		if e == nil {
-			e = a.API.ImportReads(ctx, uid, b.Reads)
+			e = a.hc.ImportReads(ctx, uid, b.Reads)
 		}
 		if e != nil {
 			results[i].Action = "partial"

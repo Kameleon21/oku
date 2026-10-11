@@ -25,7 +25,7 @@ const (
 // heatmap reflects it immediately; the server-side entry replaces it on the
 // next sync. Failures are non-fatal: the remote update already succeeded.
 func (a *App) logLocalJournal(event string) {
-	_ = a.Store.InsertLocalJournal(time.Now(), event)
+	_ = a.store.InsertLocalJournal(time.Now(), event)
 }
 
 // statusCountsAsActivity reports whether changing to the given status counts
@@ -39,23 +39,29 @@ func statusCountsAsActivity(s model.Status) bool {
 // progress update itself already succeeded, and the journal only affects the
 // website's activity display.
 func (a *App) logRemoteProgress(ctx context.Context, bookID, page, totalPages int) {
-	_ = a.API.InsertProgressJournal(ctx, bookID, page, totalPages, a.accountPrivacySettingID(ctx))
+	if !a.Online() {
+		return
+	}
+	_ = a.hc.InsertProgressJournal(ctx, bookID, page, totalPages, a.accountPrivacySettingID(ctx))
 }
 
 // accountPrivacySettingID returns the user's default privacy setting for
 // journal entries, cached in local state after the first fetch. Falls back to
 // public when the setting can't be determined.
 func (a *App) accountPrivacySettingID(ctx context.Context) int {
-	if val, err := a.Store.GetState(privacySettingKey); err == nil {
+	if val, err := a.store.GetState(privacySettingKey); err == nil {
 		if id, err := strconv.Atoi(strings.TrimSpace(val)); err == nil && id > 0 {
 			return id
 		}
 	}
 
-	id, err := a.API.GetAccountPrivacySetting(ctx)
+	if !a.Online() {
+		return privacyPublic
+	}
+	id, err := a.hc.GetAccountPrivacySetting(ctx)
 	if err != nil || id <= 0 {
 		return privacyPublic
 	}
-	_ = a.Store.SetState(privacySettingKey, strconv.Itoa(id))
+	_ = a.store.SetState(privacySettingKey, strconv.Itoa(id))
 	return id
 }

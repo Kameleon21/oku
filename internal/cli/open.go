@@ -17,7 +17,7 @@ func newOpenCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer a.Store.Close()
+			defer a.Close()
 
 			books, err := a.ListBooks(ctx(), model.StatusCurrentlyReading, false)
 			if err != nil {

@@ -20,9 +20,9 @@ func newListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer a.Store.Close()
+			defer a.Close()
 
-			status, err := listStatusFromArgs(args, a.Config.DefaultList)
+			status, err := listStatusFromArgs(args, a.DefaultList())
 			if err != nil {
 				return err
 			}
@@ -66,7 +66,7 @@ func newNowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer a.Store.Close()
+			defer a.Close()
 
 			books, err := a.ListBooks(ctx(), model.StatusCurrentlyReading, refresh)
 			if err != nil {
@@ -94,7 +94,7 @@ func newShortcutCmd(name, desc string, statusID int) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer a.Store.Close()
+			defer a.Close()
 
 			books, err := a.ListBooks(ctx(), model.Status(statusID), refresh)
 			if err != nil {
