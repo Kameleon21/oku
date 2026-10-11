@@ -139,7 +139,7 @@ func (a *App) cachedUserID(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if err := a.rememberUser(id); err != nil {
+	if err := a.RememberUser(id); err != nil {
 		return 0, err
 	}
 	return id, nil

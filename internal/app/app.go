@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -80,23 +79,6 @@ func (a *App) RecentSearches() (string, error) {
 // SaveRecentSearches replaces the stored search history.
 func (a *App) SaveRecentSearches(raw string) error {
 	return a.store.SetState(recentSearchesKey, raw)
-}
-
-// ValidateToken calls GetMe to verify the token works and records the user,
-// dropping the previous account's cache when the user has changed.
-func (a *App) ValidateToken(ctx context.Context) (int, string, error) {
-	if err := a.requireOnline(); err != nil {
-		return 0, "", err
-	}
-	id, username, err := a.hc.GetMe(ctx)
-	if err != nil {
-		return 0, "", fmt.Errorf("token validation failed: %w", err)
-	}
-	if err := a.rememberUser(id); err != nil {
-		return 0, "", err
-	}
-	_ = a.store.SetState(usernameKey, username)
-	return id, username, nil
 }
 
 // GetActiveBookIDs returns the list of active reading book IDs.

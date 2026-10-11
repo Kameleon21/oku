@@ -19,7 +19,7 @@ func (a *App) SyncAll(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("sync account: %w", err)
 	}
-	if err := a.rememberUser(id); err != nil {
+	if err := a.RememberUser(id); err != nil {
 		return err
 	}
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -11,6 +12,9 @@ import (
 
 	"github.com/Kameleon21/oku/internal/api"
 	"github.com/Kameleon21/oku/internal/auth"
+	"github.com/Kameleon21/oku/internal/config"
+	"github.com/Kameleon21/oku/internal/model"
+	"github.com/Kameleon21/oku/internal/store"
 	"github.com/zalando/go-keyring"
 	"golang.org/x/oauth2"
 )
@@ -24,10 +28,22 @@ func TestMain(m *testing.M) {
 
 // stubAuthBackend replaces the auth commands' backend with fakes. A nil
 // function fails the test if the command calls it.
-func stubAuthBackend(t *testing.T, current func(context.Context) (auth.Credential, error), verify func(context.Context, oauth2.TokenSource) (string, *oauth2.Token, error), logout func(context.Context, func(auth.LogoutReport, string)) (auth.LogoutReport, error)) {
+func stubAuthBackend(t *testing.T, current func(context.Context) (auth.Credential, error), verify func(context.Context, oauth2.TokenSource) (int, string, *oauth2.Token, error), logout func(context.Context, func(auth.LogoutReport, string)) (auth.LogoutReport, error)) {
 	t.Helper()
 	orig := authBackend
 	t.Cleanup(func() { authBackend = orig })
+
+	// The browser sign-in and the token prompt fail the test unless it sets
+	// them; recording the account does nothing unless it does.
+	authBackend.login = func(context.Context, io.Writer) (*oauth2.Token, error) {
+		t.Fatal("unexpected call to login")
+		return nil, nil
+	}
+	authBackend.promptToken = func() (string, error) {
+		t.Fatal("unexpected call to promptToken")
+		return "", nil
+	}
+	authBackend.remember = func(int) error { return nil }
 
 	authBackend.current = func(ctx context.Context) (auth.Credential, error) {
 		if current == nil {
@@ -35,7 +51,7 @@ func stubAuthBackend(t *testing.T, current func(context.Context) (auth.Credentia
 		}
 		return current(ctx)
 	}
-	authBackend.verify = func(ctx context.Context, src oauth2.TokenSource) (string, *oauth2.Token, error) {
+	authBackend.verify = func(ctx context.Context, src oauth2.TokenSource) (int, string, *oauth2.Token, error) {
 		if verify == nil {
 			t.Fatal("unexpected call to verify")
 		}
@@ -183,9 +199,9 @@ func stubStatus(t *testing.T, cred auth.Credential, username string) {
 	t.Helper()
 	stubAuthBackend(t,
 		func(context.Context) (auth.Credential, error) { return cred, nil },
-		func(_ context.Context, src oauth2.TokenSource) (string, *oauth2.Token, error) {
+		func(_ context.Context, src oauth2.TokenSource) (int, string, *oauth2.Token, error) {
 			token, err := src.Token()
-			return username, token, err
+			return 1, username, token, err
 		},
 		nil)
 }
@@ -254,8 +270,8 @@ func TestAuthStatusRejectedToken(t *testing.T) {
 	cred := auth.Credential{Kind: auth.KindPersonalAPIKey, TokenSource: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "hc_pat_revoked"})}
 	stubAuthBackend(t,
 		func(context.Context) (auth.Credential, error) { return cred, nil },
-		func(context.Context, oauth2.TokenSource) (string, *oauth2.Token, error) {
-			return "", nil, api.ErrUnauthorized
+		func(context.Context, oauth2.TokenSource) (int, string, *oauth2.Token, error) {
+			return 0, "", nil, api.ErrUnauthorized
 		},
 		nil)
 
@@ -281,5 +297,69 @@ func TestLogoutOutputOrder(t *testing.T) {
 		"Logged out.\n"
 	if out != want {
 		t.Fatalf("logout output = %q, want %q", out, want)
+	}
+}
+
+// TestLoginAsAnotherAccountClearsTheCache: signing in as B on a machine that
+// holds A's cached library drops A's books, so B never sees them.
+func TestLoginAsAnotherAccountClearsTheCache(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("HARDCOVER_TOKEN", "")
+
+	dbPath, err := config.DBPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.EnsureDataDir(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.New(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertUserBook(model.UserBook{ID: 1, BookID: 11, StatusID: model.StatusCurrentlyReading,
+		Book: model.Book{ID: 11, Title: "Dune"}, UpdatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetState("user_id", "1"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	tokenB := &oauth2.Token{AccessToken: "hc_at_b", TokenType: "Bearer"}
+	stubAuthBackend(t,
+		func(context.Context) (auth.Credential, error) {
+			return auth.Credential{Kind: auth.KindBrowserLogin, TokenSource: oauth2.StaticTokenSource(tokenB)}, nil
+		},
+		func(_ context.Context, src oauth2.TokenSource) (int, string, *oauth2.Token, error) {
+			token, err := src.Token()
+			return 2, "b", token, err
+		},
+		nil)
+	authBackend.login = func(context.Context, io.Writer) (*oauth2.Token, error) { return tokenB, nil }
+	authBackend.remember = rememberSignedInUser
+
+	var out bytes.Buffer
+	cmd := newLoginCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	if out.String() != "Login successful.\n" {
+		t.Fatalf("login output = %q, want only the confirmation", out.String())
+	}
+
+	db, err = store.New(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if books, _ := db.ListUserBooks(model.StatusCurrentlyReading); len(books) != 0 {
+		t.Fatalf("cached reading = %+v, want A's books gone", books)
+	}
+	if v, _ := db.GetState("user_id"); v != "2" {
+		t.Fatalf("user_id = %q, want B", v)
 	}
 }
