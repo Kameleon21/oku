@@ -19,72 +19,15 @@ import (
 	"golang.org/x/oauth2"
 )
 
-func TestNormalizeToken(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{
-			name:  "already has Bearer prefix",
-			input: "Bearer abc123",
-			want:  "Bearer abc123",
-		},
-		{
-			name:  "raw token without prefix",
-			input: "abc123",
-			want:  "Bearer abc123",
-		},
-		{
-			name:  "lowercase bearer is normalised",
-			input: "bearer abc123",
-			want:  "Bearer abc123",
-		},
-		{
-			name:  "uppercase BEARER is normalised",
-			input: "BEARER abc123",
-			want:  "Bearer abc123",
-		},
-		{
-			name:  "mixed case Bearer is normalised",
-			input: "bEaReR abc123",
-			want:  "Bearer abc123",
-		},
-		{
-			name:  "Bearer without space is treated as raw token",
-			input: "BearerNoSpace",
-			want:  "Bearer BearerNoSpace",
-		},
-		{
-			name:  "surrounding whitespace is trimmed",
-			input: "  abc123\n",
-			want:  "Bearer abc123",
-		},
-		{
-			name:  "whitespace around an existing prefix is trimmed",
-			input: "\n Bearer  abc123 \t",
-			want:  "Bearer abc123",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := normalizeToken(tt.input)
-			if got != tt.want {
-				t.Fatalf("normalizeToken(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
 func testClientForServer(handler http.HandlerFunc) (*Client, *httptest.Server) {
 	srv := httptest.NewServer(handler)
-	return newClientWithEndpoint(srv.URL, "test-token"), srv
+	src := staticTokenSource{token: &oauth2.Token{AccessToken: "test-token", TokenType: "Bearer"}}
+	return newOAuthClientWithEndpoint(context.Background(), srv.URL, src), srv
 }
 
 // staticTokenSource always hands back the same token; it stands in for
-// auth.TokenSource in tests, which otherwise depends on the keychain and
-// Hardcover's real token endpoint.
+// auth.Current's token source in tests, which otherwise depends on the
+// keychain and Hardcover's real token endpoint.
 type staticTokenSource struct{ token *oauth2.Token }
 
 func (s staticTokenSource) Token() (*oauth2.Token, error) { return s.token, nil }

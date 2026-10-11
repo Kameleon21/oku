@@ -6,10 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/zalando/go-keyring"
 	"golang.org/x/oauth2"
@@ -37,28 +35,6 @@ func normalizeToken(token string) string {
 	return strings.TrimSpace(token)
 }
 
-// GetToken returns the token to authenticate with, priority: env var >
-// keychain. It does not refresh an expired token itself; pass the result
-// through TokenSource to get one that refreshes (and persists the refresh)
-// on demand.
-func GetToken() (*oauth2.Token, error) {
-	if raw := normalizeToken(os.Getenv(envKey)); raw != "" {
-		return &oauth2.Token{AccessToken: raw, TokenType: "Bearer"}, nil
-	}
-	return loadStoredToken()
-}
-
-// EnvTokenSet reports whether HARDCOVER_TOKEN overrides the stored login.
-func EnvTokenSet() bool {
-	return normalizeToken(os.Getenv(envKey)) != ""
-}
-
-// StoredToken returns the token saved in the system keychain, ignoring any
-// HARDCOVER_TOKEN override.
-func StoredToken() (*oauth2.Token, error) {
-	return loadStoredToken()
-}
-
 // loadStoredToken reads and decodes the token saved in the system keychain.
 // A corrupt entry is deleted so the next login starts from a clean slate.
 func loadStoredToken() (*oauth2.Token, error) {
@@ -70,17 +46,17 @@ func loadStoredToken() (*oauth2.Token, error) {
 				return token, nil
 			}
 			if !errors.Is(migrateErr, keyring.ErrNotFound) {
-				return nil, fmt.Errorf("keyring backend unavailable: %w; set %s as a workaround", migrateErr, envKey)
+				return nil, fmt.Errorf("%w: %w; set %s as a workaround", ErrKeyringUnavailable, migrateErr, envKey)
 			}
-			return nil, fmt.Errorf("no token found; run: oku auth login")
+			return nil, fmt.Errorf("no token found; %w", ErrNotLoggedIn)
 		}
-		return nil, fmt.Errorf("keyring backend unavailable: %w; set %s as a workaround", err, envKey)
+		return nil, fmt.Errorf("%w: %w; set %s as a workaround", ErrKeyringUnavailable, err, envKey)
 	}
 
 	var token oauth2.Token
 	if err := json.Unmarshal([]byte(raw), &token); err != nil {
 		_ = keyring.Delete(serviceName, accountName)
-		return nil, fmt.Errorf("stored token was corrupt and has been cleared; run: oku auth login")
+		return nil, fmt.Errorf("stored token was corrupt and has been cleared; %w", ErrNotLoggedIn)
 	}
 	return &token, nil
 }
@@ -113,9 +89,9 @@ func SetToken(token *oauth2.Token) error {
 	return keyring.Set(serviceName, accountName, string(data))
 }
 
-// DeleteToken removes the stored token from the system keychain. Deleting an
+// deleteToken removes the stored token from the system keychain. Deleting an
 // already-absent token is not an error.
-func DeleteToken() error {
+func deleteToken() error {
 	var errs []error
 	for _, account := range []string{accountName, legacyAccountName} {
 		if err := keyring.Delete(serviceName, account); err != nil && !errors.Is(err, keyring.ErrNotFound) {
@@ -123,24 +99,6 @@ func DeleteToken() error {
 		}
 	}
 	return errors.Join(errs...)
-}
-
-// TokenSource returns an oauth2.TokenSource backed by GetConf's endpoint
-// that transparently refreshes token when it has expired, and persists any
-// refreshed token back to the keychain so the next invocation of oku picks
-// it up without needing to refresh again.
-//
-// When HARDCOVER_TOKEN is set, token is used as-is and the keychain is never
-// touched, so the env var keeps working as a workaround on machines without
-// a usable keychain backend (it has no refresh token anyway, so there would
-// be nothing to refresh).
-func TokenSource(ctx context.Context, token *oauth2.Token) oauth2.TokenSource {
-	if normalizeToken(os.Getenv(envKey)) != "" {
-		return oauth2.StaticTokenSource(token)
-	}
-	// Timeout so a stalled refresh request can't hang forever.
-	ctx = context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Timeout: 10 * time.Second})
-	return &persistingTokenSource{ctx: ctx, conf: GetConf(), token: token}
 }
 
 // persistingTokenSource refreshes an expired token under a cross-process lock

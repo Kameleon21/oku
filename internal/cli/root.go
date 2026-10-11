@@ -122,7 +122,7 @@ func errorHint(err error) string {
 
 // initApp creates the App instance (API client + store + config).
 func initApp() (*app.App, error) {
-	token, err := auth.GetToken()
+	cred, err := auth.Current(ctx())
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +146,7 @@ func initApp() (*app.App, error) {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
-	client := api.NewOAuthClient(ctx(), auth.TokenSource(ctx(), token))
+	client := api.NewOAuthClient(ctx(), cred.TokenSource)
 	return app.New(client, db, cfg), nil
 }
 

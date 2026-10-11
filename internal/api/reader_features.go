@@ -412,7 +412,6 @@ func (c *Client) GoalSettings(ctx context.Context, id int) (GoalInput, error) {
 func (c *Client) doMutation(ctx context.Context, req *graphql.Request, resp any) error {
 	ctx, cancel := withRequestTimeout(ctx)
 	defer cancel()
-	req.Header.Set("authorization", c.token)
 	req.Header.Set("User-Agent", userAgent())
 	if err := c.throttle(ctx); err != nil {
 		return err

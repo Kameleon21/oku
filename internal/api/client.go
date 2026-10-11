@@ -45,8 +45,7 @@ func userAgent() string {
 
 // Client wraps the machinebox/graphql client with authentication and rate limiting.
 type Client struct {
-	gql   *graphql.Client
-	token string
+	gql *graphql.Client
 
 	// Simple rate limiter: lastReq holds when the most recently reserved
 	// request goes out, so throttle can space requests one second apart.
@@ -165,19 +164,6 @@ func retryAfterDelay(err error) time.Duration {
 	return 0
 }
 
-// NewClient creates a new Hardcover API client with the given auth token.
-// The token is normalised to include a "Bearer " prefix if missing.
-func NewClient(token string) *Client {
-	return newClientWithEndpoint(endpoint, token)
-}
-
-func newClientWithEndpoint(url, token string) *Client {
-	return &Client{
-		gql:   graphql.NewClient(url, graphql.WithHTTPClient(baseHTTPClient())),
-		token: normalizeToken(token),
-	}
-}
-
 // NewOAuthClient creates a Hardcover API client authorized by src. The
 // Authorization header is set per-request by src's own oauth2.Transport,
 // which refreshes an expired token on demand.
@@ -188,15 +174,15 @@ func NewOAuthClient(ctx context.Context, src oauth2.TokenSource) *Client {
 func newOAuthClientWithEndpoint(ctx context.Context, url string, src oauth2.TokenSource) *Client {
 	// Routes API requests through statusTransport so non-2xx responses
 	// surface as *StatusError for do's retry/backoff logic. Token-refresh
-	// requests use their own ctx, set in auth.TokenSource.
+	// requests use their own ctx, set in auth.Current.
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, baseHTTPClient())
 	return &Client{
 		gql: graphql.NewClient(url, graphql.WithHTTPClient(oauth2.NewClient(ctx, src))),
 	}
 }
 
-// baseHTTPClient is the plain (non-OAuth) transport shared by both
-// constructors: a timeout plus status-code classification.
+// baseHTTPClient is the plain transport underneath the OAuth one: a timeout
+// plus status-code classification.
 func baseHTTPClient() *http.Client {
 	return &http.Client{
 		Timeout:   attemptTimeout,
@@ -204,26 +190,11 @@ func baseHTTPClient() *http.Client {
 	}
 }
 
-// normalizeToken ensures the token carries the "Bearer " prefix required by the API.
-// Surrounding whitespace is trimmed and any existing bearer prefix
-// (case-insensitive) stripped before re-adding the canonical form.
-func normalizeToken(token string) string {
-	const prefix = "Bearer "
-	token = strings.TrimSpace(token)
-	if strings.HasPrefix(strings.ToLower(token), "bearer ") {
-		return prefix + strings.TrimSpace(token[len("bearer "):])
-	}
-	return prefix + token
-}
-
-// do executes a GraphQL request with auth header and rate limiting.
+// do executes a GraphQL request with rate limiting and retries.
 func (c *Client) do(ctx context.Context, req *graphql.Request, resp interface{}) error {
 	ctx, cancel := withRequestTimeout(ctx)
 	defer cancel()
 
-	if c.token != "" {
-		req.Header.Set("authorization", c.token)
-	}
 	req.Header.Set("User-Agent", userAgent())
 
 	var lastErr error
