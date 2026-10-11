@@ -26,7 +26,7 @@ func (a *App) ListBooks(ctx context.Context, status model.Status, refresh bool) 
 		}
 	}
 
-	books, err := a.Store.ListUserBooks(status)
+	books, err := a.store.ListUserBooks(status)
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +42,7 @@ func (a *App) ListBooks(ctx context.Context, status model.Status, refresh bool) 
 			if err := a.syncStatus(ctx, status); err != nil {
 				return nil, err
 			}
-			books, err = a.Store.ListUserBooks(status)
+			books, err = a.store.ListUserBooks(status)
 			if err != nil {
 				return nil, err
 			}
@@ -52,10 +52,16 @@ func (a *App) ListBooks(ctx context.Context, status model.Status, refresh bool) 
 	return books, nil
 }
 
+// CachedBooks returns the locally cached books for a status without checking
+// freshness. It never performs a network request.
+func (a *App) CachedBooks(status model.Status) ([]model.UserBook, error) {
+	return a.store.ListUserBooks(status)
+}
+
 // ListCachedBooks returns locally cached books and reports whether the cache
 // should be refreshed. It never performs a network request.
 func (a *App) ListCachedBooks(status model.Status) ([]model.UserBook, bool, error) {
-	books, err := a.Store.ListUserBooks(status)
+	books, err := a.CachedBooks(status)
 	if err != nil {
 		return nil, false, err
 	}
@@ -68,7 +74,7 @@ func (a *App) ListCachedBooks(status model.Status) ([]model.UserBook, bool, erro
 }
 
 func (a *App) isStatusCacheStale(status model.Status) (bool, error) {
-	val, err := a.Store.GetState(syncStateKey(status))
+	val, err := a.store.GetState(syncStateKey(status))
 	if err != nil {
 		return true, err
 	}
@@ -91,7 +97,7 @@ func syncStateKey(status model.Status) string {
 func (a *App) LastSyncAt() time.Time {
 	var latest time.Time
 	for _, status := range model.AllStatuses {
-		raw, err := a.Store.GetState(syncStateKey(status))
+		raw, err := a.store.GetState(syncStateKey(status))
 		if err != nil || raw == "" {
 			continue
 		}
@@ -108,13 +114,16 @@ func (a *App) syncStatus(ctx context.Context, status model.Status) error {
 	if err := a.syncStatusOnly(ctx, status); err != nil {
 		return err
 	}
-	_ = a.Store.PruneOrphanBooks(orphanBookMaxAgeDays)
+	_ = a.store.PruneOrphanBooks(orphanBookMaxAgeDays)
 	return nil
 }
 
 // syncStatusOnly fetches books for a status from the API and replaces cached rows for that status.
 func (a *App) syncStatusOnly(ctx context.Context, status model.Status) error {
-	apiBooks, err := a.API.ListUserBooks(ctx, int(status))
+	if err := a.requireOnline(); err != nil {
+		return err
+	}
+	apiBooks, err := a.hc.ListUserBooks(ctx, int(status))
 	if err != nil {
 		return err
 	}
@@ -124,11 +133,11 @@ func (a *App) syncStatusOnly(ctx context.Context, status model.Status) error {
 	for _, ab := range apiBooks {
 		books = append(books, convertAPIUserBook(ab))
 	}
-	if err := a.Store.ReplaceUserBooksForStatus(status, books); err != nil {
+	if err := a.store.ReplaceUserBooksForStatus(status, books); err != nil {
 		return err
 	}
 
-	_ = a.Store.SetState(syncStateKey(status), time.Now().UTC().Format(time.RFC3339))
+	_ = a.store.SetState(syncStateKey(status), time.Now().UTC().Format(time.RFC3339))
 	return nil
 }
 

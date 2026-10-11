@@ -28,7 +28,7 @@ func newSearchCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer a.Store.Close()
+			defer a.Close()
 
 			results, err := a.SearchBooks(ctx(), query, limit, mode)
 			if err != nil {

@@ -32,7 +32,7 @@ func newJournalCmd(event string) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		defer a.Store.Close()
+		defer a.Close()
 		entryID, err := a.AddJournalEntry(cmd.Context(), id, event, args[0])
 		if err != nil {
 			return err
@@ -49,12 +49,12 @@ func newJournalListCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		defer a.Store.Close()
+		defer a.Close()
 		id, err = a.ResolveBookID(id)
 		if err != nil {
 			return err
 		}
-		rows, err := a.API.BookJournal(cmd.Context(), id)
+		rows, err := a.BookJournal(cmd.Context(), id)
 		if err != nil {
 			return err
 		}
@@ -81,7 +81,7 @@ func newBookDetailCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		defer a.Store.Close()
+		defer a.Close()
 		b, err := a.GetBookDetail(cmd.Context(), id, refresh)
 		if err != nil {
 			return err
@@ -126,8 +126,8 @@ func newGoalsCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		defer a.Store.Close()
-		goals, err := a.API.ListGoals(cmd.Context())
+		defer a.Close()
+		goals, err := a.ListGoals(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -165,21 +165,10 @@ func newGoalsCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		defer a.Store.Close()
-		if id > 0 {
-			old, err := a.API.GoalSettings(cmd.Context(), id)
-			if err != nil {
-				return err
-			}
-			g = mergeGoalSettings(cmd, old, g)
-		} else {
-			privacy, err := a.API.GetAccountPrivacySetting(cmd.Context())
-			if err != nil {
-				return err
-			}
-			g.PrivacySettingID = privacy
-		}
-		goalID, err := a.API.SaveGoal(cmd.Context(), id, g)
+		defer a.Close()
+		goalID, err := a.SaveGoal(cmd.Context(), id, g, func(old, next api.GoalInput) api.GoalInput {
+			return mergeGoalSettings(cmd, old, next)
+		})
 		if err != nil {
 			return err
 		}
@@ -213,7 +202,7 @@ func newTrendingCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		defer a.Store.Close()
+		defer a.Close()
 		rows, err := a.TrendingBooks(cmd.Context(), period, limit, raw)
 		if err != nil {
 			return err
@@ -246,7 +235,7 @@ func newExportCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		defer a.Store.Close()
+		defer a.Close()
 		data, err := a.ExportBooks(cmd.Context())
 		if err != nil {
 			return err
@@ -299,7 +288,7 @@ func newImportCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		defer a.Store.Close()
+		defer a.Close()
 		results, importErr := a.ImportBooks(cmd.Context(), rows, apply)
 		printErr := readerOutput(cmd, results, func() error {
 			for _, r := range results {

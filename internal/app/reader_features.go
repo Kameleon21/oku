@@ -12,6 +12,9 @@ import (
 )
 
 func (a *App) AddJournalEntry(ctx context.Context, bookID int, event, text string) (int, error) {
+	if err := a.requireOnline(); err != nil {
+		return 0, err
+	}
 	id, err := a.ResolveBookID(bookID)
 	if err != nil {
 		return 0, err
@@ -20,16 +23,56 @@ func (a *App) AddJournalEntry(ctx context.Context, bookID int, event, text strin
 		return 0, fmt.Errorf("text cannot be empty")
 	}
 	// Unlike progress telemetry, personal notes must never fall back to public.
-	privacy, err := a.API.GetAccountPrivacySetting(ctx)
+	privacy, err := a.hc.GetAccountPrivacySetting(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("cannot determine journal privacy: %w", err)
 	}
-	return a.API.CreateJournalEntry(ctx, id, event, text, privacy)
+	return a.hc.CreateJournalEntry(ctx, id, event, text, privacy)
 }
+
+// BookJournal returns the reading journal entries for a book.
+func (a *App) BookJournal(ctx context.Context, bookID int) ([]api.JournalEntry, error) {
+	if err := a.requireOnline(); err != nil {
+		return nil, err
+	}
+	return a.hc.BookJournal(ctx, bookID)
+}
+
+// ListGoals returns the user's reading goals straight from Hardcover.
+func (a *App) ListGoals(ctx context.Context) ([]api.APIGoal, error) {
+	if err := a.requireOnline(); err != nil {
+		return nil, err
+	}
+	return a.hc.ListGoals(ctx)
+}
+
+// SaveGoal creates g when id is 0, using the account's privacy setting.
+// Otherwise it updates goal id with merge(current, g), so the caller decides
+// which of g's fields overwrite the goal's current settings.
+func (a *App) SaveGoal(ctx context.Context, id int, g api.GoalInput, merge func(old, next api.GoalInput) api.GoalInput) (int, error) {
+	if err := a.requireOnline(); err != nil {
+		return 0, err
+	}
+	if id > 0 {
+		old, err := a.hc.GoalSettings(ctx, id)
+		if err != nil {
+			return 0, err
+		}
+		g = merge(old, g)
+	} else {
+		privacy, err := a.hc.GetAccountPrivacySetting(ctx)
+		if err != nil {
+			return 0, err
+		}
+		g.PrivacySettingID = privacy
+	}
+	return a.hc.SaveGoal(ctx, id, g)
+}
+
 func (a *App) GetBookDetail(ctx context.Context, id int, refresh bool) (*api.BookDetail, error) {
 	key := fmt.Sprintf("book_detail_%d", id)
 	if !refresh {
-		raw, err := a.Store.GetState(key)
+		raw, err := a.store.GetState(key)
 		if err != nil {
 			return nil, err
 		}
@@ -40,7 +83,10 @@ func (a *App) GetBookDetail(ctx context.Context, id int, refresh bool) (*api.Boo
 			}
 		}
 	}
-	b, err := a.API.BookDetail(ctx, id)
+	if err := a.requireOnline(); err != nil {
+		return nil, err
+	}
+	b, err := a.hc.BookDetail(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -48,7 +94,7 @@ func (a *App) GetBookDetail(ctx context.Context, id int, refresh bool) (*api.Boo
 	if err != nil {
 		return nil, err
 	}
-	if err := a.Store.SetState(key, string(raw)); err != nil {
+	if err := a.store.SetState(key, string(raw)); err != nil {
 		return nil, err
 	}
 	return b, nil
@@ -63,6 +109,9 @@ const trendingFetchLimit = 100
 // its highest-ranked remaining book, because the raw list is usually
 // dominated by every volume of one or two popular series.
 func (a *App) TrendingBooks(ctx context.Context, period string, limit int, raw bool) ([]model.SearchResult, error) {
+	if err := a.requireOnline(); err != nil {
+		return nil, err
+	}
 	if limit < 1 || limit > trendingFetchLimit {
 		return nil, fmt.Errorf("limit must be 1-%d", trendingFetchLimit)
 	}
@@ -70,12 +119,12 @@ func (a *App) TrendingBooks(ctx context.Context, period string, limit int, raw b
 	if raw {
 		fetch = limit
 	}
-	books, err := a.API.Trending(ctx, period, fetch)
+	books, err := a.hc.Trending(ctx, period, fetch)
 	if err != nil {
 		return nil, err
 	}
 	if !raw {
-		owned, err := a.Store.LibraryBookIDs()
+		owned, err := a.store.LibraryBookIDs()
 		if err != nil {
 			return nil, err
 		}
@@ -95,7 +144,7 @@ func (a *App) TrendingBooks(ctx context.Context, period string, limit int, raw b
 const queueStateKey = "reading_queue_order"
 
 func (a *App) CachedQueueOrder() ([]int, error) {
-	raw, err := a.Store.GetState(queueStateKey)
+	raw, err := a.store.GetState(queueStateKey)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +155,10 @@ func (a *App) CachedQueueOrder() ([]int, error) {
 	return ids, err
 }
 func (a *App) RefreshQueue(ctx context.Context) ([]int, error) {
-	_, rows, err := a.API.ReadingQueue(ctx, false)
+	if err := a.requireOnline(); err != nil {
+		return nil, err
+	}
+	_, rows, err := a.hc.ReadingQueue(ctx, false)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +173,7 @@ func (a *App) saveQueue(ids []int) error {
 	if err != nil {
 		return err
 	}
-	return a.Store.SetState(queueStateKey, string(raw))
+	return a.store.SetState(queueStateKey, string(raw))
 }
 func SortQueue(books []model.UserBook, ids []int) {
 	rank := map[int]int{}
@@ -141,10 +193,13 @@ func SortQueue(books []model.UserBook, ids []int) {
 // MoveQueueBook updates one adjacent pair. Missing shelf books are appended to
 // the private ranked list; reading status remains independent of priority.
 func (a *App) MoveQueueBook(ctx context.Context, bookID, delta int) ([]int, error) {
+	if err := a.requireOnline(); err != nil {
+		return nil, err
+	}
 	if delta != -1 && delta != 1 {
 		return nil, fmt.Errorf("queue direction must be -1 or 1")
 	}
-	books, err := a.Store.ListUserBooks(model.StatusWantToRead)
+	books, err := a.store.ListUserBooks(model.StatusWantToRead)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +212,7 @@ func (a *App) MoveQueueBook(ctx context.Context, bookID, delta int) ([]int, erro
 	if !found {
 		return nil, fmt.Errorf("book is not on the want-to-read shelf")
 	}
-	listID, rows, err := a.API.ReadingQueue(ctx, true)
+	listID, rows, err := a.hc.ReadingQueue(ctx, true)
 	if err != nil {
 		return nil, err
 	}
@@ -178,11 +233,11 @@ func (a *App) MoveQueueBook(ctx context.Context, bookID, delta int) ([]int, erro
 		}
 	}
 	if len(pending) > 0 {
-		if err := a.API.QueueBooks(ctx, listID, pending); err != nil {
+		if err := a.hc.QueueBooks(ctx, listID, pending); err != nil {
 			return nil, err
 		}
 
-		listID, rows, err = a.API.ReadingQueue(ctx, false)
+		listID, rows, err = a.hc.ReadingQueue(ctx, false)
 		if err != nil {
 			return nil, err
 		}
@@ -212,7 +267,7 @@ func (a *App) MoveQueueBook(ctx context.Context, bookID, delta int) ([]int, erro
 		}
 		changes := []api.RankedBook{rows[i], rows[j]}
 		changes[0].Position, changes[1].Position = changes[1].Position, changes[0].Position
-		if err := a.API.SetQueuePositions(ctx, listID, changes); err != nil {
+		if err := a.hc.SetQueuePositions(ctx, listID, changes); err != nil {
 			return nil, err
 		}
 		rows[i], rows[j] = rows[j], rows[i]

@@ -35,7 +35,7 @@ func newRateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer a.Store.Close()
+			defer a.Close()
 
 			resolvedID, err := resolveBookIDForReviewInput(a, title, bookID, "Select a book to rate")
 			if err != nil {

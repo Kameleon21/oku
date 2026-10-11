@@ -211,7 +211,7 @@ func newReviewCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer a.Store.Close()
+			defer a.Close()
 
 			candidateBookID, err := resolveBookIDForReviewInput(a, title, bookID, "Select a book to review")
 			if err != nil {
@@ -223,7 +223,7 @@ func newReviewCmd() *cobra.Command {
 				return err
 			}
 
-			ub, err := a.Store.GetUserBookByBookID(resolvedBookID)
+			ub, err := a.CachedUserBook(resolvedBookID)
 			if err != nil {
 				return err
 			}

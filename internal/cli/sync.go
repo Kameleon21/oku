@@ -15,7 +15,7 @@ func newSyncCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer a.Store.Close()
+			defer a.Close()
 
 			fmt.Println("Syncing...")
 			if err := a.SyncAll(ctx()); err != nil {

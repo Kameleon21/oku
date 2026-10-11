@@ -27,7 +27,7 @@ func newStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer a.Store.Close()
+			defer a.Close()
 
 			// A cache-refresh failure still means the change reached
 			// Hardcover, so report success and warn instead of failing.

@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Kameleon21/oku/internal/app"
+	"github.com/Kameleon21/oku/internal/config"
 	"github.com/Kameleon21/oku/internal/model"
 	"github.com/Kameleon21/oku/internal/store"
 	"github.com/charmbracelet/x/exp/golden"
@@ -93,7 +94,7 @@ func TestPrivateNoteSavesWithoutHardcover(t *testing.T) {
 	}
 	defer db.Close()
 	m := finishedModel(t, 80, 24)
-	m.app = &app.App{Store: db} // No API client: saving must remain fully local.
+	m.app = app.New(nil, db, config.Config{}) // No API client: saving must remain fully local.
 	send(t, m, runeKey('n'))
 	n := m.topModal().(*journalModal)
 	n.text.SetValue("My private thoughts")

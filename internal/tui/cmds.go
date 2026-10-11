@@ -112,7 +112,7 @@ func loadCachedLibraryCmd(a *app.App) tea.Cmd {
 		if err != nil {
 			return libraryLoadedMsg{err: err}
 		}
-		paused, err := a.Store.ListUserBooks(model.StatusPaused)
+		paused, err := a.CachedBooks(model.StatusPaused)
 		if err != nil {
 			return libraryLoadedMsg{err: err}
 		}
@@ -141,7 +141,7 @@ func loadLibraryCmd(ctx context.Context, a *app.App, refresh bool) tea.Cmd {
 		if err != nil {
 			return libraryLoadedMsg{err: err}
 		}
-		paused, err := a.Store.ListUserBooks(model.StatusPaused)
+		paused, err := a.CachedBooks(model.StatusPaused)
 		if err != nil {
 			return libraryLoadedMsg{err: err}
 		}
@@ -186,7 +186,7 @@ func loadLocalDataCmd(a *app.App, now func() time.Time) tea.Cmd {
 		if err != nil {
 			return localDataLoadedMsg{err: err}
 		}
-		notes, err := a.Store.ListPrivateNotes()
+		notes, err := a.ListPrivateNotes()
 		if err != nil {
 			return localDataLoadedMsg{err: err}
 		}
@@ -202,7 +202,7 @@ func loadLocalDataCmd(a *app.App, now func() time.Time) tea.Cmd {
 		// Resolved here, off the render path: View must not query the store.
 		var timerBook *model.Book
 		if timer != nil && timer.BookID > 0 {
-			if b, err := a.Store.GetBookByID(timer.BookID); err == nil {
+			if b, err := a.CachedBook(timer.BookID); err == nil {
 				timerBook = b
 			}
 		}
@@ -221,10 +221,8 @@ func loadLocalDataCmd(a *app.App, now func() time.Time) tea.Cmd {
 		}
 
 		var recentSearches []string
-		if a.Store != nil {
-			if raw, err := a.Store.GetState(recentSearchesKey); err == nil {
-				recentSearches = decodeRecentSearches(raw)
-			}
+		if raw, err := a.RecentSearches(); err == nil {
+			recentSearches = decodeRecentSearches(raw)
 		}
 
 		return localDataLoadedMsg{
@@ -243,13 +241,13 @@ func loadLocalDataCmd(a *app.App, now func() time.Time) tea.Cmd {
 // saveRecentSearchesCmd persists the search history off the update loop. It is
 // best effort: a failing write must not interrupt a search.
 func saveRecentSearchesCmd(a *app.App, queries []string) tea.Cmd {
-	if a == nil || a.Store == nil {
+	if a == nil {
 		return nil
 	}
 	snapshot := append([]string(nil), queries...)
 	return func() tea.Msg {
 		if raw, err := encodeRecentSearches(snapshot); err == nil {
-			_ = a.Store.SetState(recentSearchesKey, raw)
+			_ = a.SaveRecentSearches(raw)
 		}
 		return nil
 	}
@@ -436,7 +434,7 @@ func startTimerForBookCmd(a *app.App, bookID int) tea.Cmd {
 
 		info := "Timer started"
 		if bookID > 0 {
-			if b, err := a.Store.GetBookByID(bookID); err == nil && b != nil {
+			if b, err := a.CachedBook(bookID); err == nil && b != nil {
 				info = fmt.Sprintf("Timer started — %s", b.Title)
 			}
 		}

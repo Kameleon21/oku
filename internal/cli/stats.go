@@ -33,7 +33,7 @@ func newStatsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer a.Store.Close()
+			defer a.Close()
 
 			stats, err := a.GetReadingStats()
 			if err != nil {

@@ -16,31 +16,31 @@ const genreBreakdownLimit = 6
 func (a *App) GetReadingStats() (*model.ReadingStats, error) {
 	year := time.Now().Year()
 
-	summary, err := a.Store.GetYearSummary(year)
+	summary, err := a.store.GetYearSummary(year)
 	if err != nil {
 		return nil, err
 	}
-	finished, err := a.Store.ListFinishedBooks(year)
+	finished, err := a.store.ListFinishedBooks(year)
 	if err != nil {
 		return nil, err
 	}
-	months, err := a.Store.GetBooksPerMonth(year)
+	months, err := a.store.GetBooksPerMonth(year)
 	if err != nil {
 		return nil, err
 	}
-	years, err := a.Store.GetBooksPerYear()
+	years, err := a.store.GetBooksPerYear()
 	if err != nil {
 		return nil, err
 	}
-	ratings, err := a.Store.GetRatingsDistribution()
+	ratings, err := a.store.GetRatingsDistribution()
 	if err != nil {
 		return nil, err
 	}
-	genres, err := a.Store.GetGenreBreakdown(genreBreakdownLimit)
+	genres, err := a.store.GetGenreBreakdown(genreBreakdownLimit)
 	if err != nil {
 		return nil, err
 	}
-	goals, err := a.Store.ListGoals()
+	goals, err := a.store.ListGoals()
 	if err != nil {
 		return nil, err
 	}
@@ -90,13 +90,16 @@ func pickBooksGoal(goals []model.Goal) *model.Goal {
 // SyncStats refreshes the journal and goal caches from the API. Journal
 // history is limited to what the heatmap can show plus margin.
 func (a *App) SyncStats(ctx context.Context) error {
+	if err := a.requireOnline(); err != nil {
+		return err
+	}
 	userID, err := a.cachedUserID(ctx)
 	if err != nil {
 		return err
 	}
 
 	since := time.Now().AddDate(-1, 0, 0)
-	apiJournals, err := a.API.ListReadingJournals(ctx, userID, since)
+	apiJournals, err := a.hc.ListReadingJournals(ctx, userID, since)
 	if err != nil {
 		return err
 	}
@@ -111,11 +114,11 @@ func (a *App) SyncStats(ctx context.Context) error {
 		}
 		entries = append(entries, model.JournalEntry{ID: j.ID, ActionAt: t, Event: j.Event})
 	}
-	if err := a.Store.ReplaceReadingJournals(entries); err != nil {
+	if err := a.store.ReplaceReadingJournals(entries); err != nil {
 		return err
 	}
 
-	apiGoals, err := a.API.ListGoals(ctx)
+	apiGoals, err := a.hc.ListGoals(ctx)
 	if err != nil {
 		return err
 	}
@@ -140,21 +143,24 @@ func (a *App) SyncStats(ctx context.Context) error {
 		}
 		goals = append(goals, goal)
 	}
-	return a.Store.ReplaceGoals(goals)
+	return a.store.ReplaceGoals(goals)
 }
 
 // cachedUserID returns the Hardcover user ID from local state, fetching and
 // caching it via the API when absent.
 func (a *App) cachedUserID(ctx context.Context) (int, error) {
-	if val, err := a.Store.GetState("user_id"); err == nil {
+	if val, err := a.store.GetState("user_id"); err == nil {
 		if id, err := strconv.Atoi(strings.TrimSpace(val)); err == nil && id > 0 {
 			return id, nil
 		}
 	}
-	id, _, err := a.API.GetMe(ctx)
+	if err := a.requireOnline(); err != nil {
+		return 0, err
+	}
+	id, _, err := a.hc.GetMe(ctx)
 	if err != nil {
 		return 0, err
 	}
-	_ = a.Store.SetState("user_id", strconv.Itoa(id))
+	_ = a.store.SetState("user_id", strconv.Itoa(id))
 	return id, nil
 }

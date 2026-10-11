@@ -27,7 +27,7 @@ func newUpdateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer a.Store.Close()
+			defer a.Close()
 
 			newPage, err := a.UpdateProgress(ctx(), bookID, pageUpdate)
 			if err != nil {

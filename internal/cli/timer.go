@@ -35,11 +35,11 @@ func newTimerStartCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer a.Store.Close()
+			defer a.Close()
 
 			if bookID == 0 {
 				// Always require explicit selection from currently reading books.
-				books, err := a.Store.ListUserBooks(model.StatusCurrentlyReading)
+				books, err := a.CachedBooks(model.StatusCurrentlyReading)
 				if err != nil {
 					return err
 				}
@@ -65,7 +65,7 @@ func newTimerStartCmd() *cobra.Command {
 			fmt.Printf("\nTimer started — %s\n", now.Format("3:04 PM"))
 
 			if bookID > 0 {
-				if b, err := a.Store.GetBookByID(bookID); err == nil && b != nil {
+				if b, err := a.CachedBook(bookID); err == nil && b != nil {
 					fmt.Printf("  Book: %s\n", b.Title)
 				}
 			}
@@ -87,7 +87,7 @@ func newTimerStopCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer a.Store.Close()
+			defer a.Close()
 
 			session, err := a.TimerStop()
 			if err != nil {
@@ -113,7 +113,7 @@ func newTimerStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer a.Store.Close()
+			defer a.Close()
 
 			state, err := a.TimerStatus()
 			if err != nil {
@@ -127,7 +127,7 @@ func newTimerStatusCmd() *cobra.Command {
 			elapsed := time.Since(state.StartedAt)
 			fmt.Printf("\nTimer running — %s elapsed\n", format.Duration(elapsed))
 			if state.BookID > 0 {
-				if b, err := a.Store.GetBookByID(state.BookID); err == nil && b != nil {
+				if b, err := a.CachedBook(state.BookID); err == nil && b != nil {
 					fmt.Printf("  Book: %s\n", b.Title)
 				}
 			}
@@ -152,7 +152,7 @@ func newTimerStatsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer a.Store.Close()
+			defer a.Close()
 
 			stats, err := a.TimerStats(weeks)
 			if err != nil {
@@ -235,7 +235,7 @@ func newTimerListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer a.Store.Close()
+			defer a.Close()
 
 			sessions, err := a.TimerList(limit)
 			if err != nil {

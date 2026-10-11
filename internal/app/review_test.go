@@ -21,7 +21,7 @@ func upsertBookWithStatus(t *testing.T, a *App, userBookID, bookID int, status m
 		},
 		UpdatedAt: time.Now().UTC(),
 	}
-	if err := a.Store.UpsertUserBook(ub); err != nil {
+	if err := a.store.UpsertUserBook(ub); err != nil {
 		t.Fatalf("UpsertUserBook: %v", err)
 	}
 }

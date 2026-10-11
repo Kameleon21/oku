@@ -58,13 +58,13 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		} else if r.selection.Result != nil {
 			id = r.selection.Result.ID
 		}
-		if id == 0 || m.app == nil || m.app.API == nil {
+		if id == 0 || m.app == nil || !m.app.Online() {
 			return m.showToast(toastWarn, "Hardcover is unavailable"), true
 		}
 		detail := func() tea.Msg { b, err := m.app.GetBookDetail(m.ctx, id, false); return detailLoadedMsg{id, b, err} }
 		if r.selection.Book != nil {
 			return m.beginLoading(detail, func() tea.Msg {
-				entries, err := m.app.API.BookJournal(m.ctx, id)
+				entries, err := m.app.BookJournal(m.ctx, id)
 				return journalLoadedMsg{id, entries, err}
 			}), true
 		}
@@ -92,7 +92,7 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		m.detail.stamp++
 		return nil, true
 	case reqPausedShelf:
-		if m.app == nil || m.app.API == nil {
+		if m.app == nil || !m.app.Online() {
 			return m.showToast(toastWarn, "Hardcover is unavailable"), true
 		}
 		return m.beginLoading(func() tea.Msg {
@@ -110,7 +110,7 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		if m.isLoading() {
 			return m.showToast(toastWarn, inFlightNotice), true
 		}
-		if m.app == nil || m.app.API == nil {
+		if m.app == nil || !m.app.Online() {
 			return m.showToast(toastWarn, "Hardcover is unavailable"), true
 		}
 		return m.beginLoading(func() tea.Msg {
@@ -121,7 +121,7 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		if m.isLoading() {
 			return m.showToast(toastWarn, inFlightNotice), true
 		}
-		if m.app == nil || m.app.API == nil {
+		if m.app == nil || !m.app.Online() {
 			return m.showToast(toastWarn, "Hardcover is unavailable"), true
 		}
 		return m.beginLoading(func() tea.Msg { ids, err := m.app.RefreshQueue(m.ctx); return queueLoadedMsg{ids: ids, err: err} }), true
@@ -144,7 +144,7 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		return tea.Batch(cmd, m.showToast(toastSuccess, "Reading queue saved")), true
 	case reqTrending:
 		return m.beginLoading(func() tea.Msg {
-			if m.app == nil || m.app.API == nil || m.app.Store == nil {
+			if m.app == nil || !m.app.Online() {
 				return searchLoadedMsg{seq: r.seq, err: fmt.Errorf("Hardcover is unavailable")}
 			}
 			books, err := m.app.TrendingBooks(m.ctx, "week", 20, false)
@@ -156,10 +156,10 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		}
 		return m.beginLoading(func() tea.Msg {
 			var err error
-			if m.app == nil || m.app.Store == nil {
+			if m.app == nil {
 				err = fmt.Errorf("local storage is unavailable")
 			} else {
-				err = m.app.Store.SavePrivateNote(r.bookID, r.text)
+				err = m.app.SavePrivateNote(r.bookID, r.text)
 			}
 			return opDoneMsg{op: opPrivateNote, seq: r.token, bookID: r.bookID, privateNote: r.text, err: err, info: "Private note saved on this device"}
 		}), true
@@ -167,7 +167,7 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		if m.isLoading() {
 			return m.refuse(opJournal, r.token), true
 		}
-		if m.app == nil || m.app.API == nil {
+		if m.app == nil || !m.app.Online() {
 			return request(opDoneMsg{op: opJournal, seq: r.token, err: fmt.Errorf("Hardcover is unavailable")}), true
 		}
 		return m.beginLoading(func() tea.Msg {

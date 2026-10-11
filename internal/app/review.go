@@ -11,6 +11,9 @@ import (
 
 // RateBook updates a rating for a book in the user's library.
 func (a *App) RateBook(ctx context.Context, bookID int, rating float64) error {
+	if err := a.requireOnline(); err != nil {
+		return err
+	}
 	if err := model.ValidateRating(rating); err != nil {
 		return err
 	}
@@ -20,7 +23,7 @@ func (a *App) RateBook(ctx context.Context, bookID int, rating float64) error {
 		return err
 	}
 
-	ub, err := a.Store.GetUserBookByBookID(resolvedID)
+	ub, err := a.store.GetUserBookByBookID(resolvedID)
 	if err != nil {
 		return err
 	}
@@ -28,13 +31,13 @@ func (a *App) RateBook(ctx context.Context, bookID int, rating float64) error {
 		return fmt.Errorf("book ID %d not found in cache. Run: oku sync", resolvedID)
 	}
 
-	if err := a.API.UpdateUserBookRating(ctx, ub.ID, rating); err != nil {
+	if err := a.hc.UpdateUserBookRating(ctx, ub.ID, rating); err != nil {
 		return fmt.Errorf("update rating: %w", err)
 	}
 
 	ub.Rating = rating
 	ub.UpdatedAt = time.Now().UTC()
-	if err := a.Store.UpsertUserBook(*ub); err != nil {
+	if err := a.store.UpsertUserBook(*ub); err != nil {
 		return err
 	}
 	return nil
@@ -42,6 +45,9 @@ func (a *App) RateBook(ctx context.Context, bookID int, rating float64) error {
 
 // ReviewBook updates both rating and review text for a book in the user's library.
 func (a *App) ReviewBook(ctx context.Context, bookID int, rating float64, review string) error {
+	if err := a.requireOnline(); err != nil {
+		return err
+	}
 	if err := model.ValidateRating(rating); err != nil {
 		return err
 	}
@@ -51,7 +57,7 @@ func (a *App) ReviewBook(ctx context.Context, bookID int, rating float64, review
 		return err
 	}
 
-	ub, err := a.Store.GetUserBookByBookID(resolvedID)
+	ub, err := a.store.GetUserBookByBookID(resolvedID)
 	if err != nil {
 		return err
 	}
@@ -60,7 +66,7 @@ func (a *App) ReviewBook(ctx context.Context, bookID int, rating float64, review
 	}
 
 	reviewedAt := time.Now().UTC()
-	if err := a.API.UpdateUserBookReviewAndRating(ctx, ub.ID, rating, review, reviewedAt.Format(time.DateOnly)); err != nil {
+	if err := a.hc.UpdateUserBookReviewAndRating(ctx, ub.ID, rating, review, reviewedAt.Format(time.DateOnly)); err != nil {
 		return fmt.Errorf("update review: %w", err)
 	}
 
@@ -68,7 +74,7 @@ func (a *App) ReviewBook(ctx context.Context, bookID int, rating float64, review
 	ub.Review = review
 	ub.ReviewedAt = &reviewedAt
 	ub.UpdatedAt = reviewedAt
-	if err := a.Store.UpsertUserBook(*ub); err != nil {
+	if err := a.store.UpsertUserBook(*ub); err != nil {
 		return err
 	}
 	return nil
@@ -122,7 +128,7 @@ func (a *App) ListAllCachedUserBooks() ([]model.UserBook, error) {
 	seen := map[int]struct{}{}
 	out := make([]model.UserBook, 0, 64)
 	for _, status := range model.AllStatuses {
-		books, err := a.Store.ListUserBooks(status)
+		books, err := a.store.ListUserBooks(status)
 		if err != nil {
 			return nil, err
 		}

@@ -60,10 +60,14 @@ func TestCurateTrending(t *testing.T) {
 }
 
 func TestTrendingBooksRejectsBadLimit(t *testing.T) {
-	a := &App{}
+	hc := newFakeHardcover()
+	a := newTestAppWith(t, hc)
 	for _, limit := range []int{-1, 0, 101} {
 		if _, err := a.TrendingBooks(context.Background(), "week", limit, false); err == nil {
 			t.Errorf("limit %d accepted", limit)
 		}
+	}
+	if len(hc.calls) != 0 {
+		t.Fatalf("bad limits reached Hardcover: %v", hc.calls)
 	}
 }
