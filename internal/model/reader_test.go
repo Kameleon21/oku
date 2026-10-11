@@ -36,7 +36,7 @@ func TestParseRatingDistribution(t *testing.T) {
 			t.Errorf("%s: got %v, %v; want %v", name, got, err, want)
 		}
 	}
-	for _, raw := range []string{"", "null"} {
+	for _, raw := range []string{"", "null", " null\n"} {
 		if got, err := ParseRatingDistribution(raw); got != nil || err != nil {
 			t.Errorf("%q: got %v, %v; want nothing", raw, got, err)
 		}

@@ -14,7 +14,7 @@ import (
 // Bump this whenever schemaDDL, its index list, or the ensureColumn lists in
 // migrate change. A database already at the old value skips migrate entirely,
 // so without a bump existing installations silently never get the change.
-const schemaVersion = 2
+const schemaVersion = 3
 
 // Store wraps a SQLite database connection for local book data.
 type Store struct {
@@ -196,6 +196,12 @@ func migrate(db *sql.DB) error {
 		if err := ensureColumn(db, "user_books", col.name, col.def); err != nil {
 			return err
 		}
+	}
+
+	// Before version 3 a book with no tags could be cached with the JSON
+	// literal null as its tags.
+	if _, err := db.Exec(`UPDATE books SET cached_tags = '' WHERE cached_tags = 'null'`); err != nil {
+		return fmt.Errorf("clear null cached_tags: %w", err)
 	}
 
 	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {

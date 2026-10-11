@@ -86,7 +86,7 @@ func TestListReadingJournalsFiltersByUserAndDate(t *testing.T) {
 }
 
 func TestUserBooksQueryFetchesAllReadsAndTags(t *testing.T) {
-	q := userBooksQuery(3, true)
+	q := userBooksQuery(3, userBooksFull)
 	if strings.Contains(q, "limit: 1") {
 		t.Fatal("extended query must fetch all user_book_reads, not just the latest")
 	}
@@ -94,7 +94,7 @@ func TestUserBooksQueryFetchesAllReadsAndTags(t *testing.T) {
 		t.Fatal("extended query missing cached_tags")
 	}
 	// The minimal fallback stays conservative.
-	fallbackQ := userBooksQuery(3, false)
+	fallbackQ := userBooksQuery(3, userBooksMinimal)
 	if strings.Contains(fallbackQ, "cached_tags") {
 		t.Fatal("fallback query should not request cached_tags")
 	}

@@ -6,6 +6,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -74,6 +75,7 @@ type RatingBucket struct {
 // ParseRatingDistribution accepts Hardcover's array and older keyed-object
 // shape, returning buckets from the highest rating down.
 func ParseRatingDistribution(raw string) ([]RatingBucket, error) {
+	raw = strings.TrimSpace(raw)
 	if raw == "" || raw == "null" {
 		return nil, nil
 	}

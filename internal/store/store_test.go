@@ -723,3 +723,41 @@ func TestLibraryBookIDsCoversEveryShelf(t *testing.T) {
 		t.Fatalf("ids %v", ids)
 	}
 }
+
+func TestUpgradeClearsNullCachedTags(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "upgrade.db")
+	s, err := New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range []model.Book{
+		{ID: 1, Title: "Untagged", CachedTags: "null"},
+		{ID: 2, Title: "Tagged", CachedTags: `{"Genre":[{"tag":"Fantasy"}]}`},
+	} {
+		if err := s.UpsertBook(b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.db.Exec(`PRAGMA user_version = 2`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	s, err = New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for id, want := range map[int]string{1: "", 2: `{"Genre":[{"tag":"Fantasy"}]}`} {
+		b, err := s.GetBookByID(id)
+		if err != nil || b == nil {
+			t.Fatalf("GetBookByID(%d): %v, %v", id, b, err)
+		}
+		if b.CachedTags != want {
+			t.Errorf("book %d cached_tags = %q, want %q", id, b.CachedTags, want)
+		}
+	}
+	if got := userVersion(t, s); got != schemaVersion {
+		t.Fatalf("version = %d, want %d", got, schemaVersion)
+	}
+}

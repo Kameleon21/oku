@@ -53,22 +53,29 @@ func (c *Client) GetAccountPrivacySetting(ctx context.Context) (int, error) {
 	return *resp.Me[0].AccountPrivacySettingID, nil
 }
 
-// ListUserBooks returns the user's books filtered by status ID.
+// userBooksSelection is how much of each user book ListUserBooks asks for.
+// Hardcover's schema can drift, so each tier drops what is most likely to be
+// rejected while keeping as much of the library as it can.
+type userBooksSelection int
+
+const (
+	userBooksFull     userBooksSelection = iota // everything, featured series included
+	userBooksNoSeries                           // everything except the featured series
+	userBooksMinimal                            // a small, long-stable subset
+)
+
+// ListUserBooks returns the user's books filtered by status ID. When Hardcover
+// rejects a field it retries with the next smaller selection, so losing the
+// series never costs ratings, reviews and read history too.
 func (c *Client) ListUserBooks(ctx context.Context, statusID int) ([]APIUserBook, error) {
-	q := userBooksQuery(statusID, true)
-
-	req := graphql.NewRequest(q)
-
 	var resp UserBooksResponse
-	if err := c.do(ctx, req, &resp); err != nil {
-		// Schema can differ between API versions; fall back to a minimal stable query.
-		if isSchemaFieldError(err) {
-			q = userBooksQuery(statusID, false)
-			req = graphql.NewRequest(q)
-			if err := c.do(ctx, req, &resp); err != nil {
-				return nil, fmt.Errorf("ListUserBooks: %w", err)
-			}
-		} else {
+	for sel := userBooksFull; ; sel++ {
+		resp = UserBooksResponse{}
+		err := c.do(ctx, graphql.NewRequest(userBooksQuery(statusID, sel)), &resp)
+		if err == nil {
+			break
+		}
+		if sel == userBooksMinimal || !isSchemaFieldError(err) {
 			return nil, fmt.Errorf("ListUserBooks: %w", err)
 		}
 	}
@@ -79,8 +86,8 @@ func (c *Client) ListUserBooks(ctx context.Context, statusID int) ([]APIUserBook
 	return resp.Me[0].UserBooks, nil
 }
 
-func userBooksQuery(statusID int, extended bool) string {
-	if !extended {
+func userBooksQuery(statusID int, sel userBooksSelection) string {
+	if sel == userBooksMinimal {
 		return fmt.Sprintf(`query {
   me {
     user_books(where: { status_id: { _eq: %d } }) {
@@ -111,6 +118,18 @@ func userBooksQuery(statusID int, extended bool) string {
 }`, statusID)
 	}
 
+	seriesFields := ""
+	if sel == userBooksFull {
+		seriesFields = `        featured_book_series {
+          position
+          series {
+            id
+            name
+          }
+        }
+`
+	}
+
 	return fmt.Sprintf(`query {
   me {
     user_books(where: { status_id: { _eq: %d } }) {
@@ -138,14 +157,7 @@ func userBooksQuery(statusID int, extended bool) string {
         users_read_count
         release_date
         cached_tags
-        featured_book_series {
-          position
-          series {
-            id
-            name
-          }
-        }
-        contributions {
+%s        contributions {
           author {
             name
           }
@@ -156,7 +168,7 @@ func userBooksQuery(statusID int, extended bool) string {
       }
     }
   }
-}`, statusID)
+}`, statusID, seriesFields)
 }
 
 // ListGoals returns the user's reading goals.
