@@ -3,10 +3,11 @@ package tui
 import (
 	"context"
 	"reflect"
-	"runtime"
 	"strings"
 	"testing"
+	"time"
 
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
@@ -82,38 +83,60 @@ func deliver(t *testing.T, m *Model, cmd tea.Cmd) tea.Cmd {
 	return next
 }
 
-// runFn is the one function the runner starts every command through, which
-// is how a test tells the runner's work apart from a tick it must not wait
-// on.
-var runFn = reflect.ValueOf(runCmd{}.run).Pointer()
+// drainTimeout is how long drain waits on a command it cannot place up
+// front. Work against the fake answers at once; a command still running
+// after this is a timer, and is left to it.
+const drainTimeout = 100 * time.Millisecond
 
-// isBatch reports whether cmd is a tea.Batch of two or more commands, which
-// can be taken apart without running anything. The closure tea.Batch
-// answers with is inlined at each call site, so it has no one address, but
-// its name keeps the function it came from; TestDrainTellsBatchesApart pins
-// that against the toolchain.
-func isBatch(cmd tea.Cmd) bool {
-	return strings.Contains(runtime.FuncForPC(reflect.ValueOf(cmd).Pointer()).Name(), ".Batch.compactCmds[")
-}
+// The commands drain can place without running them: the runner's and the
+// requests, which answer at once and are run on the spot, and the two
+// timers the dashboard arms, which are skipped without the wait. The timers
+// are only a shortcut — a tick that is not recognised is still only a wait
+// away from being skipped.
+var (
+	runFn     = reflect.ValueOf(runCmd{}.run).Pointer()
+	tickFn    = reflect.ValueOf(tea.Tick(time.Hour, func(time.Time) tea.Msg { return nil })).Pointer()
+	spinnerFn = reflect.ValueOf(spinner.Model{}.Tick).Pointer()
+)
 
 // drain runs the work cmd holds the way the runtime would, synchronously:
-// the runner's commands are executed and their results fed back in, the
-// requests delivered, a batch taken apart, and whatever the model answers
-// with drained in turn. Ticks — the spinner, a toast's expiry, the
-// background check — are left alone, so a drained model is at rest with
+// every command is executed, a batch taken apart, the runner's results and
+// the requests fed back in, any other message delivered, and whatever the
+// model answers with drained in turn. A command that does not answer within
+// drainTimeout is a timer — the spinner, a toast's expiry, the background
+// check, a cursor blink — and is left alone: nothing drain runs may block
+// on anything else. The spinner's own tick is dropped rather than fed, since
+// feeding it would only arm the next frame. A drained model is at rest with
 // nothing in flight.
 func drain(t *testing.T, m *Model, cmd tea.Cmd) {
 	t.Helper()
 	if cmd == nil {
 		return
 	}
-	switch {
-	case isBatch(cmd):
-		for _, c := range cmd().(tea.BatchMsg) {
+	var msg tea.Msg
+	switch reflect.ValueOf(cmd).Pointer() {
+	case runFn, requestFn:
+		msg = cmd()
+	case tickFn, spinnerFn:
+		return
+	default:
+		answer := make(chan tea.Msg, 1)
+		go func() { answer <- cmd() }()
+		select {
+		case msg = <-answer:
+		case <-time.After(drainTimeout):
+			return
+		}
+	}
+	switch msg := msg.(type) {
+	case nil, spinner.TickMsg:
+		return
+	case tea.BatchMsg:
+		for _, c := range msg {
 			drain(t, m, c)
 		}
-	case reflect.ValueOf(cmd).Pointer() == runFn, reflect.ValueOf(cmd).Pointer() == requestFn:
-		_, next := m.Update(cmd())
+	default:
+		_, next := m.Update(msg)
 		drain(t, m, next)
 	}
 }

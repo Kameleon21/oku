@@ -760,7 +760,9 @@ func (m *Model) run(cmds ...tea.Cmd) tea.Cmd {
 // handles its result the way any other message is handled. A command that
 // was itself a batch answers with its parts, each a command of its own: they
 // are started here, and counted, in its place. A nil result is a command
-// that had nothing to say.
+// that had nothing to say. A tea.Sequence must not be passed to run: its
+// parts come back in a message this package cannot see, so the slot would
+// be released without them being run.
 func (m *Model) finish(res resultMsg) tea.Cmd {
 	m.endLoading()
 	switch msg := res.msg.(type) {

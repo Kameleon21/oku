@@ -106,13 +106,11 @@ func (f *fakeBackend) call(method string, args ...any) error {
 // remote records a call that needs Hardcover: offline beats any injected
 // error, the way App refuses before it tries.
 func (f *fakeBackend) remote(method string, args ...any) error {
-	if err := f.call(method, args...); err != nil {
-		return err
-	}
+	err := f.call(method, args...)
 	if !f.online {
 		return app.ErrOffline
 	}
-	return nil
+	return err
 }
 
 // write is remote for a mutation: an injected ErrCacheRefresh is handed back
@@ -126,7 +124,11 @@ func (f *fakeBackend) write(apply func(), method string, args ...any) error {
 	return err
 }
 
-func (f *fakeBackend) Online() bool { return f.online }
+func (f *fakeBackend) Online() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.online
+}
 
 func (f *fakeBackend) ListCachedBooks(status model.Status) ([]model.UserBook, bool, error) {
 	f.mu.Lock()
@@ -171,7 +173,7 @@ func (f *fakeBackend) ListAllCachedUserBooks() ([]model.UserBook, error) {
 	}
 	var all []model.UserBook
 	for _, status := range model.AllStatuses {
-		all = append(all, f.books[status]...)
+		all = append(all, f.shelf(status)...)
 	}
 	return all, nil
 }
@@ -183,7 +185,7 @@ func (f *fakeBackend) CachedBook(id int) (*model.Book, error) {
 		return nil, err
 	}
 	if b := f.find(id); b != nil {
-		book := b.Book
+		book := cloneBook(*b).Book
 		return &book, nil
 	}
 	return nil, nil
@@ -198,7 +200,11 @@ func (f *fakeBackend) CachedQueueOrder() ([]int, error) {
 	return append([]int(nil), f.queue...), nil
 }
 
-func (f *fakeBackend) LastSyncAt() time.Time { return f.lastSync }
+func (f *fakeBackend) LastSyncAt() time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastSync
+}
 
 func (f *fakeBackend) SyncAll(ctx context.Context) error {
 	f.mu.Lock()
@@ -326,7 +332,7 @@ func (f *fakeBackend) BookJournal(ctx context.Context, bookID int) ([]api.Journa
 	if err := f.remote("BookJournal", bookID); err != nil {
 		return nil, err
 	}
-	return f.journals[bookID], nil
+	return append([]api.JournalEntry(nil), f.journals[bookID]...), nil
 }
 
 func (f *fakeBackend) GetReadingStats() (*model.ReadingStats, error) {
@@ -436,7 +442,37 @@ func (f *fakeBackend) TimerList(limit int) ([]model.ReadingSession, error) {
 // shelf is a copy of one status's books, so a caller cannot reach into the
 // fake's own rows.
 func (f *fakeBackend) shelf(status model.Status) []model.UserBook {
-	return append([]model.UserBook(nil), f.books[status]...)
+	out := make([]model.UserBook, 0, len(f.books[status]))
+	for _, b := range f.books[status] {
+		out = append(out, cloneBook(b))
+	}
+	return out
+}
+
+// cloneBook is a user book with nothing shared with the fake's own row: the
+// reads, their dates and the authors are copied, so a test sees a change
+// only once a reload has brought it in, and a running program never reads
+// what a write is changing.
+func cloneBook(b model.UserBook) model.UserBook {
+	b.Book.Authors = append([]string(nil), b.Book.Authors...)
+	b.ReviewedAt = cloneTime(b.ReviewedAt)
+	if b.UserBookReads != nil {
+		reads := make([]model.UserBookRead, len(b.UserBookReads))
+		for i, r := range b.UserBookReads {
+			r.StartedAt, r.FinishedAt = cloneTime(r.StartedAt), cloneTime(r.FinishedAt)
+			reads[i] = r
+		}
+		b.UserBookReads = reads
+	}
+	return b
+}
+
+func cloneTime(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	c := *t
+	return &c
 }
 
 // find is the fake's own row for a book, on whichever shelf it is.

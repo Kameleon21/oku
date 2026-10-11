@@ -334,25 +334,37 @@ func TestRunnerCountsABatchedCommandPerPartAndANilResultOnce(t *testing.T) {
 	}
 }
 
-// TestDrainTellsBatchesApart pins the helper the tests above lean on to
-// the toolchain: a tea.Batch is recognised by name, and nothing else is.
-func TestDrainTellsBatchesApart(t *testing.T) {
-	a := func() tea.Msg { return nil }
-	if !isBatch(tea.Batch(a, a)) {
-		t.Fatal("a batch of two commands should be recognised")
+// TestDrainRunsBatchesAndSkipsTimers pins the helper the tests above lean
+// on: a batch is taken apart and every part run, a message is delivered, and
+// a timer — recognised or not — is skipped without hanging the test.
+func TestDrainRunsBatchesAndSkipsTimers(t *testing.T) {
+	m := newTestModel()
+	ran := 0
+	count := func() tea.Msg { ran++; return nil }
+	say := func(text string) tea.Cmd { return func() tea.Msg { return reqToast{toastInfo, text} } }
+	stuck := make(chan struct{})
+	t.Cleanup(func() { close(stuck) })
+	blocked := func() tea.Msg { <-stuck; return nil }
+
+	started := time.Now()
+	drain(t, m, tea.Batch(
+		count,
+		tea.Batch(count, say("nested")),
+		tea.Tick(time.Hour, func(time.Time) tea.Msg { return nil }),
+		m.shared.spin.Tick,
+		blocked,
+	))
+	if ran != 2 {
+		t.Fatalf("ran %d of the batch's commands, want both", ran)
 	}
-	for name, cmd := range map[string]tea.Cmd{
-		"sequence": tea.Sequence(a, a),
-		"tick":     tea.Tick(time.Hour, func(time.Time) tea.Msg { return nil }),
-		"runner":   runCmd{a}.run,
-		"request":  request(nil),
-		"plain":    a,
-	} {
-		if isBatch(cmd) {
-			t.Fatalf("%s was taken for a batch", name)
-		}
+	if m.toast.text != "nested" {
+		t.Fatalf("toast = %+v, want the nested command's message delivered", m.toast)
 	}
-	if reflect.ValueOf(runCmd{a}.run).Pointer() != runFn {
+	if took := time.Since(started); took > 2*drainTimeout {
+		t.Fatalf("drain took %v: a timer should cost at most one wait", took)
+	}
+
+	if reflect.ValueOf(runCmd{count}.run).Pointer() != runFn {
 		t.Fatal("the runner's commands should share one function")
 	}
 }

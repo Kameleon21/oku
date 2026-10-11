@@ -33,7 +33,7 @@ func openReview(m *Model, book model.UserBook) *reviewModal {
 	return m.topModal().(*reviewModal)
 }
 
-func TestLoadLibraryCmdWithNilAppReturnsError(t *testing.T) {
+func TestLoadLibraryCmdWithNoBackendReturnsError(t *testing.T) {
 	cmd := loadLibraryCmd(context.Background(), noBackend{}, false)
 	if cmd == nil {
 		t.Fatal("loadLibraryCmd() returned nil cmd")
@@ -45,11 +45,11 @@ func TestLoadLibraryCmdWithNilAppReturnsError(t *testing.T) {
 		t.Fatalf("loadLibraryCmd() msg type = %T, want libraryLoadedMsg", msg)
 	}
 	if loaded.err == nil {
-		t.Fatal("expected libraryLoadedMsg error for nil app")
+		t.Fatal("expected libraryLoadedMsg error without a backend")
 	}
 }
 
-func TestLoadCachedLibraryCmdWithNilAppReturnsError(t *testing.T) {
+func TestLoadCachedLibraryCmdWithNoBackendReturnsError(t *testing.T) {
 	cmd := loadCachedLibraryCmd(noBackend{})
 	if cmd == nil {
 		t.Fatal("loadCachedLibraryCmd() returned nil cmd")
@@ -61,7 +61,7 @@ func TestLoadCachedLibraryCmdWithNilAppReturnsError(t *testing.T) {
 		t.Fatalf("loadCachedLibraryCmd() msg type = %T, want libraryLoadedMsg", msg)
 	}
 	if loaded.err == nil {
-		t.Fatal("expected libraryLoadedMsg error for nil app")
+		t.Fatal("expected libraryLoadedMsg error without a backend")
 	}
 }
 
