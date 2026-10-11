@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Kameleon21/oku/internal/api"
 	"github.com/Kameleon21/oku/internal/app"
 	"github.com/Kameleon21/oku/internal/model"
 )
@@ -42,8 +41,8 @@ type fakeBackend struct {
 
 	results  []model.SearchResult
 	trending []model.SearchResult
-	details  map[int]*api.BookDetail
-	journals map[int][]api.JournalEntry
+	details  map[int]*model.BookDetail
+	journals map[int][]model.BookJournalEntry
 	nextID   int
 }
 
@@ -57,8 +56,8 @@ func newFakeBackend() *fakeBackend {
 		books:    map[model.Status][]model.UserBook{},
 		stats:    &model.ReadingStats{},
 		notes:    map[int]string{},
-		details:  map[int]*api.BookDetail{},
-		journals: map[int][]api.JournalEntry{},
+		details:  map[int]*model.BookDetail{},
+		journals: map[int][]model.BookJournalEntry{},
 		now:      time.Now,
 		nextID:   1000,
 	}
@@ -263,7 +262,7 @@ func (f *fakeBackend) AddJournalEntry(ctx context.Context, bookID int, event, te
 	id := 0
 	err := f.write(func() {
 		id = f.id()
-		f.journals[bookID] = append(f.journals[bookID], api.JournalEntry{Event: event, Entry: text})
+		f.journals[bookID] = append(f.journals[bookID], model.BookJournalEntry{Event: event, Entry: text})
 	}, "AddJournalEntry", bookID, event, text)
 	return id, err
 }
@@ -314,7 +313,7 @@ func (f *fakeBackend) TrendingBooks(ctx context.Context, period string, limit in
 	return f.trending, nil
 }
 
-func (f *fakeBackend) GetBookDetail(ctx context.Context, id int, refresh bool) (*api.BookDetail, error) {
+func (f *fakeBackend) GetBookDetail(ctx context.Context, id int, refresh bool) (*model.BookDetail, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.remote("GetBookDetail", id, refresh); err != nil {
@@ -326,13 +325,13 @@ func (f *fakeBackend) GetBookDetail(ctx context.Context, id int, refresh bool) (
 	return nil, fmt.Errorf("book %d not found", id)
 }
 
-func (f *fakeBackend) BookJournal(ctx context.Context, bookID int) ([]api.JournalEntry, error) {
+func (f *fakeBackend) BookJournal(ctx context.Context, bookID int) ([]model.BookJournalEntry, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.remote("BookJournal", bookID); err != nil {
 		return nil, err
 	}
-	return append([]api.JournalEntry(nil), f.journals[bookID]...), nil
+	return append([]model.BookJournalEntry(nil), f.journals[bookID]...), nil
 }
 
 func (f *fakeBackend) GetReadingStats() (*model.ReadingStats, error) {

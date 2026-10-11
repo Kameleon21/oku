@@ -53,22 +53,29 @@ func (c *Client) GetAccountPrivacySetting(ctx context.Context) (int, error) {
 	return *resp.Me[0].AccountPrivacySettingID, nil
 }
 
-// ListUserBooks returns the user's books filtered by status ID.
+// userBooksSelection is how much of each user book ListUserBooks asks for.
+// Hardcover's schema can drift, so each tier drops what is most likely to be
+// rejected while keeping as much of the library as it can.
+type userBooksSelection int
+
+const (
+	userBooksFull     userBooksSelection = iota // everything, featured series included
+	userBooksNoSeries                           // everything except the featured series
+	userBooksMinimal                            // a small, long-stable subset
+)
+
+// ListUserBooks returns the user's books filtered by status ID. When Hardcover
+// rejects a field it retries with the next smaller selection, so losing the
+// series never costs ratings, reviews and read history too.
 func (c *Client) ListUserBooks(ctx context.Context, statusID int) ([]APIUserBook, error) {
-	q := userBooksQuery(statusID, true)
-
-	req := graphql.NewRequest(q)
-
 	var resp UserBooksResponse
-	if err := c.do(ctx, req, &resp); err != nil {
-		// Schema can differ between API versions; fall back to a minimal stable query.
-		if isSchemaFieldError(err) {
-			q = userBooksQuery(statusID, false)
-			req = graphql.NewRequest(q)
-			if err := c.do(ctx, req, &resp); err != nil {
-				return nil, fmt.Errorf("ListUserBooks: %w", err)
-			}
-		} else {
+	for sel := userBooksFull; ; sel++ {
+		resp = UserBooksResponse{}
+		err := c.do(ctx, graphql.NewRequest(userBooksQuery(statusID, sel)), &resp)
+		if err == nil {
+			break
+		}
+		if sel == userBooksMinimal || !isSchemaFieldError(err) {
 			return nil, fmt.Errorf("ListUserBooks: %w", err)
 		}
 	}
@@ -79,8 +86,8 @@ func (c *Client) ListUserBooks(ctx context.Context, statusID int) ([]APIUserBook
 	return resp.Me[0].UserBooks, nil
 }
 
-func userBooksQuery(statusID int, extended bool) string {
-	if !extended {
+func userBooksQuery(statusID int, sel userBooksSelection) string {
+	if sel == userBooksMinimal {
 		return fmt.Sprintf(`query {
   me {
     user_books(where: { status_id: { _eq: %d } }) {
@@ -111,6 +118,18 @@ func userBooksQuery(statusID int, extended bool) string {
 }`, statusID)
 	}
 
+	seriesFields := ""
+	if sel == userBooksFull {
+		seriesFields = `        featured_book_series {
+          position
+          series {
+            id
+            name
+          }
+        }
+`
+	}
+
 	return fmt.Sprintf(`query {
   me {
     user_books(where: { status_id: { _eq: %d } }) {
@@ -138,7 +157,7 @@ func userBooksQuery(statusID int, extended bool) string {
         users_read_count
         release_date
         cached_tags
-        contributions {
+%s        contributions {
           author {
             name
           }
@@ -149,7 +168,7 @@ func userBooksQuery(statusID int, extended bool) string {
       }
     }
   }
-}`, statusID)
+}`, statusID, seriesFields)
 }
 
 // ListGoals returns the user's reading goals.
@@ -216,10 +235,11 @@ func isSchemaFieldError(err error) bool {
 		strings.Contains(msg, "field ") && strings.Contains(msg, " not found")
 }
 
-// SearchBooks searches for books by query string and returns parsed results.
+// SearchBooks searches for books by query string and returns the Typesense
+// documents of the hits.
 // User input travels as a GraphQL variable, never interpolated into the
 // query document, so no escaping is needed.
-func (c *Client) SearchBooks(ctx context.Context, query string, perPage int, mode model.SearchMode) ([]model.SearchResult, error) {
+func (c *Client) SearchBooks(ctx context.Context, query string, perPage int, mode model.SearchMode) ([]TypesenseBookDoc, error) {
 	config := searchConfigForMode(mode)
 
 	newSearchRequest := func(extraArgs string) *graphql.Request {
@@ -253,25 +273,12 @@ func (c *Client) SearchBooks(ctx context.Context, query string, perPage int, mod
 		return nil, fmt.Errorf("SearchBooks: parsing results: %w", err)
 	}
 
-	results := make([]model.SearchResult, 0, len(tsResults.Hits))
+	docs := make([]TypesenseBookDoc, 0, len(tsResults.Hits))
 	for _, hit := range tsResults.Hits {
-		doc := hit.Document
-		sr := model.SearchResult{
-			ID:      int(doc.ID),
-			Title:   doc.Title,
-			Authors: doc.AuthorNames,
-			Pages:   int(doc.Pages),
-			Slug:    doc.Slug,
-			Rating:  float64(doc.Rating),
-			Ratings: int(doc.Ratings),
-		}
-		if doc.Image != nil {
-			sr.ImageURL = doc.Image.URL
-		}
-		results = append(results, sr)
+		docs = append(docs, hit.Document)
 	}
 
-	return results, nil
+	return docs, nil
 }
 
 func isSearchFallbackError(err error) bool {
@@ -286,10 +293,11 @@ func isSearchFallbackError(err error) bool {
 		strings.Contains(msg, "query_type") && strings.Contains(msg, "does not exist")
 }
 
-// GetBookRatingsByIDs fetches rating metadata for a set of book IDs.
-func (c *Client) GetBookRatingsByIDs(ctx context.Context, ids []int) (map[int]model.Book, error) {
+// GetBookRatingsByIDs fetches rating metadata for a set of book IDs, keyed by
+// book ID.
+func (c *Client) GetBookRatingsByIDs(ctx context.Context, ids []int) (map[int]APIBook, error) {
 	if len(ids) == 0 {
-		return map[int]model.Book{}, nil
+		return map[int]APIBook{}, nil
 	}
 
 	seen := make(map[int]struct{}, len(ids))
@@ -305,7 +313,7 @@ func (c *Client) GetBookRatingsByIDs(ctx context.Context, ids []int) (map[int]mo
 		parts = append(parts, strconv.Itoa(id))
 	}
 	if len(parts) == 0 {
-		return map[int]model.Book{}, nil
+		return map[int]APIBook{}, nil
 	}
 
 	q := fmt.Sprintf(`query {
@@ -328,20 +336,9 @@ func (c *Client) GetBookRatingsByIDs(ctx context.Context, ids []int) (map[int]mo
 		return nil, fmt.Errorf("GetBookRatingsByIDs: %w", err)
 	}
 
-	out := make(map[int]model.Book, len(resp.Books))
+	out := make(map[int]APIBook, len(resp.Books))
 	for _, b := range resp.Books {
-		mb := model.Book{
-			ID:             b.ID,
-			Rating:         b.Rating,
-			RatingsCount:   b.RatingsCount,
-			ReviewsCount:   b.ReviewsCount,
-			UsersCount:     b.UsersCount,
-			UsersReadCount: b.UsersReadCount,
-		}
-		if b.ReleaseDate != nil {
-			mb.ReleaseDate = *b.ReleaseDate
-		}
-		out[b.ID] = mb
+		out[b.ID] = b
 	}
 	return out, nil
 }

@@ -80,11 +80,14 @@ type APIBook struct {
 	FeaturedSeries *APIBookSeries    `json:"featured_book_series"`
 }
 
-// APIBookSeries is a book's membership in a series. FeaturedSeries is only
-// populated by queries that request featured_book_series.
+// APIBookSeries is a book's membership in a series (Hardcover's book_series).
+// FeaturedSeries is only populated by queries that request
+// featured_book_series, and then only with the fields they ask for.
 type APIBookSeries struct {
-	Series struct {
-		ID int `json:"id"`
+	Position *float64 `json:"position"` // float8: 1.5 is a novella between books 1 and 2
+	Series   struct {
+		ID   int    `json:"id"`
+		Name string `json:"name"`
 	} `json:"series"`
 }
 

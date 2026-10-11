@@ -105,14 +105,9 @@ func (a *App) SyncStats(ctx context.Context) error {
 	}
 	entries := make([]model.JournalEntry, 0, len(apiJournals))
 	for _, j := range apiJournals {
-		if j.ActionAt == nil {
-			continue
+		if entry, ok := mapJournalActivity(j); ok {
+			entries = append(entries, entry)
 		}
-		t, ok := parseAPITime(*j.ActionAt)
-		if !ok {
-			continue
-		}
-		entries = append(entries, model.JournalEntry{ID: j.ID, ActionAt: t, Event: j.Event})
 	}
 	if err := a.store.ReplaceReadingJournals(entries); err != nil {
 		return err
@@ -124,24 +119,7 @@ func (a *App) SyncStats(ctx context.Context) error {
 	}
 	goals := make([]model.Goal, 0, len(apiGoals))
 	for _, g := range apiGoals {
-		goal := model.Goal{
-			ID:       g.ID,
-			Metric:   g.Metric,
-			Target:   g.Goal,
-			Progress: float64(g.Progress),
-			State:    g.State,
-		}
-		if g.StartDate != nil {
-			if t, ok := parseAPITime(*g.StartDate); ok {
-				goal.StartDate = t
-			}
-		}
-		if g.EndDate != nil {
-			if t, ok := parseAPITime(*g.EndDate); ok {
-				goal.EndDate = t
-			}
-		}
-		goals = append(goals, goal)
+		goals = append(goals, mapGoal(g))
 	}
 	return a.store.ReplaceGoals(goals)
 }

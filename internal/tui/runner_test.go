@@ -8,7 +8,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/Kameleon21/oku/internal/api"
 	"github.com/Kameleon21/oku/internal/app"
 	"github.com/Kameleon21/oku/internal/model"
 )
@@ -35,8 +34,8 @@ func loadedDashboard(t *testing.T) (*Model, *fakeBackend) {
 	fb.online = true
 	fb.add(dune, foundation, meditation)
 	fb.queue = []int{3}
-	fb.details[1] = &api.BookDetail{Description: "A desert planet."}
-	fb.journals[1] = []api.JournalEntry{{Event: "note", Entry: "The spice must flow."}}
+	fb.details[1] = &model.BookDetail{Description: "A desert planet."}
+	fb.journals[1] = []model.BookJournalEntry{{Event: "note", Entry: "The spice must flow."}}
 	fb.results = []model.SearchResult{{ID: 9, Title: "Ubik"}}
 	fb.trending = []model.SearchResult{{ID: 8, Title: "Hyperion"}}
 	m.shared.now = func() time.Time { return fixedNow }

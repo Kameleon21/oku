@@ -56,7 +56,7 @@ func TestSearchConfigForMode(t *testing.T) {
 }
 
 func TestUserBooksQueryIncludesReviewFieldsInExtendedMode(t *testing.T) {
-	q := userBooksQuery(2, true)
+	q := userBooksQuery(2, userBooksFull)
 	for _, field := range []string{"rating", "review_raw", "reviewed_at", "updated_at"} {
 		if !strings.Contains(q, field) {
 			t.Fatalf("extended query missing field %q", field)
@@ -65,7 +65,7 @@ func TestUserBooksQueryIncludesReviewFieldsInExtendedMode(t *testing.T) {
 }
 
 func TestUserBooksQueryOmitsReviewFieldsInFallbackMode(t *testing.T) {
-	q := userBooksQuery(2, false)
+	q := userBooksQuery(2, userBooksMinimal)
 	for _, field := range []string{"review_raw", "reviewed_at"} {
 		if strings.Contains(q, field) {
 			t.Fatalf("fallback query should not contain %q", field)
@@ -186,5 +186,118 @@ func TestGetAccountPrivacySettingMissingField(t *testing.T) {
 
 	if _, err := c.GetAccountPrivacySetting(t.Context()); err == nil {
 		t.Fatal("GetAccountPrivacySetting should error when the field is missing")
+	}
+}
+
+func TestListUserBooksRequestsAndDecodesFeaturedSeries(t *testing.T) {
+	var gotQuery string
+	c, srv := testClientForServer(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = readReaderRequest(t, r).Query
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"me":[{"user_books":[
+			{"id":1,"status_id":3,"book":{"id":10,"title":"Dune","featured_book_series":{"position":1,"series":{"id":5,"name":"Dune"}}}},
+			{"id":2,"status_id":3,"book":{"id":11,"title":"Gods of Risk","featured_book_series":{"position":2.5,"series":{"id":6,"name":"The Expanse"}}}},
+			{"id":3,"status_id":3,"book":{"id":12,"title":"Standalone","featured_book_series":null}}
+		]}]}}`))
+	})
+	defer srv.Close()
+
+	books, err := c.ListUserBooks(t.Context(), 3)
+	if err != nil {
+		t.Fatalf("ListUserBooks: %v", err)
+	}
+
+	if want := seriesSelection; !strings.Contains(oneLine(gotQuery), want) {
+		t.Fatalf("query does not request %q:\n%s", want, gotQuery)
+	}
+	if len(books) != 3 {
+		t.Fatalf("got %d books, want 3", len(books))
+	}
+	for i, want := range []struct {
+		name     string
+		position float64
+	}{{"Dune", 1}, {"The Expanse", 2.5}} {
+		s := books[i].Book.FeaturedSeries
+		if s == nil || s.Series.Name != want.name || s.Position == nil || *s.Position != want.position {
+			t.Fatalf("book %d series = %+v, want %s #%v", i, s, want.name, want.position)
+		}
+	}
+	if books[2].Book.FeaturedSeries != nil {
+		t.Fatalf("standalone book has series %+v", books[2].Book.FeaturedSeries)
+	}
+}
+
+const seriesSelection = "featured_book_series { position series { id name } }"
+
+func oneLine(q string) string { return strings.Join(strings.Fields(q), " ") }
+
+// userBooksFallbackServer rejects the first rejections queries with a schema
+// error and answers the next with one reviewed, rated book. It records every
+// query it receives.
+func userBooksFallbackServer(t *testing.T, rejections int, queries *[]string) (*Client, *httptest.Server) {
+	return testClientForServer(func(w http.ResponseWriter, r *http.Request) {
+		*queries = append(*queries, readReaderRequest(t, r).Query)
+		w.Header().Set("Content-Type", "application/json")
+		if len(*queries) <= rejections {
+			_, _ = w.Write([]byte(`{"errors":[{"message":"field 'position' not found in type: 'book_series'"}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":{"me":[{"user_books":[
+			{"id":1,"status_id":3,"rating":4.5,"review_raw":"Loved it.","book":{"id":10,"title":"Dune"}}
+		]}]}}`))
+	})
+}
+
+func TestListUserBooksDropsOnlyTheSeriesWhenItIsRejected(t *testing.T) {
+	var queries []string
+	c, srv := userBooksFallbackServer(t, 1, &queries)
+	defer srv.Close()
+
+	books, err := c.ListUserBooks(t.Context(), 3)
+	if err != nil {
+		t.Fatalf("ListUserBooks: %v", err)
+	}
+	if len(queries) != 2 {
+		t.Fatalf("sent %d queries, want 2", len(queries))
+	}
+	if strings.Contains(queries[1], "featured_book_series") {
+		t.Fatalf("retry still requests the series:\n%s", queries[1])
+	}
+	for _, field := range []string{"review_raw", "reviewed_at", "updated_at", "cached_tags", "users_read_count"} {
+		if !strings.Contains(queries[1], field) {
+			t.Fatalf("retry dropped %s:\n%s", field, queries[1])
+		}
+	}
+	if len(books) != 1 || books[0].Rating == nil || *books[0].Rating != 4.5 || books[0].ReviewRaw == nil || *books[0].ReviewRaw != "Loved it." {
+		t.Fatalf("books = %+v, want the rating and review decoded", books)
+	}
+}
+
+func TestListUserBooksFallsBackToMinimalAfterASecondRejection(t *testing.T) {
+	var queries []string
+	c, srv := userBooksFallbackServer(t, 2, &queries)
+	defer srv.Close()
+
+	if _, err := c.ListUserBooks(t.Context(), 3); err != nil {
+		t.Fatalf("ListUserBooks: %v", err)
+	}
+	if len(queries) != 3 {
+		t.Fatalf("sent %d queries, want 3", len(queries))
+	}
+	if queries[2] != userBooksQuery(3, userBooksMinimal) {
+		t.Fatalf("last query is not the minimal one:\n%s", queries[2])
+	}
+}
+
+func TestListUserBooksGivesUpAfterTheMinimalQuery(t *testing.T) {
+	var queries []string
+	c, srv := userBooksFallbackServer(t, 3, &queries)
+	defer srv.Close()
+
+	if _, err := c.ListUserBooks(t.Context(), 3); err == nil {
+		t.Fatal("ListUserBooks succeeded with every query rejected")
+	}
+	if len(queries) != 3 {
+		t.Fatalf("sent %d queries, want 3", len(queries))
 	}
 }

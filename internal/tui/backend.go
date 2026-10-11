@@ -5,7 +5,6 @@ import (
 	"errors"
 	"time"
 
-	"github.com/Kameleon21/oku/internal/api"
 	"github.com/Kameleon21/oku/internal/app"
 	"github.com/Kameleon21/oku/internal/model"
 )
@@ -42,8 +41,8 @@ type backend interface {
 	// Reads from Hardcover.
 	SearchBooks(ctx context.Context, query string, limit int, mode model.SearchMode) ([]model.SearchResult, error)
 	TrendingBooks(ctx context.Context, period string, limit int, raw bool) ([]model.SearchResult, error)
-	GetBookDetail(ctx context.Context, id int, refresh bool) (*api.BookDetail, error)
-	BookJournal(ctx context.Context, bookID int) ([]api.JournalEntry, error)
+	GetBookDetail(ctx context.Context, id int, refresh bool) (*model.BookDetail, error)
+	BookJournal(ctx context.Context, bookID int) ([]model.BookJournalEntry, error)
 
 	// The local store only: stats, private notes, the search history and
 	// the reading timer.
@@ -101,10 +100,10 @@ func (noBackend) SearchBooks(context.Context, string, int, model.SearchMode) ([]
 func (noBackend) TrendingBooks(context.Context, string, int, bool) ([]model.SearchResult, error) {
 	return nil, app.ErrOffline
 }
-func (noBackend) GetBookDetail(context.Context, int, bool) (*api.BookDetail, error) {
+func (noBackend) GetBookDetail(context.Context, int, bool) (*model.BookDetail, error) {
 	return nil, app.ErrOffline
 }
-func (noBackend) BookJournal(context.Context, int) ([]api.JournalEntry, error) {
+func (noBackend) BookJournal(context.Context, int) ([]model.BookJournalEntry, error) {
 	return nil, app.ErrOffline
 }
 

@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/Kameleon21/oku/internal/api"
 	"github.com/Kameleon21/oku/internal/model"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/exp/golden"
@@ -88,7 +87,7 @@ func TestTrendingRejectsStaleSearchResult(t *testing.T) {
 func TestRichDetailRendersAndScrolls(t *testing.T) {
 	m := newGoldenModel(t, 80, 24, tabReading)
 	id := m.shared.reading[0].BookID
-	m.handleReaderRequest(detailLoadedMsg{id: id, book: &api.BookDetail{Description: strings.Repeat("Long description. ", 100), EditionsCount: 5, RatingsDistribution: []byte(`{"5":10,"4":5}`)}})
+	m.handleReaderRequest(detailLoadedMsg{id: id, book: &model.BookDetail{Description: strings.Repeat("Long description. ", 100), EditionsCount: 5, RatingsDistribution: `{"5":10,"4":5}`}})
 	m.setFocus(focusDetail)
 	m.detail.View(m.section().Selected(), m.tab)
 	if m.detail.vp.TotalLineCount() <= m.detail.vp.Height() {

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Kameleon21/oku/internal/api"
+	"github.com/Kameleon21/oku/internal/model"
 )
 
 func TestNewReaderCommandsRegistered(t *testing.T) {
@@ -22,8 +22,8 @@ func TestGoalUpdatePreservesUnspecifiedFields(t *testing.T) {
 	root := newGoalsCmd()
 	set, _, _ := root.Find([]string{"set"})
 	set.Flags().Set("target", "40")
-	old := api.GoalInput{Goal: 20, Description: "Private challenge", Metric: "book", StartDate: "2025-06-01", EndDate: "2027-05-31", PrivacySettingID: 3, Conditions: map[string]any{"readingFormatId": 1}}
-	got := mergeGoalSettings(set, old, api.GoalInput{Goal: 40})
+	old := model.GoalInput{Goal: 20, Description: "Private challenge", Metric: "book", StartDate: "2025-06-01", EndDate: "2027-05-31", PrivacySettingID: 3, Conditions: map[string]any{"readingFormatId": 1}}
+	got := mergeGoalSettings(set, old, model.GoalInput{Goal: 40})
 	want := old
 	want.Goal = 40
 	if !reflect.DeepEqual(got, want) {

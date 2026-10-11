@@ -11,7 +11,8 @@ import (
 
 // Hardcover is the seam between App and the Hardcover API: every remote call
 // App makes goes through it. *api.Client is the production adapter; tests
-// substitute an in-memory fake.
+// substitute an in-memory fake. It speaks api types; hardcover_map.go turns
+// them into model types.
 type Hardcover interface {
 	GetMe(ctx context.Context) (int, string, error)
 	GetAccountPrivacySetting(ctx context.Context) (int, error)
@@ -33,8 +34,8 @@ type Hardcover interface {
 	GoalSettings(ctx context.Context, id int) (api.GoalInput, error)
 	SaveGoal(ctx context.Context, id int, g api.GoalInput) (int, error)
 
-	SearchBooks(ctx context.Context, query string, perPage int, mode model.SearchMode) ([]model.SearchResult, error)
-	GetBookRatingsByIDs(ctx context.Context, ids []int) (map[int]model.Book, error)
+	SearchBooks(ctx context.Context, query string, perPage int, mode model.SearchMode) ([]api.TypesenseBookDoc, error)
+	GetBookRatingsByIDs(ctx context.Context, ids []int) (map[int]api.APIBook, error)
 	BookDetail(ctx context.Context, id int) (*api.BookDetail, error)
 	Trending(ctx context.Context, duration string, limit int) ([]api.APIBook, error)
 

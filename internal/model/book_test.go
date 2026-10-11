@@ -202,3 +202,21 @@ func TestAllStatusesRoundTripThroughStrings(t *testing.T) {
 		}
 	}
 }
+
+func TestSeriesLabel(t *testing.T) {
+	tests := []struct {
+		book Book
+		want string
+	}{
+		{Book{}, ""},
+		{Book{FeaturedSeriesPosition: 2}, ""},
+		{Book{FeaturedSeries: "Dune"}, "Dune"},
+		{Book{FeaturedSeries: "Dune", FeaturedSeriesPosition: 1}, "Dune #1"},
+		{Book{FeaturedSeries: "The Expanse", FeaturedSeriesPosition: 2.5}, "The Expanse #2.5"},
+	}
+	for _, tt := range tests {
+		if got := tt.book.SeriesLabel(); got != tt.want {
+			t.Errorf("SeriesLabel(%+v) = %q, want %q", tt.book, got, tt.want)
+		}
+	}
+}

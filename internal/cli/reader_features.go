@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Kameleon21/oku/internal/api"
 	"github.com/Kameleon21/oku/internal/app"
+	"github.com/Kameleon21/oku/internal/model"
 	"github.com/spf13/cobra"
 )
 
@@ -86,11 +86,11 @@ func newBookDetailCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return readerOutput(cmd, b, func() error {
+		return readerOutput(cmd, newBookDetailJSON(*b), func() error {
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s (#%d)\n%s\n\n%s\n\nCommunity: %.2f (%d ratings) · %d editions\n", b.Title, b.ID, b.Headline, b.Description, b.Rating, b.RatingsCount, b.EditionsCount); err != nil {
 				return err
 			}
-			rows, err := api.ParseRatingDistribution(b.RatingsDistribution)
+			rows, err := model.ParseRatingDistribution(b.RatingsDistribution)
 			if err != nil {
 				return fmt.Errorf("ratings distribution: %w", err)
 			}
@@ -131,9 +131,9 @@ func newGoalsCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return readerOutput(cmd, goals, func() error {
+		return readerOutput(cmd, newGoalsJSON(goals), func() error {
 			for _, g := range goals {
-				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%d · %.0f/%d %s · %s\n", g.ID, float64(g.Progress), g.Goal, g.Metric, g.State); err != nil {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%d · %.0f/%d %s · %s\n", g.ID, g.Progress, g.Target, g.Metric, g.State); err != nil {
 					return err
 				}
 			}
@@ -155,7 +155,7 @@ func newGoalsCmd() *cobra.Command {
 		if end == "" {
 			end = fmt.Sprintf("%04d-12-31", year)
 		}
-		g := api.GoalInput{Goal: target, Metric: metric, Description: description, StartDate: start, EndDate: end, PrivacySettingID: 3}
+		g := model.GoalInput{Goal: target, Metric: metric, Description: description, StartDate: start, EndDate: end, PrivacySettingID: 3}
 		if id == 0 {
 			if err := g.Validate(); err != nil {
 				return err
@@ -166,7 +166,7 @@ func newGoalsCmd() *cobra.Command {
 			return err
 		}
 		defer a.Close()
-		goalID, err := a.SaveGoal(cmd.Context(), id, g, func(old, next api.GoalInput) api.GoalInput {
+		goalID, err := a.SaveGoal(cmd.Context(), id, g, func(old, next model.GoalInput) model.GoalInput {
 			return mergeGoalSettings(cmd, old, next)
 		})
 		if err != nil {
@@ -315,7 +315,7 @@ func newImportCmd() *cobra.Command {
 	return cmd
 }
 
-func mergeGoalSettings(cmd *cobra.Command, old, next api.GoalInput) api.GoalInput {
+func mergeGoalSettings(cmd *cobra.Command, old, next model.GoalInput) model.GoalInput {
 	if cmd.Flags().Changed("target") {
 		old.Goal = next.Goal
 	}
@@ -332,4 +332,112 @@ func mergeGoalSettings(cmd *cobra.Command, old, next api.GoalInput) api.GoalInpu
 		old.EndDate = next.EndDate
 	}
 	return old
+}
+
+// goalJSON is a goal as `oku goals --json` prints it: Hardcover's field names,
+// with dates as YYYY-MM-DD and null when unset.
+type goalJSON struct {
+	ID        int     `json:"id"`
+	Goal      int     `json:"goal"`
+	Metric    string  `json:"metric"`
+	Progress  float64 `json:"progress"`
+	State     string  `json:"state"`
+	StartDate *string `json:"start_date"`
+	EndDate   *string `json:"end_date"`
+}
+
+func newGoalsJSON(goals []model.Goal) []goalJSON {
+	out := make([]goalJSON, 0, len(goals))
+	for _, g := range goals {
+		out = append(out, goalJSON{
+			ID:        g.ID,
+			Goal:      g.Target,
+			Metric:    g.Metric,
+			Progress:  g.Progress,
+			State:     g.State,
+			StartDate: jsonDate(g.StartDate),
+			EndDate:   jsonDate(g.EndDate),
+		})
+	}
+	return out
+}
+
+func jsonDate(t time.Time) *string {
+	if t.IsZero() {
+		return nil
+	}
+	s := t.Format("2006-01-02")
+	return &s
+}
+
+// bookDetailJSON is the shape `oku book --json` has always printed: the book
+// as Hardcover returns it, so authors stay nested in contributions and the
+// fields the detail query does not request are present as zero or null.
+type bookDetailJSON struct {
+	ID                  int                 `json:"id"`
+	Title               string              `json:"title"`
+	Pages               int                 `json:"pages"`
+	Slug                string              `json:"slug"`
+	Rating              float64             `json:"rating"`
+	RatingsCount        int                 `json:"ratings_count"`
+	ReviewsCount        int                 `json:"reviews_count"`
+	UsersCount          int                 `json:"users_count"`
+	UsersReadCount      int                 `json:"users_read_count"`
+	ReleaseDate         *string             `json:"release_date"`
+	CachedTags          json.RawMessage     `json:"cached_tags"`
+	Contributions       []contributionJSON  `json:"contributions"`
+	Image               *imageJSON          `json:"image"`
+	FeaturedSeries      *featuredSeriesJSON `json:"featured_book_series"`
+	Description         string              `json:"description"`
+	Headline            string              `json:"headline"`
+	EditionsCount       int                 `json:"editions_count"`
+	RatingsDistribution json.RawMessage     `json:"ratings_distribution"`
+}
+
+type contributionJSON struct {
+	Author struct {
+		Name string `json:"name"`
+	} `json:"author"`
+}
+
+type imageJSON struct {
+	URL string `json:"url"`
+}
+
+// featuredSeriesJSON is never filled: the detail query does not request the
+// series, so the key is always null.
+type featuredSeriesJSON struct{}
+
+func newBookDetailJSON(b model.BookDetail) bookDetailJSON {
+	out := bookDetailJSON{
+		ID:             b.ID,
+		Title:          b.Title,
+		Pages:          b.Pages,
+		Slug:           b.Slug,
+		Rating:         b.Rating,
+		RatingsCount:   b.RatingsCount,
+		ReviewsCount:   b.ReviewsCount,
+		UsersCount:     b.UsersCount,
+		UsersReadCount: b.UsersReadCount,
+		Contributions:  make([]contributionJSON, len(b.Authors)),
+		Description:    b.Description,
+		Headline:       b.Headline,
+		EditionsCount:  b.EditionsCount,
+	}
+	for i, name := range b.Authors {
+		out.Contributions[i].Author.Name = name
+	}
+	if b.ReleaseDate != "" {
+		out.ReleaseDate = &b.ReleaseDate
+	}
+	if b.CachedTags != "" {
+		out.CachedTags = json.RawMessage(b.CachedTags)
+	}
+	if b.ImageURL != "" {
+		out.Image = &imageJSON{URL: b.ImageURL}
+	}
+	if b.RatingsDistribution != "" {
+		out.RatingsDistribution = json.RawMessage(b.RatingsDistribution)
+	}
+	return out
 }

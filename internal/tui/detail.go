@@ -260,12 +260,9 @@ func renderUserBook(ub model.UserBook, sessions []model.ReadingSession, now time
 			community += fmt.Sprintf(" (%s)", format.Count(b.RatingsCount))
 		}
 	}
-	series := "—"
-	if b.FeaturedSeries != "" {
-		series = b.FeaturedSeries
-		if b.FeaturedSeriesPosition > 0 {
-			series += fmt.Sprintf(" #%d", b.FeaturedSeriesPosition)
-		}
+	series := b.SeriesLabel()
+	if series == "" {
+		series = "—"
 	}
 	for _, row := range gridRows(w, st,
 		[2]string{"Your rating", rating}, [2]string{"Community", community},

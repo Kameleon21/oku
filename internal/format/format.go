@@ -117,12 +117,8 @@ func BookMeta(b model.Book) string {
 		parts = append(parts, "released "+b.ReleaseDate)
 	}
 
-	if b.FeaturedSeries != "" {
-		series := "series: " + b.FeaturedSeries
-		if b.FeaturedSeriesPosition > 0 {
-			series += fmt.Sprintf(" #%d", b.FeaturedSeriesPosition)
-		}
-		parts = append(parts, series)
+	if series := b.SeriesLabel(); series != "" {
+		parts = append(parts, "series: "+series)
 	}
 
 	return strings.Join(parts, " · ")

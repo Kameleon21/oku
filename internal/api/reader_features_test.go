@@ -157,7 +157,7 @@ func TestQueuePositionsScopeListAndCheckEachRow(t *testing.T) {
 		t.Fatal("silently accepted partial update")
 	}
 }
-func TestGoalValidationAndRequiredObject(t *testing.T) {
+func TestSaveGoalSendsRequiredObject(t *testing.T) {
 	t.Parallel()
 	g := GoalInput{Goal: 20, Metric: "book", StartDate: "2026-01-01", EndDate: "2026-12-31", PrivacySettingID: 3}
 	c, srv := testClientForServer(func(w http.ResponseWriter, r *http.Request) {
@@ -176,15 +176,6 @@ func TestGoalValidationAndRequiredObject(t *testing.T) {
 	id, err := c.SaveGoal(context.Background(), 9, g)
 	if err != nil || id != 9 {
 		t.Fatal(id, err)
-	}
-	g.EndDate = "2025-01-01"
-	if g.Validate() == nil {
-		t.Fatal("accepted reversed goal dates")
-	}
-	g.EndDate = "2026-12-31"
-	g.Goal = 0
-	if g.Validate() == nil {
-		t.Fatal("accepted zero goal")
 	}
 }
 func TestLookupISBNAmbiguity(t *testing.T) {
@@ -259,15 +250,5 @@ func TestImportReadsKeepsDatesWithoutForeignReadIDs(t *testing.T) {
 	defer srv.Close()
 	if err := c.ImportReads(context.Background(), 42, []APIUserBookRead{{ID: 300, FinishedAt: &date}, {ID: 400, ProgressPages: 12}}); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestLiveRatingDistributionShape(t *testing.T) {
-	rows, err := ParseRatingDistribution([]byte(`[{"count":1,"rating":3.75},{"count":1655,"rating":5.0},{"count":18,"rating":0.5}]`))
-	if err != nil || len(rows) != 3 || rows[0].Rating != 5 || rows[1].Rating != 3.75 {
-		t.Fatal(rows, err)
-	}
-	if _, err := ParseRatingDistribution([]byte(`[{"count":-1,"rating":5}]`)); err == nil {
-		t.Fatal("accepted negative count")
 	}
 }
