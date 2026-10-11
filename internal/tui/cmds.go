@@ -29,6 +29,10 @@ type libraryLoadedMsg struct {
 	// reconcile marks the background reconcile's own result: only that one
 	// may clear dirty, since any other load can land while it is in flight.
 	reconcile bool
+	// refreshed marks a forced refresh from Hardcover, and writes is the
+	// model's write count when it started (see applyLibraryLoaded).
+	refreshed bool
+	writes    int
 	// quiet marks a load started by a warned write (see quietly): its
 	// failure leaves the warning up rather than replacing it.
 	quiet bool
@@ -109,13 +113,16 @@ type timerOpDoneMsg struct {
 
 // ── Tea Commands ───────────────────────────────────────────────────────────
 
+// loadCachedLibraryCmd is the launch load: the cached shelves at once, then,
+// when Hardcover can be reached, a refresh of all three whatever their age,
+// so changes made on the website show within seconds of opening.
 func loadCachedLibraryCmd(a backend) tea.Cmd {
 	return func() tea.Msg {
-		reading, readingStale, err := a.ListCachedBooks(model.StatusCurrentlyReading)
+		reading, err := a.CachedBooks(model.StatusCurrentlyReading)
 		if err != nil {
 			return libraryLoadedMsg{err: err}
 		}
-		oku, okuStale, err := a.ListCachedBooks(model.StatusWantToRead)
+		oku, err := a.CachedBooks(model.StatusWantToRead)
 		if err != nil {
 			return libraryLoadedMsg{err: err}
 		}
@@ -130,7 +137,7 @@ func loadCachedLibraryCmd(a backend) tea.Cmd {
 		return libraryLoadedMsg{paused: paused, queueOrder: order,
 			reading:      reading,
 			oku:          oku,
-			needsRefresh: readingStale || okuStale,
+			needsRefresh: a.Online(),
 		}
 	}
 }
@@ -145,7 +152,14 @@ func loadLibraryCmd(ctx context.Context, a backend, refresh bool) tea.Cmd {
 		if err != nil {
 			return libraryLoadedMsg{err: err}
 		}
+		// Paused is fetched only by a forced refresh. A reload after a write
+		// reads it from the cache, which the write has already patched: the
+		// shelf is usually empty, and ListBooks would refetch an empty
+		// shelf on every reload.
 		paused, err := a.CachedBooks(model.StatusPaused)
+		if refresh {
+			paused, err = a.ListBooks(ctx, model.StatusPaused, true)
+		}
 		if err != nil {
 			return libraryLoadedMsg{err: err}
 		}
@@ -160,15 +174,16 @@ func loadLibraryCmd(ctx context.Context, a backend, refresh bool) tea.Cmd {
 	}
 }
 
-// reconcileLibraryCmd is the background reconcile's refresh: it stamps its
-// result so that a library load started by something else cannot be mistaken
-// for the reconcile finishing.
-func reconcileLibraryCmd(ctx context.Context, a backend) tea.Cmd {
+// refreshLibraryCmd is a forced refresh from Hardcover, stamped with the
+// writes the model had finished when it started. reconcile marks the
+// background reconcile's own result, so that a library load started by
+// something else cannot be mistaken for the reconcile finishing.
+func refreshLibraryCmd(ctx context.Context, a backend, writes int, reconcile bool) tea.Cmd {
 	refresh := loadLibraryCmd(ctx, a, true)
 	return func() tea.Msg {
 		msg := refresh()
 		if loaded, ok := msg.(libraryLoadedMsg); ok {
-			loaded.reconcile = true
+			loaded.refreshed, loaded.writes, loaded.reconcile = true, writes, reconcile
 			return loaded
 		}
 		return msg
@@ -221,11 +236,10 @@ func loadLocalDataCmd(a backend, now func() time.Time) tea.Cmd {
 		}
 
 		// Resolved here, off the render path: View must not query the store.
+		var timerState *model.TimerState
 		var timerBook *model.Book
-		if timer != nil && timer.BookID > 0 {
-			if b, err := a.CachedBook(timer.BookID); err == nil {
-				timerBook = b
-			}
+		if timer != nil {
+			timerState, timerBook = &timer.TimerState, timer.Book
 		}
 
 		if shouldUseDemoLocalData() {
@@ -251,7 +265,7 @@ func loadLocalDataCmd(a backend, now func() time.Time) tea.Cmd {
 			privateNotes:   notes,
 			recentSessions: sessions,
 			recentSearches: recentSearches,
-			timerState:     timer,
+			timerState:     timerState,
 			timerBook:      timerBook,
 			lastSyncAt:     a.LastSyncAt(),
 			shelf:          shelf,
@@ -517,15 +531,14 @@ func startTimerForBookCmd(a backend, bookID int) tea.Cmd {
 			return timerOpDoneMsg{err: fmt.Errorf("invalid book selection")}
 		}
 
-		if err := a.TimerStart(bookID); err != nil {
+		timer, err := a.TimerStart(bookID)
+		if err != nil {
 			return timerOpDoneMsg{err: err}
 		}
 
 		info := "Timer started"
-		if bookID > 0 {
-			if b, err := a.CachedBook(bookID); err == nil && b != nil {
-				info = fmt.Sprintf("Timer started — %s", b.Title)
-			}
+		if timer.Book != nil {
+			info = fmt.Sprintf("Timer started — %s", timer.Book.Title)
 		}
 		return timerOpDoneMsg{info: info}
 	}

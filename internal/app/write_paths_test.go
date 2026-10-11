@@ -79,7 +79,7 @@ func TestChangeStatusInsertsBookMissingFromLibrary(t *testing.T) {
 	if ub.ID != 1001 || ub.StatusID != model.StatusCurrentlyReading {
 		t.Fatalf("cached user book = %+v, want Hardcover's row 1001 in reading", ub)
 	}
-	if _, stale, _ := a.ListCachedBooks(model.StatusCurrentlyReading); stale {
+	if stale, _ := a.isStatusCacheStale(model.StatusCurrentlyReading); stale {
 		t.Fatal("reading cache still stale after the post-insert sync")
 	}
 	assertActiveIDs(t, a, []int{42})

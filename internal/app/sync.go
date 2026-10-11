@@ -12,6 +12,17 @@ func (a *App) SyncAll(ctx context.Context) error {
 	if err := a.requireOnline(); err != nil {
 		return err
 	}
+
+	// A full sync also checks which account is signed in, so a previous
+	// account's books, stamps and queue do not outlive it. The check is a
+	// backstop to the one at login: when it cannot be made the sync goes on
+	// without it, and fails only on the library itself.
+	if id, _, err := a.hc.GetMe(ctx); err == nil {
+		if _, err := a.RememberUser(id); err != nil {
+			return err
+		}
+	}
+
 	for _, s := range model.AllStatuses {
 		if err := a.syncStatusOnly(ctx, s); err != nil {
 			return fmt.Errorf("sync %s: %w", s, err)

@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -53,11 +52,6 @@ func (a *App) DefaultList() string {
 	return a.cfg.DefaultList
 }
 
-// CachedBook returns a book from the local cache, or nil when it is absent.
-func (a *App) CachedBook(id int) (*model.Book, error) {
-	return a.store.GetBookByID(id)
-}
-
 // CachedUserBook returns the cached library entry for a book, or nil when the
 // book is not in the cached library.
 func (a *App) CachedUserBook(bookID int) (*model.UserBook, error) {
@@ -85,20 +79,6 @@ func (a *App) RecentSearches() (string, error) {
 // SaveRecentSearches replaces the stored search history.
 func (a *App) SaveRecentSearches(raw string) error {
 	return a.store.SetState(recentSearchesKey, raw)
-}
-
-// ValidateToken calls GetMe to verify the token works and caches the user ID.
-func (a *App) ValidateToken(ctx context.Context) (int, string, error) {
-	if err := a.requireOnline(); err != nil {
-		return 0, "", err
-	}
-	id, username, err := a.hc.GetMe(ctx)
-	if err != nil {
-		return 0, "", fmt.Errorf("token validation failed: %w", err)
-	}
-	_ = a.store.SetState("user_id", strconv.Itoa(id))
-	_ = a.store.SetState("username", username)
-	return id, username, nil
 }
 
 // GetActiveBookIDs returns the list of active reading book IDs.

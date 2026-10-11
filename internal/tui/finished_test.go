@@ -113,7 +113,7 @@ func TestPrivateNoteSavesWithoutHardcover(t *testing.T) {
 	if !ok || done.err != nil || done.op != opPrivateNote {
 		t.Fatalf("save result: %+v", done)
 	}
-	m.Update(resultMsg{done})
+	m.Update(resultMsg{msg: done})
 	notes, err := db.ListPrivateNotes()
 	if err != nil || notes[req.bookID] != req.text {
 		t.Fatalf("persisted notes: %v, %v", notes, err)

@@ -127,7 +127,7 @@ func (a *App) SyncStats(ctx context.Context) error {
 // cachedUserID returns the Hardcover user ID from local state, fetching and
 // caching it via the API when absent.
 func (a *App) cachedUserID(ctx context.Context) (int, error) {
-	if val, err := a.store.GetState("user_id"); err == nil {
+	if val, err := a.store.GetState(userIDKey); err == nil {
 		if id, err := strconv.Atoi(strings.TrimSpace(val)); err == nil && id > 0 {
 			return id, nil
 		}
@@ -139,6 +139,8 @@ func (a *App) cachedUserID(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	_ = a.store.SetState("user_id", strconv.Itoa(id))
+	if _, err := a.RememberUser(id); err != nil {
+		return 0, err
+	}
 	return id, nil
 }

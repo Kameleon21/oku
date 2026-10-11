@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Kameleon21/oku/internal/model"
@@ -57,6 +58,236 @@ func TestPausedShelfAndResumeRequest(t *testing.T) {
 		t.Fatalf("wrong resume %#v", r)
 	}
 }
+
+// TestLaunchRefreshesEveryShelf: opening the dashboard shows the cache and
+// then refreshes reading, want-to-read and paused from Hardcover however
+// fresh the cache is, so changes made on the website show up.
+func TestLaunchRefreshesEveryShelf(t *testing.T) {
+	m := newTestModel()
+	fb := fakeOf(m)
+	fb.online = true
+	fb.add(dune, foundation, meditation)
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	drain(t, m, m.Init())
+
+	for _, status := range []model.Status{model.StatusCurrentlyReading, model.StatusWantToRead, model.StatusPaused} {
+		if !fb.called("CachedBooks", status) || !fb.calledRemote("ListBooks", status, true) {
+			t.Fatalf("calls = %v, want %s read from the cache and then refreshed", fb.calls, status)
+		}
+	}
+	if len(fb.remotes) != 3 {
+		t.Fatalf("remote calls = %v, want exactly the three shelves", fb.remotes)
+	}
+	if m.isLoading() || m.toast.text != "" {
+		t.Fatalf("after launch: inflight = %d, toast = %q; want settled and quiet", m.inflight, m.toast.text)
+	}
+}
+
+func TestOfflineLaunchSkipsTheRefresh(t *testing.T) {
+	m := newTestModel()
+	fb := fakeOf(m)
+	fb.add(dune)
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	drain(t, m, m.Init())
+
+	if fb.called("ListBooks") || len(fb.remotes) != 0 {
+		t.Fatalf("calls = %v, want no refresh while offline", fb.calls)
+	}
+	if len(m.shared.reading) != 1 || m.toast.text != "" {
+		t.Fatalf("reading = %v, toast = %q; want the cached shelf and no toast", m.shared.reading, m.toast.text)
+	}
+}
+
+// TestReloadAfterWriteReadsPausedFromTheCache: the write already patched the
+// cache, so the reload must not spend a request on the (usually empty)
+// paused shelf.
+func TestReloadAfterWriteReadsPausedFromTheCache(t *testing.T) {
+	m, fb := loadedDashboard(t)
+	op := changeStatusCmd(m.ctx, m.backend, 1, "Dune", dune.StatusID, model.StatusPaused)
+	drain(t, m, send(t, m, request(reqRunOp{cmd: op})))
+
+	if !fb.called("ChangeStatus") || !fb.called("CachedBooks", model.StatusPaused) {
+		t.Fatalf("calls = %v, want the write and a reload of the paused shelf from the cache", fb.calls)
+	}
+	if fb.called("ListBooks", model.StatusPaused) || fb.calledRemote("ListBooks", model.StatusPaused) {
+		t.Fatalf("remote calls = %v, want no paused request on the reload", fb.remotes)
+	}
+	if len(m.shared.paused) != 1 || m.shared.paused[0].BookID != 1 {
+		t.Fatalf("paused = %v, want Dune", m.shared.paused)
+	}
+}
+
+// TestBackgroundRefreshDoesNotRefuseWrites: the launch refresh turns the
+// spinner, but a write pressed meanwhile goes ahead; work the reader started
+// still holds the next write back.
+func TestBackgroundRefreshDoesNotRefuseWrites(t *testing.T) {
+	m, _ := loadedDashboard(t)
+	refresh := m.refreshLibrary(false)
+	if !m.isLoading() || m.busy() {
+		t.Fatalf("inflight = %d, background = %d: want the spinner on and writes allowed", m.inflight, m.background)
+	}
+
+	m.setTab(tabReading)
+	write := send(t, m, request(reqProgress{book: dune, delta: 1}))
+	if m.toast.text == inFlightNotice {
+		t.Fatal("a background refresh refused a write")
+	}
+	if !m.busy() {
+		t.Fatal("the write the reader started should hold the next one back")
+	}
+	if send(t, m, request(reqProgress{book: dune, delta: 1})); m.toast.text != inFlightNotice {
+		t.Fatalf("toast = %q, want the second write refused while the first runs", m.toast.text)
+	}
+
+	drain(t, m, tea.Batch(refresh, write))
+	if m.inflight != 0 || m.background != 0 {
+		t.Fatalf("inflight = %d, background = %d once everything landed, want 0", m.inflight, m.background)
+	}
+}
+
+// TestOvertakenRefreshKeepsTheWrite: a refresh that fetched before a status
+// change and lands after it must not put the book back. Its shelves are set
+// aside and Hardcover, which has the change, is asked again.
+func TestOvertakenRefreshKeepsTheWrite(t *testing.T) {
+	m, fb := loadedDashboard(t)
+
+	// The launch refresh fetches the shelves as they were...
+	stale := refreshLibraryCmd(m.ctx, fb, m.writes, false)()
+	m.inflight++
+	m.background++
+
+	// ...then Dune is paused before its result lands.
+	op := changeStatusCmd(m.ctx, m.backend, 1, "Dune", dune.StatusID, model.StatusPaused)
+	drain(t, m, send(t, m, request(reqRunOp{cmd: op})))
+
+	fb.mu.Lock()
+	fb.remotes = nil
+	fb.mu.Unlock()
+	drain(t, m, send(t, m, resultMsg{msg: stale, lane: laneBackground}))
+
+	if !fb.calledRemote("ListBooks", model.StatusCurrentlyReading, true) {
+		t.Fatalf("remote calls = %v, want the shelves fetched again", fb.remotes)
+	}
+	for _, b := range m.shared.reading {
+		if b.BookID == 1 {
+			t.Fatal("the overtaken refresh put Dune back on the Reading shelf")
+		}
+	}
+	if len(m.shared.paused) != 1 || m.shared.paused[0].BookID != 1 {
+		t.Fatalf("paused on screen = %v, want Dune", m.shared.paused)
+	}
+	if paused := fb.shelf(model.StatusPaused); len(paused) != 1 || paused[0].BookID != 1 {
+		t.Fatalf("paused in the cache = %v, want Dune", paused)
+	}
+	if !m.dirty || m.inflight != 0 || m.background != 0 {
+		t.Fatalf("dirty = %v, inflight = %d, background = %d; want dirty and settled", m.dirty, m.inflight, m.background)
+	}
+}
+
+// TestRefreshLandingBeforeTheWriteKeepsTheWrite is the narrow window: a
+// refresh fetches, a status change starts, the refresh's cache replace
+// clobbers the change's patch, and the refresh lands while the change is
+// still running, with no write finished since it was stamped. Neither its
+// shelves nor the clobbered cache may win: once the change lands the
+// shelves are fetched again from Hardcover.
+func TestRefreshLandingBeforeTheWriteKeepsTheWrite(t *testing.T) {
+	m, fb := loadedDashboard(t)
+	ghost := model.UserBook{BookID: 99, StatusID: model.StatusCurrentlyReading, Book: model.Book{ID: 99, Title: "Ghost"}}
+
+	stale := refreshLibraryCmd(m.ctx, fb, m.writes, false)().(libraryLoadedMsg)
+	stale.reading = append(stale.reading, ghost)
+	m.inflight++
+	m.background++
+	before := map[model.Status][]model.UserBook{}
+	for status, books := range fb.books {
+		before[status] = copyShelf(books)
+	}
+
+	op := changeStatusCmd(m.ctx, m.backend, 1, "Dune", dune.StatusID, model.StatusPaused)
+	send(t, m, request(reqRunOp{cmd: op}))
+
+	if cmd := send(t, m, resultMsg{msg: stale, lane: laneBackground}); cmd != nil {
+		t.Fatal("the retry should wait for the running write")
+	}
+	for _, b := range m.shared.reading {
+		if b.BookID == ghost.BookID {
+			t.Fatal("a refresh that landed during a write was applied")
+		}
+	}
+
+	// The change reaches Hardcover and patches the cache; the refresh's
+	// replace then puts the old shelves back in the cache.
+	done := op()
+	fb.mu.Lock()
+	fb.hardcover = map[model.Status][]model.UserBook{}
+	for status, books := range fb.books {
+		fb.hardcover[status] = copyShelf(books)
+	}
+	fb.books = before
+	fb.remotes = nil
+	fb.mu.Unlock()
+
+	drain(t, m, send(t, m, resultMsg{msg: done, lane: laneWrite}))
+
+	if !fb.calledRemote("ListBooks", model.StatusPaused, true) {
+		t.Fatalf("remote calls = %v, want the shelves fetched again", fb.remotes)
+	}
+	for _, b := range m.shared.reading {
+		if b.BookID == 1 || b.BookID == ghost.BookID {
+			t.Fatalf("reading on screen = %v, want neither Dune nor the stale rows", m.shared.reading)
+		}
+	}
+	if len(m.shared.paused) != 1 || m.shared.paused[0].BookID != 1 {
+		t.Fatalf("paused on screen = %v, want Dune", m.shared.paused)
+	}
+	if paused := fb.shelf(model.StatusPaused); len(paused) != 1 || paused[0].BookID != 1 {
+		t.Fatalf("paused in the cache = %v, want Dune back after the clobber", paused)
+	}
+	if m.inflight != 0 || m.writing != 0 || m.background != 0 {
+		t.Fatalf("inflight = %d, writing = %d, background = %d; want settled", m.inflight, m.writing, m.background)
+	}
+}
+
+// TestOvertakenRefreshWaitsOffline: with Hardcover out of reach the retry
+// is left to the reconcile rather than failing with a toast.
+func TestOvertakenRefreshWaitsOffline(t *testing.T) {
+	m, fb := loadedDashboard(t)
+	stale := refreshLibraryCmd(m.ctx, fb, m.writes, false)()
+	m.inflight++
+	m.background++
+	drain(t, m, send(t, m, request(reqRunOp{cmd: changeStatusCmd(m.ctx, m.backend, 1, "Dune", dune.StatusID, model.StatusPaused)})))
+
+	fb.online = false
+	m.toast = toast{}
+	if cmd := send(t, m, resultMsg{msg: stale, lane: laneBackground}); cmd != nil {
+		t.Fatal("an overtaken refresh should not retry offline")
+	}
+	if !m.dirty || m.toast.text != "" || m.inflight != 0 {
+		t.Fatalf("dirty = %v, toast = %q, inflight = %d; want dirty, quiet and settled", m.dirty, m.toast.text, m.inflight)
+	}
+}
+
+func TestTimerCommandsTakeTheBookFromTheBackend(t *testing.T) {
+	fb := newFakeBackend()
+	fb.add(model.UserBook{StatusID: model.StatusCurrentlyReading, Book: model.Book{ID: 1, Title: "Dune"}})
+
+	if msg := startTimerForBookCmd(fb, 1)().(timerOpDoneMsg); msg.err != nil || msg.info != "Timer started — Dune" {
+		t.Fatalf("start = %+v, want the book's title", msg)
+	}
+	local := loadLocalDataCmd(fb, time.Now)().(localDataLoadedMsg)
+	if local.timerState == nil || local.timerState.BookID != 1 || local.timerBook == nil || local.timerBook.Title != "Dune" {
+		t.Fatalf("local load timer = %+v / %+v, want Dune's timer", local.timerState, local.timerBook)
+	}
+
+	fb.timer = nil
+	if msg := startTimerForBookCmd(fb, 99)().(timerOpDoneMsg); msg.err != nil || msg.info != "Timer started" {
+		t.Fatalf("start for an uncached book = %+v, want the plain notice", msg)
+	}
+	if local := loadLocalDataCmd(fb, time.Now)().(localDataLoadedMsg); local.timerState == nil || local.timerBook != nil {
+		t.Fatalf("local load timer = %+v / %+v, want a timer with no book", local.timerState, local.timerBook)
+	}
+}
+
 func TestQueueMoveKeepsSelection(t *testing.T) {
 	m := newGoldenModel(t, 80, 24, tabOku)
 	s := okuSection(m)

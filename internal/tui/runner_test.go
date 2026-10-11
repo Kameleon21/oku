@@ -51,7 +51,7 @@ func loadedDashboard(t *testing.T) (*Model, *fakeBackend) {
 	if len(m.shared.reading) != 2 || len(m.shared.oku) != 1 {
 		t.Fatalf("reading = %d, oku = %d, want the fake's shelves", len(m.shared.reading), len(m.shared.oku))
 	}
-	fb.calls = nil
+	fb.calls, fb.remotes = nil, nil
 	return m, fb
 }
 
@@ -269,8 +269,8 @@ func TestEveryCommandLeavesTheCountWhereItFoundIt(t *testing.T) {
 		"online":  func(*fakeBackend) {},
 		"offline": func(fb *fakeBackend) { fb.online = false },
 		"failing": func(fb *fakeBackend) {
-			for _, method := range []string{"ListCachedBooks", "CachedBooks", "ListBooks", "ListAllCachedUserBooks",
-				"CachedBook", "CachedQueueOrder", "SyncAll", "ChangeStatus", "UpdateProgress", "ReviewBook",
+			for _, method := range []string{"CachedBooks", "ListBooks", "ListAllCachedUserBooks",
+				"CachedQueueOrder", "SyncAll", "ChangeStatus", "UpdateProgress", "ReviewBook",
 				"AddJournalEntry", "MoveQueueBook", "RefreshQueue", "SearchBooks", "TrendingBooks", "GetBookDetail",
 				"BookJournal", "GetReadingStats", "ListPrivateNotes", "SavePrivateNote", "RecentSearches",
 				"SaveRecentSearches", "TimerStart", "TimerStop", "TimerStatus", "TimerList"} {
@@ -363,7 +363,7 @@ func TestDrainRunsBatchesAndSkipsTimers(t *testing.T) {
 		t.Fatalf("drain took %v: a timer should cost at most one wait", took)
 	}
 
-	if reflect.ValueOf(runCmd{count}.run).Pointer() != runFn {
+	if reflect.ValueOf(runCmd{cmd: count}.run).Pointer() != runFn {
 		t.Fatal("the runner's commands should share one function")
 	}
 }

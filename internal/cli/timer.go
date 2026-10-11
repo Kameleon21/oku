@@ -57,17 +57,16 @@ func newTimerStartCmd() *cobra.Command {
 				bookID = picked
 			}
 
-			if err := a.TimerStart(bookID); err != nil {
+			timer, err := a.TimerStart(bookID)
+			if err != nil {
 				return err
 			}
 
 			now := time.Now()
 			fmt.Printf("\nTimer started — %s\n", now.Format("3:04 PM"))
 
-			if bookID > 0 {
-				if b, err := a.CachedBook(bookID); err == nil && b != nil {
-					fmt.Printf("  Book: %s\n", b.Title)
-				}
+			if timer.Book != nil {
+				fmt.Printf("  Book: %s\n", timer.Book.Title)
 			}
 
 			return nil
@@ -126,10 +125,8 @@ func newTimerStatusCmd() *cobra.Command {
 
 			elapsed := time.Since(state.StartedAt)
 			fmt.Printf("\nTimer running — %s elapsed\n", format.Duration(elapsed))
-			if state.BookID > 0 {
-				if b, err := a.CachedBook(state.BookID); err == nil && b != nil {
-					fmt.Printf("  Book: %s\n", b.Title)
-				}
+			if state.Book != nil {
+				fmt.Printf("  Book: %s\n", state.Book.Title)
 			}
 			fmt.Printf("  Started: %s\n", state.StartedAt.Local().Format("3:04 PM"))
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -33,7 +34,7 @@ func newLoginCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
 			defer cancel()
-			token, err := auth.Login(ctx, cmd.OutOrStdout())
+			token, err := authBackend.login(ctx, cmd.OutOrStdout())
 			if err != nil {
 				if errors.Is(err, context.DeadlineExceeded) {
 					return fmt.Errorf("timed out waiting for browser sign-in")
@@ -44,22 +45,71 @@ func newLoginCmd() *cobra.Command {
 				return fmt.Errorf("failed to store token: %w", err)
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "Login successful.")
+			recordSignedInUser(cmd)
 			return nil
 		},
 	}
 }
 
 // authBackend is everything the auth commands reach outside the CLI for: the
-// keychain, the environment and Hardcover. A variable so tests can swap the
-// whole of it for a fake.
+// browser sign-in, the token prompt, the keychain, the environment,
+// Hardcover and the local cache. A variable so tests can swap the whole of
+// it for a fake.
 var authBackend = struct {
-	current func(context.Context) (auth.Credential, error)
-	verify  func(context.Context, oauth2.TokenSource) (string, *oauth2.Token, error)
-	logout  func(context.Context, func(auth.LogoutReport, string)) (auth.LogoutReport, error)
+	login       func(context.Context, io.Writer) (*oauth2.Token, error)
+	promptToken func() (string, error)
+	current     func(context.Context) (auth.Credential, error)
+	verify      func(context.Context, oauth2.TokenSource) (int, string, *oauth2.Token, error)
+	logout      func(context.Context, func(auth.LogoutReport, string)) (auth.LogoutReport, error)
+	remember    func(userID int) (cleared bool, err error)
 }{
-	current: auth.Current,
-	verify:  verifyLogin,
-	logout:  auth.Logout,
+	login:       auth.Login,
+	promptToken: auth.PromptToken,
+	current:     auth.Current,
+	verify:      verifyLogin,
+	logout:      auth.Logout,
+	remember:    rememberSignedInUser,
+}
+
+// recordSignedInUser tells the local cache which Hardcover account is signed
+// in now, so a previous account's cached library is dropped rather than
+// shown as this one's. It costs one request, the GetMe that confirms the
+// login. A failure is only a warning: the login itself worked, and the next
+// full sync checks the account again.
+func recordSignedInUser(cmd *cobra.Command) {
+	ctx := cmd.Context()
+	cred, err := authBackend.current(ctx)
+	var id int
+	if err == nil {
+		id, _, _, err = authBackend.verify(ctx, cred.TokenSource)
+	}
+	var cleared bool
+	if err == nil {
+		cleared, err = authBackend.remember(id)
+	}
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not check which account is signed in: %v\n", err)
+	}
+	noteClearedCache(cmd, cleared)
+}
+
+// noteClearedCache tells the user, when it happened, that signing in as
+// another account dropped the cached library.
+func noteClearedCache(cmd *cobra.Command, cleared bool) {
+	if cleared {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Signed in as a different account; cleared the cached library. Run oku sync.")
+	}
+}
+
+// rememberSignedInUser records userID in the local cache (see
+// App.RememberUser).
+func rememberSignedInUser(userID int) (bool, error) {
+	a, err := initLocalApp()
+	if err != nil {
+		return false, err
+	}
+	defer a.Close()
+	return a.RememberUser(userID)
 }
 
 func newLogoutCmd() *cobra.Command {
@@ -114,16 +164,16 @@ func hintManualRevoke(cmd *cobra.Command, kind auth.Kind, legacyKey string) {
 // verifyLogin asks Hardcover who src's token belongs to, refreshing it first
 // if it has expired. It returns the token in use afterwards, so a refresh
 // shows up in the reported expiry.
-func verifyLogin(ctx context.Context, src oauth2.TokenSource) (string, *oauth2.Token, error) {
-	_, username, err := api.NewOAuthClient(ctx, src).GetMe(ctx)
+func verifyLogin(ctx context.Context, src oauth2.TokenSource) (int, string, *oauth2.Token, error) {
+	id, username, err := api.NewOAuthClient(ctx, src).GetMe(ctx)
 	if err != nil {
-		return "", nil, err
+		return 0, "", nil, err
 	}
 	current, err := src.Token()
 	if err != nil {
-		return "", nil, err
+		return 0, "", nil, err
 	}
-	return username, current, nil
+	return id, username, current, nil
 }
 
 func newAuthStatusCmd() *cobra.Command {
@@ -136,10 +186,16 @@ func newAuthStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			username, token, err := authBackend.verify(cmd.Context(), cred.TokenSource)
+			userID, username, token, err := authBackend.verify(cmd.Context(), cred.TokenSource)
 			if err != nil {
 				return err
 			}
+			// The account is known now at no extra cost; recording it keeps
+			// another account's cache from showing. Status only reports, so
+			// a failure to record (no usable data dir, say) is left to the
+			// next login or sync.
+			cleared, err := authBackend.remember(userID)
+			noteClearedCache(cmd, err == nil && cleared)
 
 			out := cmd.OutOrStdout()
 			fmt.Fprintf(out, "Logged in to Hardcover as %s\n", username)
@@ -168,7 +224,7 @@ func newSetTokenCmd() *cobra.Command {
 		Short: "Manually store a Hardcover API token (advanced; prefer 'oku auth login')",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(cmd.OutOrStdout(), "Create a token with the scopes oku needs:\n%s\n", auth.NewTokenURL())
-			raw, err := auth.PromptToken()
+			raw, err := authBackend.promptToken()
 			if err != nil {
 				return err
 			}
@@ -177,6 +233,7 @@ func newSetTokenCmd() *cobra.Command {
 				return fmt.Errorf("failed to store token: %w", err)
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "Token stored successfully.")
+			recordSignedInUser(cmd)
 			return nil
 		},
 	}

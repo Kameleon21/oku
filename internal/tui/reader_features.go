@@ -99,15 +99,15 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		m.shared.paused = r.books
 		return m.broadcast(dataChangedMsg{dataLibrary}), true
 	case reqQueueMove:
-		if m.isLoading() {
+		if m.busy() {
 			return m.showToast(toastWarn, inFlightNotice), true
 		}
 		if cmd := m.requireOnline(); cmd != nil {
 			return cmd, true
 		}
-		return m.run(queueMoveCmd(m.ctx, m.backend, r.bookID, r.delta)), true
+		return m.runWrite(queueMoveCmd(m.ctx, m.backend, r.bookID, r.delta)), true
 	case reqQueueRefresh:
-		if m.isLoading() {
+		if m.busy() {
 			return m.showToast(toastWarn, inFlightNotice), true
 		}
 		if cmd := m.requireOnline(); cmd != nil {
@@ -135,12 +135,12 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		// itself, offline included, the way it does for a search.
 		return m.run(trendingCmd(m.ctx, m.backend, r.seq)), true
 	case reqPrivateNote:
-		if m.isLoading() {
+		if m.busy() {
 			return m.refuse(opPrivateNote, r.token), true
 		}
 		return m.run(savePrivateNoteCmd(m.backend, r.bookID, r.token, r.text)), true
 	case reqJournal:
-		if m.isLoading() {
+		if m.busy() {
 			return m.refuse(opJournal, r.token), true
 		}
 		if !m.backend.Online() {
