@@ -74,6 +74,7 @@ func (a *App) privacy(ctx context.Context, strict bool) (int, error) {
 }
 
 func (a *App) fetchPrivacy(ctx context.Context) (int, error) {
+	// Every caller checks this already; it stays so fetchPrivacy is safe on its own.
 	if err := a.requireOnline(); err != nil {
 		return 0, err
 	}

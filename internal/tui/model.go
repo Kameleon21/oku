@@ -99,6 +99,10 @@ type Model struct {
 	// is up. Both are dropped when the toast expires.
 	toast toast
 	undo  *undoAction
+	// warnedLoads counts the loads still due from the reload a warned write
+	// started (see applyOpDone). The cache may still be broken, so their
+	// errors leave the warning and its undo up instead of replacing them.
+	warnedLoads int
 
 	// timerTicking reports whether the one-second tick loop is armed; it only
 	// runs while a timer is actually running.
@@ -440,8 +444,12 @@ func (m *Model) applyLibraryLoaded(msg libraryLoadedMsg) tea.Cmd {
 	if msg.reconcile {
 		m.reconciling = false
 	}
+	quiet := !msg.reconcile && m.takeWarnedLoad()
 	if msg.err != nil {
 		// dirty stays set: the local mutations are still unreconciled.
+		if quiet {
+			return nil
+		}
 		return m.showToast(toastError, msg.err.Error())
 	}
 	m.shared.reading = msg.reading
@@ -465,7 +473,11 @@ func (m *Model) applyLocalDataLoaded(msg localDataLoadedMsg) tea.Cmd {
 	m.endLoading()
 	m.shared.localLoaded = true
 
+	quiet := m.takeWarnedLoad()
 	if msg.err != nil {
+		if quiet {
+			return nil
+		}
 		return m.showToast(toastError, msg.err.Error())
 	}
 	m.shared.stats = msg.readingStats
@@ -505,11 +517,28 @@ func (m *Model) applyOpDone(msg opDoneMsg) tea.Cmd {
 		m.dirty = true
 		m.lastMutationAt = m.shared.now()
 	}
+	// A warned write reached Hardcover but could not refresh the cache, so
+	// the reload below may fail the same way. Its two loads must not bury
+	// the warning, which already says to sync, under an error toast.
+	m.warnedLoads = 0
+	if msg.warn != "" && msg.reload {
+		m.warnedLoads = 2
+	}
 	if msg.reload {
 		reload := m.beginLoading(loadLibraryCmd(m.ctx, m.app, false), loadLocalDataCmd(m.app, m.shared.now))
 		return tea.Batch(reload, toastCmd)
 	}
 	return toastCmd
+}
+
+// takeWarnedLoad reports whether a finished load belongs to a warned write's
+// reload, counting it off.
+func (m *Model) takeWarnedLoad() bool {
+	if m.warnedLoads == 0 {
+		return false
+	}
+	m.warnedLoads--
+	return true
 }
 
 // handleRequest runs what a section or modal asked for. This is the one

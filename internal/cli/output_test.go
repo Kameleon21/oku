@@ -106,9 +106,9 @@ func TestOutputKeepsColourWhenItIsForced(t *testing.T) {
 
 func TestFinishWrite(t *testing.T) {
 	var warned bytes.Buffer
-	prev := stderr
-	stderr = &warned
-	t.Cleanup(func() { stderr = prev })
+	prev := warnOut
+	warnOut = &warned
+	t.Cleanup(func() { warnOut = prev })
 
 	cases := []struct {
 		name     string
@@ -130,7 +130,7 @@ func TestFinishWrite(t *testing.T) {
 				t.Fatalf("err = %v, reported = %v; want error %v, reported %v", err, reported, tc.wantErr, tc.reported)
 			}
 			if got := warned.String(); got != tc.warning {
-				t.Fatalf("stderr = %q, want %q", got, tc.warning)
+				t.Fatalf("warnings = %q, want %q", got, tc.warning)
 			}
 			if tc.wantErr && !strings.Contains(err.Error(), "rejected") {
 				t.Fatalf("err = %v, want the original error", err)

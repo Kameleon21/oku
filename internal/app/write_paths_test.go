@@ -504,6 +504,18 @@ func TestSaveGoalCreatesWithAccountPrivacy(t *testing.T) {
 	}
 }
 
+func TestSaveGoalRefusesUnsetAccountPrivacy(t *testing.T) {
+	hc := newFakeHardcover()
+	hc.privacy = 0
+	a := newTestAppWith(t, hc)
+
+	_, err := a.SaveGoal(context.Background(), 0, api.GoalInput{Goal: 24, Metric: "book"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "invalid account privacy setting 0") {
+		t.Fatalf("err = %v, want the invalid privacy refusal", err)
+	}
+	assertCalls(t, hc, "SaveGoal")
+}
+
 func TestSaveGoalMergesIntoExistingSettings(t *testing.T) {
 	hc := newFakeHardcover()
 	hc.goalSettings = map[int]api.GoalInput{5: {Goal: 10, Metric: "book", Description: "old", StartDate: "2026-01-01", EndDate: "2026-12-31", PrivacySettingID: 3}}

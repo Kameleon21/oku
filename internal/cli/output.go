@@ -29,8 +29,8 @@ var stdout = colorprofile.NewWriter(os.Stdout, os.Environ())
 func outPrintf(format string, a ...any) { fmt.Fprintf(stdout, format, a...) }
 func outPrintln(a ...any)               { fmt.Fprintln(stdout, a...) }
 
-// stderr is where warnings go, so a test can read them.
-var stderr io.Writer = os.Stderr
+// warnOut is where write warnings go, so a test can read them.
+var warnOut io.Writer = os.Stderr
 
 // finishWrite ends a write-through command. A plain error fails it. Otherwise
 // report prints the success, and an app.ErrCacheRefresh, which means the
@@ -42,7 +42,7 @@ func finishWrite(err error, report func()) error {
 	}
 	report()
 	if err != nil {
-		fmt.Fprintf(stderr, "Warning: %v\n", err)
+		fmt.Fprintf(warnOut, "Warning: %v\n", err)
 	}
 	return nil
 }

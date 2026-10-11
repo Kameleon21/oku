@@ -46,7 +46,10 @@ const (
 type toast struct {
 	level toastLevel
 	text  string
-	seq   int
+	// note follows text and is never cut: a warning that must stay readable
+	// however much of the text the footer has room for.
+	note string
+	seq  int
 }
 
 type toastExpiredMsg struct{ seq int }
@@ -100,19 +103,18 @@ func (m *Model) toastFor(msg opDoneMsg) tea.Cmd {
 		undo = &undoAction{op: opProgress, bookID: msg.bookID, title: msg.title,
 			toPage: msg.prevPage, fromPage: msg.newPage}
 	}
-	level := toastSuccess
-	if msg.warn != "" {
-		level = toastWarn
-		if text == "" {
-			text = msg.warn
-		} else {
-			text += "; " + msg.warn
-		}
-	}
-	if text == "" {
+	switch {
+	case msg.warn == "" && text == "":
 		return nil
+	case msg.warn == "":
+		cmd := m.showToast(toastSuccess, text)
+		m.undo = undo
+		return cmd
+	case text == "":
+		return m.showToast(toastWarn, msg.warn)
 	}
-	cmd := m.showToast(level, text)
+	cmd := m.showToast(toastWarn, text)
+	m.toast.note = msg.warn
 	m.undo = undo
 	return cmd
 }
@@ -162,16 +164,25 @@ func (m *Model) renderToast(avail int) string {
 	// help bar would be the thing clipped off the bottom of the screen.
 	text := strings.Join(strings.Fields(m.toast.text), " ")
 
+	note := ""
+	if m.toast.note != "" {
+		note = "; " + m.toast.note
+	}
+
 	// A message wider than the footer would wrap it onto a second line and
 	// push the layout off the screen, so it is cut to the room that is left.
-	// The undo hint goes first when there is not room for both.
-	room := avail - lipgloss.Width(glyph) - lipgloss.Width(undoHint)
+	// The note is never cut; the undo hint goes first when there is not room
+	// for both, and the text after it.
+	room := avail - lipgloss.Width(glyph) - lipgloss.Width(note) - lipgloss.Width(undoHint)
 	if room < minStatusMessageWidth {
 		undoHint = ""
-		room = avail - lipgloss.Width(glyph)
+		room = avail - lipgloss.Width(glyph) - lipgloss.Width(note)
 	}
 	if room < minStatusMessageWidth {
+		if m.toast.note != "" && lipgloss.Width(glyph+m.toast.note) <= avail {
+			return style.Render(glyph + m.toast.note)
+		}
 		return ""
 	}
-	return style.Render(glyph+ansi.Truncate(text, room, "…")) + undoHint
+	return style.Render(glyph+ansi.Truncate(text, room, "…")+note) + undoHint
 }

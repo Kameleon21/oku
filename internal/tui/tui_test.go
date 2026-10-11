@@ -2281,6 +2281,43 @@ func TestCacheRefreshFailureIsASuccessWithAWarning(t *testing.T) {
 			t.Fatalf("status bar = %q, want %q", bar, want)
 		}
 	}
+
+	// The cache is still broken, so the reload the result started fails.
+	// That must not replace the warning, nor take the undo with it.
+	m.Update(libraryLoadedMsg{err: errors.New("database is closed")})
+	m.Update(localDataLoadedMsg{err: errors.New("database is closed")})
+	if m.toast.level != toastWarn || m.undo == nil {
+		t.Fatalf("toast = %+v, undo = %+v; want the warning and its undo still up", m.toast, m.undo)
+	}
+	if bar := stripANSI(m.footer(m.lay)); !strings.Contains(bar, "press s to sync") || !strings.Contains(bar, "U undo") {
+		t.Fatalf("status bar = %q, want the warning and the undo hint", bar)
+	}
+
+	// A later, unrelated load error toasts as it always has.
+	m.Update(libraryLoadedMsg{err: errors.New("disk full")})
+	if m.toast.level != toastError || m.undo != nil {
+		t.Fatalf("toast = %+v, want the unrelated load error", m.toast)
+	}
+}
+
+// TestCacheWarningSurvivesANarrowFooter: the text gives way to the warning,
+// not the other way round, and the undo hint stays too.
+func TestCacheWarningSurvivesANarrowFooter(t *testing.T) {
+	m := renderedDashboard(80, 40)
+	m.setTab(tabReading)
+	m.Update(writeDone(app.ErrCacheRefresh, opDoneMsg{
+		op: opStatus, info: "Status changed to Currently Reading", reload: true, markDirty: true,
+		bookID: 1, title: "The Brothers Karamazov", prevStatus: model.StatusWantToRead, newStatus: model.StatusCurrentlyReading,
+	}))
+	bar := stripANSI(m.footer(m.lay))
+	for _, want := range []string{"! Moved 'The Brothers", "…; press s to sync", "U undo"} {
+		if !strings.Contains(bar, want) {
+			t.Fatalf("status bar = %q, want %q", bar, want)
+		}
+	}
+	if w := lipgloss.Width(bar); w > 80 {
+		t.Fatalf("status bar is %d columns wide, want at most 80", w)
+	}
 }
 
 func TestQuickProgressOffersUndoToThePreviousPage(t *testing.T) {
