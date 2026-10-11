@@ -92,7 +92,7 @@ func TestStatusChangeWithStaleCacheWarnsAndStillReloads(t *testing.T) {
 
 	drain(t, m, send(t, m, runeKey('f')))
 
-	if m.toast.level != toastWarn || m.toast.text != "Moved 'Dune' to Read; "+cacheWarning {
+	if m.toast.level != toastWarn || m.toast.text != "Moved 'Dune' to Read" || m.toast.note != cacheWarning {
 		t.Fatalf("toast = %+v, want the move with the cache warning", m.toast)
 	}
 	if m.undo == nil || m.undo.op != opStatus {

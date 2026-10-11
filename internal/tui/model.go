@@ -102,11 +102,6 @@ type Model struct {
 	// is up. Both are dropped when the toast expires.
 	toast toast
 	undo  *undoAction
-	// warnedLoads counts the loads still due from the reload a warned write
-	// started (see applyOpDone). The cache may still be broken, so their
-	// errors leave the warning and its undo up instead of replacing them.
-	warnedLoads int
-
 	// timerTicking reports whether the one-second tick loop is armed; it only
 	// runs while a timer is actually running.
 	timerTicking bool
@@ -452,10 +447,9 @@ func (m *Model) applyLibraryLoaded(msg libraryLoadedMsg) tea.Cmd {
 	if msg.reconcile {
 		m.reconciling = false
 	}
-	quiet := !msg.reconcile && m.takeWarnedLoad()
 	if msg.err != nil {
 		// dirty stays set: the local mutations are still unreconciled.
-		if quiet {
+		if msg.quiet {
 			return nil
 		}
 		return m.showToast(toastError, msg.err.Error())
@@ -480,9 +474,8 @@ func (m *Model) applyLibraryLoaded(msg libraryLoadedMsg) tea.Cmd {
 func (m *Model) applyLocalDataLoaded(msg localDataLoadedMsg) tea.Cmd {
 	m.shared.localLoaded = true
 
-	quiet := m.takeWarnedLoad()
 	if msg.err != nil {
-		if quiet {
+		if msg.quiet {
 			return nil
 		}
 		return m.showToast(toastError, msg.err.Error())
@@ -523,28 +516,20 @@ func (m *Model) applyOpDone(msg opDoneMsg) tea.Cmd {
 		m.dirty = true
 		m.lastMutationAt = m.shared.now()
 	}
-	// A warned write reached Hardcover but could not refresh the cache, so
-	// the reload below may fail the same way. Its two loads must not bury
-	// the warning, which already says to sync, under an error toast.
-	m.warnedLoads = 0
-	if msg.warn != "" && msg.reload {
-		m.warnedLoads = 2
-	}
 	if msg.reload {
-		reload := m.run(loadLibraryCmd(m.ctx, m.backend, false), loadLocalDataCmd(m.backend, m.shared.now))
-		return tea.Batch(reload, toastCmd)
+		library := loadLibraryCmd(m.ctx, m.backend, false)
+		local := loadLocalDataCmd(m.backend, m.shared.now)
+		if msg.warn != "" {
+			// A warned write reached Hardcover but could not refresh the
+			// cache, so the reload may fail the same way. Its two loads
+			// must not bury the warning, which already says to sync, under
+			// an error toast; any other load that fails meanwhile still
+			// toasts, since only these two are marked.
+			library, local = quietly(library), quietly(local)
+		}
+		return tea.Batch(m.run(library, local), toastCmd)
 	}
 	return toastCmd
-}
-
-// takeWarnedLoad reports whether a finished load belongs to a warned write's
-// reload, counting it off.
-func (m *Model) takeWarnedLoad() bool {
-	if m.warnedLoads == 0 {
-		return false
-	}
-	m.warnedLoads--
-	return true
 }
 
 // handleRequest runs what a section or modal asked for. This is the one

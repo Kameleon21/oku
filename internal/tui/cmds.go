@@ -29,7 +29,10 @@ type libraryLoadedMsg struct {
 	// reconcile marks the background reconcile's own result: only that one
 	// may clear dirty, since any other load can land while it is in flight.
 	reconcile bool
-	err       error
+	// quiet marks a load started by a warned write (see quietly): its
+	// failure leaves the warning up rather than replacing it.
+	quiet bool
+	err   error
 }
 
 type searchLoadedMsg struct {
@@ -93,6 +96,8 @@ type localDataLoadedMsg struct {
 	// shelf is every cached user book by book id: what the search detail
 	// reads to say a result is already in the library.
 	shelf map[int]model.UserBook
+	// quiet marks a load started by a warned write (see quietly).
+	quiet bool
 	err   error
 }
 
@@ -167,6 +172,26 @@ func reconcileLibraryCmd(ctx context.Context, a backend) tea.Cmd {
 			return loaded
 		}
 		return msg
+	}
+}
+
+// quietly marks a load started by a write that reached Hardcover but could
+// not refresh the cache: the cache may still be broken, so the load's own
+// failure leaves the warning that already says to sync, and its undo, up
+// instead of replacing them with an error toast. Only the marked load is
+// quiet; an unrelated load failing meanwhile still reports itself.
+func quietly(cmd tea.Cmd) tea.Cmd {
+	return func() tea.Msg {
+		switch msg := cmd().(type) {
+		case libraryLoadedMsg:
+			msg.quiet = true
+			return msg
+		case localDataLoadedMsg:
+			msg.quiet = true
+			return msg
+		default:
+			return msg
+		}
 	}
 }
 

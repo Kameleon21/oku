@@ -2280,7 +2280,7 @@ func TestCacheRefreshFailureIsASuccessWithAWarning(t *testing.T) {
 	m := renderedDashboard(120, 40)
 	m.setTab(tabReading)
 	before := m.inflight
-	m.Update(msg)
+	_, reload := m.Update(msg)
 
 	if !m.dirty {
 		t.Fatal("the change reached Hardcover, so the library is dirty")
@@ -2303,19 +2303,61 @@ func TestCacheRefreshFailureIsASuccessWithAWarning(t *testing.T) {
 
 	// The cache is still broken, so the reload the result started fails.
 	// That must not replace the warning, nor take the undo with it.
-	m.Update(libraryLoadedMsg{err: errors.New("database is closed")})
-	m.Update(localDataLoadedMsg{err: errors.New("database is closed")})
+	fb := fakeOf(m)
+	fb.errs["ListBooks"] = errors.New("database is closed")
+	fb.errs["GetReadingStats"] = errors.New("database is closed")
+	drain(t, m, reload)
+	if !fb.called("ListBooks") || !fb.called("GetReadingStats") {
+		t.Fatalf("calls = %v, want both reloads attempted", fb.calls)
+	}
 	if m.toast.level != toastWarn || m.undo == nil {
 		t.Fatalf("toast = %+v, undo = %+v; want the warning and its undo still up", m.toast, m.undo)
 	}
 	if bar := stripANSI(m.footer(m.lay)); !strings.Contains(bar, "press s to sync") || !strings.Contains(bar, "U undo") {
 		t.Fatalf("status bar = %q, want the warning and the undo hint", bar)
 	}
+	if m.isLoading() {
+		t.Fatalf("inflight = %d after the reload failed, want 0", m.inflight)
+	}
 
 	// A later, unrelated load error toasts as it always has.
-	m.Update(libraryLoadedMsg{err: errors.New("disk full")})
+	finish(t, m, libraryLoadedMsg{err: errors.New("disk full")})
 	if m.toast.level != toastError || m.undo != nil {
 		t.Fatalf("toast = %+v, want the unrelated load error", m.toast)
+	}
+}
+
+// TestUnrelatedLoadStillToastsDuringAWarnedReload: only the reload a warned
+// write started is quiet. Another load that fails while that reload is
+// still pending reports itself, and the warned reload failing afterwards
+// does not disturb what it said.
+func TestUnrelatedLoadStillToastsDuringAWarnedReload(t *testing.T) {
+	m := renderedDashboard(120, 40)
+	m.setTab(tabReading)
+	_, reload := m.Update(writeDone(app.ErrCacheRefresh, opDoneMsg{
+		op: opStatus, info: "Status changed to Read", reload: true, markDirty: true,
+		bookID: 1, title: "Dune", prevStatus: model.StatusCurrentlyReading, newStatus: model.StatusRead,
+	}))
+	if m.inflight != 2 || m.toast.level != toastWarn {
+		t.Fatalf("inflight = %d, toast = %+v: want the warned reload pending behind the warning", m.inflight, m.toast)
+	}
+
+	// The background reconcile, say, fails first.
+	m.inflight++
+	finish(t, m, libraryLoadedMsg{reconcile: true, err: errors.New("disk full")})
+	if m.toast.level != toastError || m.toast.text != "disk full" || m.undo != nil {
+		t.Fatalf("toast = %+v, undo = %+v: want the unrelated failure reported", m.toast, m.undo)
+	}
+
+	fb := fakeOf(m)
+	fb.errs["ListBooks"] = errors.New("database is closed")
+	fb.errs["GetReadingStats"] = errors.New("database is closed")
+	drain(t, m, reload)
+	if m.toast.text != "disk full" {
+		t.Fatalf("toast = %+v, want the warned reload's own failure kept quiet", m.toast)
+	}
+	if m.isLoading() {
+		t.Fatalf("inflight = %d, want 0", m.inflight)
 	}
 }
 
