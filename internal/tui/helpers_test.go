@@ -145,7 +145,7 @@ func drain(t *testing.T, m *Model, cmd tea.Cmd) {
 // the slot of the command a test started, and returns what the root answers.
 func finish(t *testing.T, m *Model, msg tea.Msg) tea.Cmd {
 	t.Helper()
-	return send(t, m, resultMsg{msg})
+	return send(t, m, resultMsg{msg: msg})
 }
 
 // frameAt is the view's content at a colour profile. lipgloss v2 has no

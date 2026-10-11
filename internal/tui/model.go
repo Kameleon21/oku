@@ -81,6 +81,10 @@ type Model struct {
 	// resultMsg, and its slot is released before the result is handled,
 	// whatever the result is. No handler counts.
 	inflight int
+	// background counts the part of inflight that is a read running behind
+	// the reader's back (the launch refresh, the reconcile): it turns the
+	// spinner but does not refuse writes (see busy).
+	background int
 
 	// spinning reports whether the spinner tick loop is armed. It only runs
 	// while work is in flight, so an idle dashboard does not re-render a
@@ -97,6 +101,10 @@ type Model struct {
 
 	dirty          bool
 	lastMutationAt time.Time
+	// writes counts the writes that have finished. A forced refresh is
+	// stamped with it when it starts, so a refresh a write overtook can be
+	// told apart when it lands (see applyLibraryLoaded).
+	writes int
 
 	// toast is the footer's message, and undo what U would reverse while it
 	// is up. Both are dropped when the toast expires.
@@ -430,9 +438,7 @@ func (m *Model) handleCommon(msg tea.Msg) tea.Cmd {
 
 	case backgroundCheckMsg:
 		if m.dirty && !m.isLoading() && !m.reconciling && m.shared.now().Sub(m.lastMutationAt) >= backgroundSyncWindow {
-			m.reconciling = true
-			cmd := m.run(reconcileLibraryCmd(m.ctx, m.backend))
-			return tea.Batch(cmd, backgroundCheckCmd())
+			return tea.Batch(m.refreshLibrary(true), backgroundCheckCmd())
 		}
 		return backgroundCheckCmd()
 
@@ -454,6 +460,13 @@ func (m *Model) applyLibraryLoaded(msg libraryLoadedMsg) tea.Cmd {
 		}
 		return m.showToast(toastError, msg.err.Error())
 	}
+	if msg.refreshed && msg.writes != m.writes {
+		// A write finished while this refresh was out, so its shelves may
+		// predate the write, and so may the cache rows it replaced. What is
+		// on screen stays, dirty stays, and Hardcover, which has the write,
+		// is asked again.
+		return m.refreshLibrary(msg.reconcile)
+	}
 	m.shared.reading = msg.reading
 	m.shared.oku = msg.oku
 	m.shared.paused = msg.paused
@@ -465,8 +478,7 @@ func (m *Model) applyLibraryLoaded(msg libraryLoadedMsg) tea.Cmd {
 	}
 	cmd := m.broadcast(dataChangedMsg{dataLibrary})
 	if msg.needsRefresh {
-		refresh := m.run(loadLibraryCmd(m.ctx, m.backend, true))
-		return tea.Batch(cmd, refresh)
+		return tea.Batch(cmd, m.refreshLibrary(false))
 	}
 	return cmd
 }
@@ -515,6 +527,7 @@ func (m *Model) applyOpDone(msg opDoneMsg) tea.Cmd {
 	if msg.err == nil && msg.markDirty {
 		m.dirty = true
 		m.lastMutationAt = m.shared.now()
+		m.writes++
 	}
 	if msg.reload {
 		library := loadLibraryCmd(m.ctx, m.backend, false)
@@ -579,7 +592,7 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 		if r.local {
 			return m.run(loadLocalDataCmd(m.backend, m.shared.now))
 		}
-		return m.run(loadLibraryCmd(m.ctx, m.backend, true))
+		return m.run(refreshLibraryCmd(m.ctx, m.backend, m.writes, false))
 
 	case reqUndo:
 		return m.runUndo()
@@ -590,14 +603,14 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 	case reqProgress:
 		// UpdateProgress is read-modify-write, so firing a second one while
 		// the first is in flight would silently lose an update.
-		if m.isLoading() {
+		if m.busy() {
 			return m.showToast(toastWarn, inFlightNotice)
 		}
 		b := r.book
 		return m.run(quickProgressCmd(m.ctx, m.backend, b.Book.ID, b.Book.Title, currentPage(b), r.delta))
 
 	case reqSetPage:
-		if m.isLoading() {
+		if m.busy() {
 			return m.refuse(opProgress, r.token)
 		}
 		return m.run(stamped(updateProgressCmd(m.ctx, m.backend, r.bookID, r.title, r.prevPage, r.raw), r.token))
@@ -611,7 +624,7 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 		return m.run(change)
 
 	case reqReview:
-		if m.isLoading() {
+		if m.busy() {
 			// The same guard the page prompt has: both modals go read-only
 			// while they save, so both need the refusal to reach them.
 			return m.refuse(opReview, r.token)
@@ -643,7 +656,7 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 		return tea.Batch(save, toastCmd, m.broadcast(dataChangedMsg{dataSearches}))
 
 	case reqTimerToggle:
-		if m.isLoading() {
+		if m.busy() {
 			// timerState only catches up when the load lands, so two quick
 			// presses would otherwise start two sessions.
 			return m.showToast(toastWarn, inFlightNotice)
@@ -730,15 +743,21 @@ func (m *Model) mergeRecentSearches(loaded []string) {
 // command's slot before the result is handled, whatever its type: a handler
 // that forgot to, or a result nothing handled, used to leave the count stuck
 // and every later request refused.
-type resultMsg struct{ msg tea.Msg }
+type resultMsg struct {
+	msg        tea.Msg
+	background bool
+}
 
 // runCmd is a command the runner started. It is a named type with a method
 // rather than a closure so that one function starts every command, whatever
 // the call site: a test can tell the runner's work apart from a tick by that
 // function alone, and run it without waiting on the tick.
-type runCmd struct{ cmd tea.Cmd }
+type runCmd struct {
+	cmd        tea.Cmd
+	background bool
+}
 
-func (c runCmd) run() tea.Msg { return resultMsg{c.cmd()} }
+func (c runCmd) run() tea.Msg { return resultMsg{msg: c.cmd(), background: c.background} }
 
 // run starts cmds, counting each one in flight until finish has handled
 // its result, and (re)starts the spinner tick loop. Ticks and the
@@ -751,9 +770,34 @@ func (m *Model) run(cmds ...tea.Cmd) tea.Cmd {
 			continue
 		}
 		m.inflight++
-		out = append(out, runCmd{cmd}.run)
+		out = append(out, runCmd{cmd: cmd}.run)
 	}
 	return tea.Batch(append(out, m.startSpinner())...)
+}
+
+// runBackground is run for reads the reader does not wait on: they are
+// counted, so the spinner turns, but busy leaves them out.
+func (m *Model) runBackground(cmds ...tea.Cmd) tea.Cmd {
+	out := make([]tea.Cmd, 0, len(cmds)+1)
+	for _, cmd := range cmds {
+		if cmd == nil {
+			continue
+		}
+		m.inflight++
+		m.background++
+		out = append(out, runCmd{cmd: cmd, background: true}.run)
+	}
+	return tea.Batch(append(out, m.startSpinner())...)
+}
+
+// refreshLibrary fetches every shelf from Hardcover in the background,
+// stamped with the writes finished so far. reconcile makes it the
+// background reconcile, whose success alone clears dirty.
+func (m *Model) refreshLibrary(reconcile bool) tea.Cmd {
+	if reconcile {
+		m.reconciling = true
+	}
+	return m.runBackground(refreshLibraryCmd(m.ctx, m.backend, m.writes, reconcile))
 }
 
 // finish releases the slot of the command that answered with res and
@@ -765,10 +809,16 @@ func (m *Model) run(cmds ...tea.Cmd) tea.Cmd {
 // be released without them being run.
 func (m *Model) finish(res resultMsg) tea.Cmd {
 	m.endLoading()
+	if res.background && m.background > 0 {
+		m.background--
+	}
 	switch msg := res.msg.(type) {
 	case nil:
 		return nil
 	case tea.BatchMsg:
+		if res.background {
+			return m.runBackground(msg...)
+		}
 		return m.run(msg...)
 	}
 	return m.updateCommon(res.msg)
@@ -794,6 +844,13 @@ func (m *Model) requireOnline() tea.Cmd {
 // isLoading reports whether any command is still running.
 func (m *Model) isLoading() bool {
 	return m.inflight > 0
+}
+
+// busy reports whether work the reader started is still running: the
+// in-flight guard that keeps writes from overlapping. A background read
+// does not count; a write it races is handled when the read lands.
+func (m *Model) busy() bool {
+	return m.inflight > m.background
 }
 
 // startSpinner returns the spinner tick only when work is in flight and no

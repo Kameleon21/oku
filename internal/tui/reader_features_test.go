@@ -75,6 +75,9 @@ func TestLaunchRefreshesEveryShelf(t *testing.T) {
 			t.Fatalf("calls = %v, want %s read from the cache and then refreshed", fb.calls, status)
 		}
 	}
+	if len(fb.remotes) != 3 {
+		t.Fatalf("remote calls = %v, want exactly the three shelves", fb.remotes)
+	}
 	if m.isLoading() || m.toast.text != "" {
 		t.Fatalf("after launch: inflight = %d, toast = %q; want settled and quiet", m.inflight, m.toast.text)
 	}
@@ -111,6 +114,73 @@ func TestReloadAfterWriteReadsPausedFromTheCache(t *testing.T) {
 	}
 	if len(m.shared.paused) != 1 || m.shared.paused[0].BookID != 1 {
 		t.Fatalf("paused = %v, want Dune", m.shared.paused)
+	}
+}
+
+// TestBackgroundRefreshDoesNotRefuseWrites: the launch refresh turns the
+// spinner, but a write pressed meanwhile goes ahead; work the reader started
+// still holds the next write back.
+func TestBackgroundRefreshDoesNotRefuseWrites(t *testing.T) {
+	m, _ := loadedDashboard(t)
+	refresh := m.refreshLibrary(false)
+	if !m.isLoading() || m.busy() {
+		t.Fatalf("inflight = %d, background = %d: want the spinner on and writes allowed", m.inflight, m.background)
+	}
+
+	m.setTab(tabReading)
+	write := send(t, m, request(reqProgress{book: dune, delta: 1}))
+	if m.toast.text == inFlightNotice {
+		t.Fatal("a background refresh refused a write")
+	}
+	if !m.busy() {
+		t.Fatal("the write the reader started should hold the next one back")
+	}
+	if send(t, m, request(reqProgress{book: dune, delta: 1})); m.toast.text != inFlightNotice {
+		t.Fatalf("toast = %q, want the second write refused while the first runs", m.toast.text)
+	}
+
+	drain(t, m, tea.Batch(refresh, write))
+	if m.inflight != 0 || m.background != 0 {
+		t.Fatalf("inflight = %d, background = %d once everything landed, want 0", m.inflight, m.background)
+	}
+}
+
+// TestOvertakenRefreshKeepsTheWrite: a refresh that fetched before a status
+// change and lands after it must not put the book back. Its shelves are set
+// aside and Hardcover, which has the change, is asked again.
+func TestOvertakenRefreshKeepsTheWrite(t *testing.T) {
+	m, fb := loadedDashboard(t)
+
+	// The launch refresh fetches the shelves as they were...
+	stale := refreshLibraryCmd(m.ctx, fb, m.writes, false)()
+	m.inflight++
+	m.background++
+
+	// ...then Dune is paused before its result lands.
+	op := changeStatusCmd(m.ctx, m.backend, 1, "Dune", dune.StatusID, model.StatusPaused)
+	drain(t, m, send(t, m, request(reqRunOp{cmd: op})))
+
+	fb.mu.Lock()
+	fb.remotes = nil
+	fb.mu.Unlock()
+	drain(t, m, send(t, m, resultMsg{msg: stale, background: true}))
+
+	if !fb.calledRemote("ListBooks", model.StatusCurrentlyReading, true) {
+		t.Fatalf("remote calls = %v, want the shelves fetched again", fb.remotes)
+	}
+	for _, b := range m.shared.reading {
+		if b.BookID == 1 {
+			t.Fatal("the overtaken refresh put Dune back on the Reading shelf")
+		}
+	}
+	if len(m.shared.paused) != 1 || m.shared.paused[0].BookID != 1 {
+		t.Fatalf("paused on screen = %v, want Dune", m.shared.paused)
+	}
+	if paused := fb.shelf(model.StatusPaused); len(paused) != 1 || paused[0].BookID != 1 {
+		t.Fatalf("paused in the cache = %v, want Dune", paused)
+	}
+	if !m.dirty || m.inflight != 0 || m.background != 0 {
+		t.Fatalf("dirty = %v, inflight = %d, background = %d; want dirty and settled", m.dirty, m.inflight, m.background)
 	}
 }
 

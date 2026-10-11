@@ -29,6 +29,10 @@ type libraryLoadedMsg struct {
 	// reconcile marks the background reconcile's own result: only that one
 	// may clear dirty, since any other load can land while it is in flight.
 	reconcile bool
+	// refreshed marks a forced refresh from Hardcover, and writes is the
+	// model's write count when it started (see applyLibraryLoaded).
+	refreshed bool
+	writes    int
 	// quiet marks a load started by a warned write (see quietly): its
 	// failure leaves the warning up rather than replacing it.
 	quiet bool
@@ -170,15 +174,16 @@ func loadLibraryCmd(ctx context.Context, a backend, refresh bool) tea.Cmd {
 	}
 }
 
-// reconcileLibraryCmd is the background reconcile's refresh: it stamps its
-// result so that a library load started by something else cannot be mistaken
-// for the reconcile finishing.
-func reconcileLibraryCmd(ctx context.Context, a backend) tea.Cmd {
+// refreshLibraryCmd is a forced refresh from Hardcover, stamped with the
+// writes the model had finished when it started. reconcile marks the
+// background reconcile's own result, so that a library load started by
+// something else cannot be mistaken for the reconcile finishing.
+func refreshLibraryCmd(ctx context.Context, a backend, writes int, reconcile bool) tea.Cmd {
 	refresh := loadLibraryCmd(ctx, a, true)
 	return func() tea.Msg {
 		msg := refresh()
 		if loaded, ok := msg.(libraryLoadedMsg); ok {
-			loaded.reconcile = true
+			loaded.refreshed, loaded.writes, loaded.reconcile = true, writes, reconcile
 			return loaded
 		}
 		return msg

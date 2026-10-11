@@ -363,7 +363,7 @@ func TestDrainRunsBatchesAndSkipsTimers(t *testing.T) {
 		t.Fatalf("drain took %v: a timer should cost at most one wait", took)
 	}
 
-	if reflect.ValueOf(runCmd{count}.run).Pointer() != runFn {
+	if reflect.ValueOf(runCmd{cmd: count}.run).Pointer() != runFn {
 		t.Fatal("the runner's commands should share one function")
 	}
 }
