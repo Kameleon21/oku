@@ -76,14 +76,6 @@ func (m *Model) showToast(level toastLevel, text string) tea.Cmd {
 	})
 }
 
-// showUndoToast is showToast for a change that can be reversed while the
-// toast is up.
-func (m *Model) showUndoToast(text string, undo undoAction) tea.Cmd {
-	cmd := m.showToast(toastSuccess, text)
-	m.undo = &undo
-	return cmd
-}
-
 // toastFor reports an operation's result: its error, or its info with an
 // undo when the result says how to reverse it. A warning turns the toast into
 // a warning and follows the info, undo and all.
@@ -128,9 +120,9 @@ func (m *Model) runUndo() tea.Cmd {
 	m.undo = nil
 	switch u.op {
 	case opStatus:
-		return m.beginLoading(changeStatusCmd(m.ctx, m.app, u.bookID, u.title, u.fromStatus, u.toStatus))
+		return m.run(changeStatusCmd(m.ctx, m.backend, u.bookID, u.title, u.fromStatus, u.toStatus))
 	case opProgress:
-		return m.beginLoading(updateProgressCmd(m.ctx, m.app, u.bookID, u.title, u.fromPage, strconv.Itoa(u.toPage)))
+		return m.run(updateProgressCmd(m.ctx, m.backend, u.bookID, u.title, u.fromPage, strconv.Itoa(u.toPage)))
 	}
 	return nil
 }

@@ -37,7 +37,9 @@ const (
 // starts: sections and modals answer keys with requests, updateCommon runs
 // them with the in-flight guard and the spinner.
 type Model struct {
-	app *app.App
+	// backend is the app behind the dashboard; every command runs against
+	// it. It is never nil: a dashboard built without an app gets noBackend.
+	backend backend
 	// ctx is cancelled when the program exits so in-flight API calls abort
 	// instead of outliving the store.
 	ctx context.Context
@@ -74,9 +76,10 @@ type Model struct {
 
 	// inflight counts the commands that are running. A single boolean meant
 	// the first completion cleared the flag for every other operation, so a
-	// fast local load stopped the spinner mid-sync. Every command started
-	// through beginLoading must produce exactly one message whose handler
-	// calls endLoading.
+	// fast local load stopped the spinner mid-sync. Only run adds to it and
+	// only finish takes from it: a command's result comes back in a
+	// resultMsg, and its slot is released before the result is handled,
+	// whatever the result is. No handler counts.
 	inflight int
 
 	// spinning reports whether the spinner tick loop is armed. It only runs
@@ -113,6 +116,16 @@ type Model struct {
 // the list rows and the detail pane read to decide how much to show, and
 // version is the build the help modal names.
 func New(ctx context.Context, a *app.App, density Density, version string) *Model {
+	var b backend = noBackend{}
+	if a != nil {
+		b = a
+	}
+	return newModel(ctx, b, density, version)
+}
+
+// newModel is New over any backend: the seam the tests build a dashboard
+// through, with an in-memory app behind it.
+func newModel(ctx context.Context, b backend, density Density, version string) *Model {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -136,7 +149,7 @@ func New(ctx context.Context, a *app.App, density Density, version string) *Mode
 	}
 
 	m := &Model{
-		app:          a,
+		backend:      b,
 		ctx:          ctx,
 		version:      version,
 		st:           st,
@@ -147,10 +160,6 @@ func New(ctx context.Context, a *app.App, density Density, version string) *Mode
 		tab:          tabReading,
 		detail:       newDetailPane(sh, st),
 		help:         newHelp(st),
-		// Init starts the cached-library and local-data loads, so two
-		// commands are already in flight.
-		inflight: 2,
-		spinning: true,
 	}
 	m.sections = [tabCount]section{
 		tabReading: newLibrarySection(sh, st, tabReading),
@@ -200,9 +209,9 @@ func (m *Model) section() section {
 
 func (m *Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{
-		m.shared.spin.Tick,
-		loadCachedLibraryCmd(m.app),
-		loadLocalDataCmd(m.app, m.shared.now),
+		// The loads go through the runner like any other work, which is
+		// what starts the spinner.
+		m.run(loadCachedLibraryCmd(m.backend), loadLocalDataCmd(m.backend, m.shared.now)),
 		backgroundCheckCmd(),
 	}
 	if !m.themePinned {
@@ -220,6 +229,9 @@ func (m *Model) Init() tea.Cmd {
 // keyboard; the focused detail pane scrolls on j/k; the section gets the
 // rest. Everything else is common handling plus a broadcast.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if res, ok := msg.(resultMsg); ok {
+		return m, m.finish(res)
+	}
 	keyMsg, isKey := msg.(tea.KeyPressMsg)
 	if !isKey {
 		return m, m.updateCommon(msg)
@@ -397,7 +409,6 @@ func (m *Model) handleCommon(msg tea.Msg) tea.Cmd {
 		return m.applyLocalDataLoaded(msg)
 
 	case timerOpDoneMsg:
-		m.endLoading()
 		var toastCmd tea.Cmd
 		if msg.err != nil {
 			toastCmd = m.showToast(toastError, msg.err.Error())
@@ -406,7 +417,7 @@ func (m *Model) handleCommon(msg tea.Msg) tea.Cmd {
 		}
 		// Reload local data after timer operations. The toast tick is not
 		// work, so it stays out of the in-flight count.
-		reload := m.beginLoading(loadLocalDataCmd(m.app, m.shared.now))
+		reload := m.run(loadLocalDataCmd(m.backend, m.shared.now))
 		return tea.Batch(reload, toastCmd)
 
 	case toastExpiredMsg:
@@ -419,15 +430,13 @@ func (m *Model) handleCommon(msg tea.Msg) tea.Cmd {
 		return nil
 
 	case searchLoadedMsg:
-		// The command has finished either way, so its slot is released; the
-		// search section applies the result.
-		m.endLoading()
+		// The search section applies the result in the broadcast.
 		return nil
 
 	case backgroundCheckMsg:
 		if m.dirty && !m.isLoading() && !m.reconciling && m.shared.now().Sub(m.lastMutationAt) >= backgroundSyncWindow {
 			m.reconciling = true
-			cmd := m.beginLoading(reconcileLibraryCmd(m.ctx, m.app))
+			cmd := m.run(reconcileLibraryCmd(m.ctx, m.backend))
 			return tea.Batch(cmd, backgroundCheckCmd())
 		}
 		return backgroundCheckCmd()
@@ -439,7 +448,6 @@ func (m *Model) handleCommon(msg tea.Msg) tea.Cmd {
 }
 
 func (m *Model) applyLibraryLoaded(msg libraryLoadedMsg) tea.Cmd {
-	m.endLoading()
 	m.shared.loaded = true
 	if msg.reconcile {
 		m.reconciling = false
@@ -463,14 +471,13 @@ func (m *Model) applyLibraryLoaded(msg libraryLoadedMsg) tea.Cmd {
 	}
 	cmd := m.broadcast(dataChangedMsg{dataLibrary})
 	if msg.needsRefresh {
-		refresh := m.beginLoading(loadLibraryCmd(m.ctx, m.app, true))
+		refresh := m.run(loadLibraryCmd(m.ctx, m.backend, true))
 		return tea.Batch(cmd, refresh)
 	}
 	return cmd
 }
 
 func (m *Model) applyLocalDataLoaded(msg localDataLoadedMsg) tea.Cmd {
-	m.endLoading()
 	m.shared.localLoaded = true
 
 	quiet := m.takeWarnedLoad()
@@ -496,11 +503,10 @@ func (m *Model) applyLocalDataLoaded(msg localDataLoadedMsg) tea.Cmd {
 	return tea.Batch(m.startTimerTick(), m.broadcast(dataChangedMsg{dataLocal}))
 }
 
-// applyOpDone applies the result of a mutating operation: its slot, its
-// toast, the dirty mark and the reload. The modal it belongs to, if any,
-// sees it in the broadcast that follows.
+// applyOpDone applies the result of a mutating operation: its toast, the
+// dirty mark and the reload. The modal it belongs to, if any, sees it in the
+// broadcast that follows.
 func (m *Model) applyOpDone(msg opDoneMsg) tea.Cmd {
-	m.endLoading()
 	if msg.op == opSync {
 		m.syncing = false
 	}
@@ -525,7 +531,7 @@ func (m *Model) applyOpDone(msg opDoneMsg) tea.Cmd {
 		m.warnedLoads = 2
 	}
 	if msg.reload {
-		reload := m.beginLoading(loadLibraryCmd(m.ctx, m.app, false), loadLocalDataCmd(m.app, m.shared.now))
+		reload := m.run(loadLibraryCmd(m.ctx, m.backend, false), loadLocalDataCmd(m.backend, m.shared.now))
 		return tea.Batch(reload, toastCmd)
 	}
 	return toastCmd
@@ -578,17 +584,17 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 		return m.openHelp()
 
 	case reqRunOp:
-		return m.beginLoading(r.cmd)
+		return m.run(r.cmd)
 
 	case reqSync:
 		m.syncing = true
-		return m.beginLoading(syncAllAndReloadCmd(m.ctx, m.app))
+		return m.run(syncAllAndReloadCmd(m.ctx, m.backend))
 
 	case reqRefresh:
 		if r.local {
-			return m.beginLoading(loadLocalDataCmd(m.app, m.shared.now))
+			return m.run(loadLocalDataCmd(m.backend, m.shared.now))
 		}
-		return m.beginLoading(loadLibraryCmd(m.ctx, m.app, true))
+		return m.run(loadLibraryCmd(m.ctx, m.backend, true))
 
 	case reqUndo:
 		return m.runUndo()
@@ -603,21 +609,21 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 			return m.showToast(toastWarn, inFlightNotice)
 		}
 		b := r.book
-		return m.beginLoading(quickProgressCmd(m.ctx, m.app, b.Book.ID, b.Book.Title, currentPage(b), r.delta))
+		return m.run(quickProgressCmd(m.ctx, m.backend, b.Book.ID, b.Book.Title, currentPage(b), r.delta))
 
 	case reqSetPage:
 		if m.isLoading() {
 			return m.refuse(opProgress, r.token)
 		}
-		return m.beginLoading(stamped(updateProgressCmd(m.ctx, m.app, r.bookID, r.title, r.prevPage, r.raw), r.token))
+		return m.run(stamped(updateProgressCmd(m.ctx, m.backend, r.bookID, r.title, r.prevPage, r.raw), r.token))
 
 	case reqChangeStatus:
 		b := r.book
-		change := changeStatusCmd(m.ctx, m.app, b.Book.ID, b.Book.Title, b.StatusID, r.to)
+		change := changeStatusCmd(m.ctx, m.backend, b.Book.ID, b.Book.Title, b.StatusID, r.to)
 		if r.confirm {
 			return m.push(newConfirmModal(fmt.Sprintf("Mark '%s' as %s?", b.Book.Title, r.to.Label()), change))
 		}
-		return m.beginLoading(change)
+		return m.run(change)
 
 	case reqReview:
 		if m.isLoading() {
@@ -626,16 +632,16 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 			return m.refuse(opReview, r.token)
 		}
 		toastCmd := m.showToast(toastInfo, reviewSavePendingMessage(r.review))
-		save := m.beginLoading(stamped(submitReviewRatingCmd(m.ctx, m.app, r.bookID, r.rating, r.review), r.token))
+		save := m.run(stamped(submitReviewRatingCmd(m.ctx, m.backend, r.bookID, r.rating, r.review), r.token))
 		return tea.Batch(save, toastCmd)
 
 	case reqAddFromSearch:
-		return m.beginLoading(addFromSearchCmd(m.ctx, m.app, r.result.ID, r.to))
+		return m.run(addFromSearchCmd(m.ctx, m.backend, r.result.ID, r.to))
 
 	case reqSearch:
 		toastCmd := m.showToast(toastInfo, fmt.Sprintf("%s mode (%s): searching for %q...",
 			strings.ToLower(r.mode.Label()), r.mode.Description(), r.query))
-		search := m.beginLoading(searchCmd(m.ctx, m.app, r.query, r.mode, r.seq))
+		search := m.run(searchCmd(m.ctx, m.backend, r.query, r.mode, r.seq))
 		return tea.Batch(search, toastCmd)
 
 	case reqSearchDone:
@@ -658,7 +664,7 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 			return m.showToast(toastWarn, inFlightNotice)
 		}
 		if m.shared.timer != nil {
-			return m.beginLoading(stopTimerCmd(m.app))
+			return m.run(stopTimerCmd(m.backend))
 		}
 		if !r.reading {
 			// The other lists hold books that are not being read, so t
@@ -668,7 +674,7 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 		if r.book == nil {
 			return m.showToast(toastError, "no book selected")
 		}
-		return m.beginLoading(startTimerForBookCmd(m.app, r.book.Book.ID))
+		return m.run(startTimerForBookCmd(m.backend, r.book.Book.ID))
 
 	case reqTimerPick:
 		if len(m.shared.reading) == 0 {
@@ -679,9 +685,9 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 
 	case reqTimer:
 		if r.start {
-			return m.beginLoading(startTimerForBookCmd(m.app, r.bookID))
+			return m.run(startTimerForBookCmd(m.backend, r.bookID))
 		}
-		return m.beginLoading(stopTimerCmd(m.app))
+		return m.run(stopTimerCmd(m.backend))
 	}
 	return nil
 }
@@ -723,7 +729,7 @@ func (m *Model) addRecentSearchQuery(query string) tea.Cmd {
 		return nil
 	}
 	m.shared.recentSearches = dedupeQueries(append([]string{query}, m.shared.recentSearches...))
-	return saveRecentSearchesCmd(m.app, m.shared.recentSearches)
+	return saveRecentSearchesCmd(m.backend, m.shared.recentSearches)
 }
 
 // mergeRecentSearches keeps this session's queries ahead of the ones read back
@@ -732,16 +738,53 @@ func (m *Model) mergeRecentSearches(loaded []string) {
 	m.shared.recentSearches = dedupeQueries(append(append([]string(nil), m.shared.recentSearches...), loaded...))
 }
 
-// beginLoading counts one in-flight command per cmd and (re)starts the spinner
-// tick loop. Each cmd must produce exactly one message whose handler calls
-// endLoading.
-func (m *Model) beginLoading(cmds ...tea.Cmd) tea.Cmd {
+// ── Runner ─────────────────────────────────────────────────────────────────
+
+// resultMsg is a command's result on its way back from the runner. Every
+// command run starts answers inside one, so Update can release the
+// command's slot before the result is handled, whatever its type: a handler
+// that forgot to, or a result nothing handled, used to leave the count stuck
+// and every later request refused.
+type resultMsg struct{ msg tea.Msg }
+
+// runCmd is a command the runner started. It is a named type with a method
+// rather than a closure so that one function starts every command, whatever
+// the call site: a test can tell the runner's work apart from a tick by that
+// function alone, and run it without waiting on the tick.
+type runCmd struct{ cmd tea.Cmd }
+
+func (c runCmd) run() tea.Msg { return resultMsg{c.cmd()} }
+
+// run starts cmds, counting each one in flight until finish has handled
+// its result, and (re)starts the spinner tick loop. Ticks and the
+// best-effort history write do not go through here: they are not work the
+// reader waits on. Nil commands are skipped, and nothing to run is nil.
+func (m *Model) run(cmds ...tea.Cmd) tea.Cmd {
+	out := make([]tea.Cmd, 0, len(cmds)+1)
 	for _, cmd := range cmds {
-		if cmd != nil {
-			m.inflight++
+		if cmd == nil {
+			continue
 		}
+		m.inflight++
+		out = append(out, runCmd{cmd}.run)
 	}
-	return tea.Batch(append(cmds, m.startSpinner())...)
+	return tea.Batch(append(out, m.startSpinner())...)
+}
+
+// finish releases the slot of the command that answered with res and
+// handles its result the way any other message is handled. A command that
+// was itself a batch answers with its parts, each a command of its own: they
+// are started here, and counted, in its place. A nil result is a command
+// that had nothing to say.
+func (m *Model) finish(res resultMsg) tea.Cmd {
+	m.endLoading()
+	switch msg := res.msg.(type) {
+	case nil:
+		return nil
+	case tea.BatchMsg:
+		return m.run(msg...)
+	}
+	return m.updateCommon(res.msg)
 }
 
 // endLoading records that one in-flight command has produced its result.
@@ -749,6 +792,16 @@ func (m *Model) endLoading() {
 	if m.inflight > 0 {
 		m.inflight--
 	}
+}
+
+// requireOnline is the one check for a request that needs Hardcover before
+// any work starts: nil when it can be reached, otherwise the warning that
+// says it cannot, in which case nothing is started and nothing is counted.
+func (m *Model) requireOnline() tea.Cmd {
+	if m.backend.Online() {
+		return nil
+	}
+	return m.showToast(toastWarn, app.ErrOffline.Error())
 }
 
 // isLoading reports whether any command is still running.
