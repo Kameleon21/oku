@@ -78,3 +78,64 @@ func TestGetHeatmapMarksJournalOnlyDays(t *testing.T) {
 		t.Fatalf("yesterday Minutes = %d, want > 0", yesterdayAct.Minutes)
 	}
 }
+
+func TestTimerStartAndStatusCarryTheCachedBook(t *testing.T) {
+	a := newTestApp(t)
+	upsertBookWithStatus(t, a, 1, 11, model.StatusCurrentlyReading, "Dune")
+
+	started, err := a.TimerStart(11)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started.BookID != 11 || started.StartedAt.IsZero() {
+		t.Fatalf("TimerStart() state = %+v, want book 11 with a start time", started.TimerState)
+	}
+	if started.Book == nil || started.Book.Title != "Dune" {
+		t.Fatalf("TimerStart() book = %+v, want Dune", started.Book)
+	}
+
+	status, err := a.TimerStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status == nil || status.BookID != 11 || !status.StartedAt.Equal(started.StartedAt) {
+		t.Fatalf("TimerStatus() = %+v, want the started timer", status)
+	}
+	if status.Book == nil || status.Book.Title != "Dune" {
+		t.Fatalf("TimerStatus() book = %+v, want Dune", status.Book)
+	}
+
+	session, err := a.TimerStop()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.BookTitle != "Dune" {
+		t.Fatalf("TimerStop() title = %q, want Dune", session.BookTitle)
+	}
+	if status, err := a.TimerStatus(); err != nil || status != nil {
+		t.Fatalf("TimerStatus() after stop = %+v, %v; want nil", status, err)
+	}
+}
+
+func TestTimerForAnUncachedBookHasNoBook(t *testing.T) {
+	a := newTestApp(t)
+
+	started, err := a.TimerStart(42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started.BookID != 42 || started.Book != nil {
+		t.Fatalf("TimerStart() = %+v, want book 42 with no cached book", started)
+	}
+	status, err := a.TimerStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status == nil || status.BookID != 42 || status.Book != nil {
+		t.Fatalf("TimerStatus() = %+v, want book 42 with no cached book", status)
+	}
+
+	if again, err := a.TimerStart(11); err == nil || again != nil {
+		t.Fatalf("second TimerStart() = %+v, %v; want an already-running error", again, err)
+	}
+}

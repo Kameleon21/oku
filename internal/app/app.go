@@ -53,11 +53,6 @@ func (a *App) DefaultList() string {
 	return a.cfg.DefaultList
 }
 
-// CachedBook returns a book from the local cache, or nil when it is absent.
-func (a *App) CachedBook(id int) (*model.Book, error) {
-	return a.store.GetBookByID(id)
-}
-
 // CachedUserBook returns the cached library entry for a book, or nil when the
 // book is not in the cached library.
 func (a *App) CachedUserBook(bookID int) (*model.UserBook, error) {

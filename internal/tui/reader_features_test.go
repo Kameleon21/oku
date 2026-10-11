@@ -1,9 +1,11 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Kameleon21/oku/internal/model"
@@ -57,6 +59,58 @@ func TestPausedShelfAndResumeRequest(t *testing.T) {
 		t.Fatalf("wrong resume %#v", r)
 	}
 }
+
+// TestPausedShelfLoadsLikeTheOthers: the cached load reports the paused
+// shelf's staleness with the other two, and the refreshing load brings
+// paused in through the staleness-aware path instead of forcing a fetch.
+func TestPausedShelfLoadsLikeTheOthers(t *testing.T) {
+	fb := newFakeBackend()
+	fb.add(model.UserBook{StatusID: model.StatusPaused, Book: model.Book{ID: 7, Title: "Paused"}})
+
+	cached := loadCachedLibraryCmd(fb)().(libraryLoadedMsg)
+	if cached.err != nil || len(cached.paused) != 1 || cached.needsRefresh {
+		t.Fatalf("fresh cached load = %+v, want the paused book and no refresh", cached)
+	}
+	if !fb.called("ListCachedBooks", model.StatusPaused) {
+		t.Fatalf("calls = %v, want paused read with its staleness", fb.calls)
+	}
+
+	fb.stale = true
+	if cached := loadCachedLibraryCmd(fb)().(libraryLoadedMsg); !cached.needsRefresh {
+		t.Fatal("a stale cache should ask for a refresh")
+	}
+
+	fb.calls = nil
+	refreshed := loadLibraryCmd(context.Background(), fb, true)().(libraryLoadedMsg)
+	if refreshed.err != nil || len(refreshed.paused) != 1 {
+		t.Fatalf("refreshing load = %+v, want the paused book", refreshed)
+	}
+	if !fb.called("ListBooks", model.StatusPaused, false) || fb.called("ListBooks", model.StatusPaused, true) {
+		t.Fatalf("calls = %v, want paused listed without forcing a refresh", fb.calls)
+	}
+}
+
+func TestTimerCommandsTakeTheBookFromTheBackend(t *testing.T) {
+	fb := newFakeBackend()
+	fb.add(model.UserBook{StatusID: model.StatusCurrentlyReading, Book: model.Book{ID: 1, Title: "Dune"}})
+
+	if msg := startTimerForBookCmd(fb, 1)().(timerOpDoneMsg); msg.err != nil || msg.info != "Timer started — Dune" {
+		t.Fatalf("start = %+v, want the book's title", msg)
+	}
+	local := loadLocalDataCmd(fb, time.Now)().(localDataLoadedMsg)
+	if local.timerState == nil || local.timerState.BookID != 1 || local.timerBook == nil || local.timerBook.Title != "Dune" {
+		t.Fatalf("local load timer = %+v / %+v, want Dune's timer", local.timerState, local.timerBook)
+	}
+
+	fb.timer = nil
+	if msg := startTimerForBookCmd(fb, 99)().(timerOpDoneMsg); msg.err != nil || msg.info != "Timer started" {
+		t.Fatalf("start for an uncached book = %+v, want the plain notice", msg)
+	}
+	if local := loadLocalDataCmd(fb, time.Now)().(localDataLoadedMsg); local.timerState == nil || local.timerBook != nil {
+		t.Fatalf("local load timer = %+v / %+v, want a timer with no book", local.timerState, local.timerBook)
+	}
+}
+
 func TestQueueMoveKeepsSelection(t *testing.T) {
 	m := newGoldenModel(t, 80, 24, tabOku)
 	s := okuSection(m)

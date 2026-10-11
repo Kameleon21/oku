@@ -21,10 +21,8 @@ type backend interface {
 	// The library: the cached shelves the dashboard opens on, the fresh ones
 	// a reload brings in, and the sync that refreshes everything.
 	ListCachedBooks(status model.Status) ([]model.UserBook, bool, error)
-	CachedBooks(status model.Status) ([]model.UserBook, error)
 	ListBooks(ctx context.Context, status model.Status, refresh bool) ([]model.UserBook, error)
 	ListAllCachedUserBooks() ([]model.UserBook, error)
-	CachedBook(id int) (*model.Book, error)
 	CachedQueueOrder() ([]int, error)
 	LastSyncAt() time.Time
 	SyncAll(ctx context.Context) error
@@ -51,9 +49,9 @@ type backend interface {
 	SavePrivateNote(bookID int, text string) error
 	RecentSearches() (string, error)
 	SaveRecentSearches(raw string) error
-	TimerStart(bookID int) error
+	TimerStart(bookID int) (*app.ActiveTimer, error)
 	TimerStop() (*model.ReadingSession, error)
-	TimerStatus() (*model.TimerState, error)
+	TimerStatus() (*app.ActiveTimer, error)
 	TimerList(limit int) ([]model.ReadingSession, error)
 }
 
@@ -73,12 +71,10 @@ func (noBackend) Online() bool { return false }
 func (noBackend) ListCachedBooks(model.Status) ([]model.UserBook, bool, error) {
 	return nil, false, errNoBackend
 }
-func (noBackend) CachedBooks(model.Status) ([]model.UserBook, error) { return nil, errNoBackend }
 func (noBackend) ListBooks(context.Context, model.Status, bool) ([]model.UserBook, error) {
 	return nil, errNoBackend
 }
 func (noBackend) ListAllCachedUserBooks() ([]model.UserBook, error) { return nil, errNoBackend }
-func (noBackend) CachedBook(int) (*model.Book, error)               { return nil, errNoBackend }
 func (noBackend) CachedQueueOrder() ([]int, error)                  { return nil, errNoBackend }
 func (noBackend) LastSyncAt() time.Time                             { return time.Time{} }
 func (noBackend) SyncAll(context.Context) error                     { return app.ErrOffline }
@@ -112,7 +108,7 @@ func (noBackend) ListPrivateNotes() (map[int]string, error)     { return nil, er
 func (noBackend) SavePrivateNote(int, string) error             { return errNoBackend }
 func (noBackend) RecentSearches() (string, error)               { return "", errNoBackend }
 func (noBackend) SaveRecentSearches(string) error               { return errNoBackend }
-func (noBackend) TimerStart(int) error                          { return errNoBackend }
+func (noBackend) TimerStart(int) (*app.ActiveTimer, error)      { return nil, errNoBackend }
 func (noBackend) TimerStop() (*model.ReadingSession, error)     { return nil, errNoBackend }
-func (noBackend) TimerStatus() (*model.TimerState, error)       { return nil, errNoBackend }
+func (noBackend) TimerStatus() (*app.ActiveTimer, error)        { return nil, errNoBackend }
 func (noBackend) TimerList(int) ([]model.ReadingSession, error) { return nil, errNoBackend }

@@ -119,7 +119,7 @@ func loadCachedLibraryCmd(a backend) tea.Cmd {
 		if err != nil {
 			return libraryLoadedMsg{err: err}
 		}
-		paused, err := a.CachedBooks(model.StatusPaused)
+		paused, pausedStale, err := a.ListCachedBooks(model.StatusPaused)
 		if err != nil {
 			return libraryLoadedMsg{err: err}
 		}
@@ -130,7 +130,7 @@ func loadCachedLibraryCmd(a backend) tea.Cmd {
 		return libraryLoadedMsg{paused: paused, queueOrder: order,
 			reading:      reading,
 			oku:          oku,
-			needsRefresh: readingStale || okuStale,
+			needsRefresh: readingStale || okuStale || pausedStale,
 		}
 	}
 }
@@ -145,7 +145,10 @@ func loadLibraryCmd(ctx context.Context, a backend, refresh bool) tea.Cmd {
 		if err != nil {
 			return libraryLoadedMsg{err: err}
 		}
-		paused, err := a.CachedBooks(model.StatusPaused)
+		// Paused is fetched only when its own cache is stale, never forced:
+		// status changes keep it current locally, and the Paused tab has a
+		// refresh of its own, so a forced refresh would only cost a request.
+		paused, err := a.ListBooks(ctx, model.StatusPaused, false)
 		if err != nil {
 			return libraryLoadedMsg{err: err}
 		}
@@ -221,11 +224,10 @@ func loadLocalDataCmd(a backend, now func() time.Time) tea.Cmd {
 		}
 
 		// Resolved here, off the render path: View must not query the store.
+		var timerState *model.TimerState
 		var timerBook *model.Book
-		if timer != nil && timer.BookID > 0 {
-			if b, err := a.CachedBook(timer.BookID); err == nil {
-				timerBook = b
-			}
+		if timer != nil {
+			timerState, timerBook = &timer.TimerState, timer.Book
 		}
 
 		if shouldUseDemoLocalData() {
@@ -251,7 +253,7 @@ func loadLocalDataCmd(a backend, now func() time.Time) tea.Cmd {
 			privateNotes:   notes,
 			recentSessions: sessions,
 			recentSearches: recentSearches,
-			timerState:     timer,
+			timerState:     timerState,
 			timerBook:      timerBook,
 			lastSyncAt:     a.LastSyncAt(),
 			shelf:          shelf,
@@ -517,15 +519,14 @@ func startTimerForBookCmd(a backend, bookID int) tea.Cmd {
 			return timerOpDoneMsg{err: fmt.Errorf("invalid book selection")}
 		}
 
-		if err := a.TimerStart(bookID); err != nil {
+		timer, err := a.TimerStart(bookID)
+		if err != nil {
 			return timerOpDoneMsg{err: err}
 		}
 
 		info := "Timer started"
-		if bookID > 0 {
-			if b, err := a.CachedBook(bookID); err == nil && b != nil {
-				info = fmt.Sprintf("Timer started — %s", b.Title)
-			}
+		if timer.Book != nil {
+			info = fmt.Sprintf("Timer started — %s", timer.Book.Title)
 		}
 		return timerOpDoneMsg{info: info}
 	}

@@ -138,22 +138,13 @@ func (f *fakeBackend) ListCachedBooks(status model.Status) ([]model.UserBook, bo
 	return f.shelf(status), f.stale, nil
 }
 
-func (f *fakeBackend) CachedBooks(status model.Status) ([]model.UserBook, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if err := f.call("CachedBooks", status); err != nil {
-		return nil, err
-	}
-	return f.shelf(status), nil
-}
-
-// ListBooks only reaches for Hardcover when asked to refresh; App does the
-// same when the cache is fresh.
+// ListBooks only reaches for Hardcover when asked to refresh or when the
+// cache is stale, the way App does.
 func (f *fakeBackend) ListBooks(ctx context.Context, status model.Status, refresh bool) ([]model.UserBook, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var err error
-	if refresh {
+	if refresh || f.stale {
 		err = f.remote("ListBooks", status, refresh)
 	} else {
 		err = f.call("ListBooks", status, refresh)
@@ -175,19 +166,6 @@ func (f *fakeBackend) ListAllCachedUserBooks() ([]model.UserBook, error) {
 		all = append(all, f.shelf(status)...)
 	}
 	return all, nil
-}
-
-func (f *fakeBackend) CachedBook(id int) (*model.Book, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if err := f.call("CachedBook", id); err != nil {
-		return nil, err
-	}
-	if b := f.find(id); b != nil {
-		book := cloneBook(*b).Book
-		return &book, nil
-	}
-	return nil, nil
 }
 
 func (f *fakeBackend) CachedQueueOrder() ([]int, error) {
@@ -385,17 +363,17 @@ func (f *fakeBackend) SaveRecentSearches(raw string) error {
 	return nil
 }
 
-func (f *fakeBackend) TimerStart(bookID int) error {
+func (f *fakeBackend) TimerStart(bookID int) (*app.ActiveTimer, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.call("TimerStart", bookID); err != nil {
-		return err
+		return nil, err
 	}
 	if f.timer != nil {
-		return fmt.Errorf("timer already running (started %s)", f.timer.StartedAt.Local().Format("3:04 PM"))
+		return nil, fmt.Errorf("timer already running (started %s)", f.timer.StartedAt.Local().Format("3:04 PM"))
 	}
 	f.timer = &model.TimerState{BookID: bookID, StartedAt: f.now()}
-	return nil
+	return f.activeTimer(), nil
 }
 
 func (f *fakeBackend) TimerStop() (*model.ReadingSession, error) {
@@ -417,13 +395,27 @@ func (f *fakeBackend) TimerStop() (*model.ReadingSession, error) {
 	return &s, nil
 }
 
-func (f *fakeBackend) TimerStatus() (*model.TimerState, error) {
+func (f *fakeBackend) TimerStatus() (*app.ActiveTimer, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.call("TimerStatus"); err != nil {
 		return nil, err
 	}
-	return f.timer, nil
+	if f.timer == nil {
+		return nil, nil
+	}
+	return f.activeTimer(), nil
+}
+
+// activeTimer is the running timer with its book off the shelves, nil when
+// no shelf holds it.
+func (f *fakeBackend) activeTimer() *app.ActiveTimer {
+	t := &app.ActiveTimer{TimerState: *f.timer}
+	if b := f.find(f.timer.BookID); b != nil {
+		book := cloneBook(*b).Book
+		t.Book = &book
+	}
+	return t
 }
 
 func (f *fakeBackend) TimerList(limit int) ([]model.ReadingSession, error) {
