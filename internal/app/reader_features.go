@@ -53,10 +53,33 @@ func (a *App) GetBookDetail(ctx context.Context, id int, refresh bool) (*api.Boo
 	}
 	return b, nil
 }
-func (a *App) TrendingBooks(ctx context.Context, period string, limit int) ([]model.SearchResult, error) {
-	books, err := a.API.Trending(ctx, period, limit)
+
+// trendingFetchLimit is the API maximum. Curation drops many of the raw
+// results, so fetch the full list and trim afterwards.
+const trendingFetchLimit = 100
+
+// TrendingBooks returns Hardcover's trending list. Unless raw is set, books
+// already in the library are dropped and each series is represented only by
+// its highest-ranked remaining book, because the raw list is usually
+// dominated by every volume of one or two popular series.
+func (a *App) TrendingBooks(ctx context.Context, period string, limit int, raw bool) ([]model.SearchResult, error) {
+	if limit < 1 || limit > trendingFetchLimit {
+		return nil, fmt.Errorf("limit must be 1-%d", trendingFetchLimit)
+	}
+	fetch := trendingFetchLimit
+	if raw {
+		fetch = limit
+	}
+	books, err := a.API.Trending(ctx, period, fetch)
 	if err != nil {
 		return nil, err
+	}
+	if !raw {
+		owned, err := a.Store.LibraryBookIDs()
+		if err != nil {
+			return nil, err
+		}
+		books = curateTrending(books, owned, limit)
 	}
 	out := make([]model.SearchResult, 0, len(books))
 	for _, b := range books {
@@ -202,4 +225,28 @@ func (a *App) MoveQueueBook(ctx context.Context, bookID, delta int) ([]int, erro
 		return ids, fmt.Errorf("ranking saved remotely; local cache failed: %w", err)
 	}
 	return ids, nil
+}
+
+// curateTrending keeps rank order, skips owned books, keeps the first book
+// seen for each series and stops at limit.
+func curateTrending(books []api.APIBook, owned map[int]bool, limit int) []api.APIBook {
+	out := make([]api.APIBook, 0, limit)
+	seenSeries := map[int]bool{}
+	for _, b := range books {
+		if len(out) == limit {
+			break
+		}
+		if owned[b.ID] {
+			continue
+		}
+		if b.FeaturedSeries != nil {
+			id := b.FeaturedSeries.Series.ID
+			if seenSeries[id] {
+				continue
+			}
+			seenSeries[id] = true
+		}
+		out = append(out, b)
+	}
+	return out
 }

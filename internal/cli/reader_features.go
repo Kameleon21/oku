@@ -201,7 +201,7 @@ func newGoalsCmd() *cobra.Command {
 func newTrendingCmd() *cobra.Command {
 	var period string
 	var limit int
-	var week bool
+	var week, raw bool
 	cmd := &cobra.Command{Use: "trending", Short: "Discover books trending on Hardcover", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		if week {
 			period = "week"
@@ -214,7 +214,7 @@ func newTrendingCmd() *cobra.Command {
 			return err
 		}
 		defer a.Store.Close()
-		rows, err := a.TrendingBooks(cmd.Context(), period, limit)
+		rows, err := a.TrendingBooks(cmd.Context(), period, limit, raw)
 		if err != nil {
 			return err
 		}
@@ -230,6 +230,7 @@ func newTrendingCmd() *cobra.Command {
 	cmd.Flags().StringVar(&period, "period", "week", "week, month, three_month, one_year, all")
 	cmd.Flags().BoolVar(&week, "week", false, "Show this week's trending books")
 	cmd.Flags().IntVar(&limit, "limit", 20, "Maximum results (1-100)")
+	cmd.Flags().BoolVar(&raw, "raw", false, "Show Hardcover's unfiltered ranking, including books in your library and every book in a series")
 	return cmd
 }
 func newExportCmd() *cobra.Command {

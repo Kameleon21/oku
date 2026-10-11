@@ -280,6 +280,25 @@ LIMIT 1
 	return &r, nil
 }
 
+// LibraryBookIDs returns the IDs of every book on any of the user's cached shelves.
+func (s *Store) LibraryBookIDs() (map[int]bool, error) {
+	rows, err := s.db.Query(`SELECT book_id FROM user_books`)
+	if err != nil {
+		return nil, fmt.Errorf("query library book ids: %w", err)
+	}
+	defer rows.Close()
+
+	ids := map[int]bool{}
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan library book id: %w", err)
+		}
+		ids[id] = true
+	}
+	return ids, rows.Err()
+}
+
 // DeleteUserBooksByStatus removes all user_books rows for a status and their reads.
 func (s *Store) DeleteUserBooksByStatus(status model.Status) error {
 	tx, err := s.db.Begin()

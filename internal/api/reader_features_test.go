@@ -74,13 +74,19 @@ func TestTrendingPreservesRankAndFetchesMetadata(t *testing.T) {
 			}
 			fmt.Fprint(w, `{"data":{"books_trending":{"ids":[8,3],"error":null}}}`)
 		} else {
-			fmt.Fprint(w, `{"data":{"books":[{"id":3,"title":"Third"},{"id":8,"title":"First"}]}}`)
+			if !strings.Contains(q.Query, "featured_book_series { series { id } }") {
+				t.Error("metadata query does not request the featured series")
+			}
+			fmt.Fprint(w, `{"data":{"books":[{"id":3,"title":"Third","featured_book_series":null},{"id":8,"title":"First","featured_book_series":{"series":{"id":42}}}]}}`)
 		}
 	})
 	defer srv.Close()
 	books, err := c.Trending(context.Background(), "week", 20)
 	if err != nil || len(books) != 2 || books[0].ID != 8 || books[1].ID != 3 {
 		t.Fatalf("books %#v err %v", books, err)
+	}
+	if books[0].FeaturedSeries == nil || books[0].FeaturedSeries.Series.ID != 42 || books[1].FeaturedSeries != nil {
+		t.Fatalf("series not decoded: %#v", books)
 	}
 }
 func TestExportPaginatesAndRequestsAllReads(t *testing.T) {
