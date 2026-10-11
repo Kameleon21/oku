@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -14,46 +15,95 @@ import (
 	"golang.org/x/oauth2"
 )
 
-func runLogout(t *testing.T, stdin string) string {
+// TestMain keeps every test in this package off the real keychain, even one
+// that reaches auth without going through the authBackend fake.
+func TestMain(m *testing.M) {
+	keyring.MockInit()
+	os.Exit(m.Run())
+}
+
+// stubAuthBackend replaces the auth commands' backend with fakes. A nil
+// function fails the test if the command calls it.
+func stubAuthBackend(t *testing.T, current func(context.Context) (auth.Credential, error), verify func(context.Context, oauth2.TokenSource) (string, *oauth2.Token, error), logout func(context.Context, func(auth.LogoutReport, string)) (auth.LogoutReport, error)) {
+	t.Helper()
+	orig := authBackend
+	t.Cleanup(func() { authBackend = orig })
+
+	authBackend.current = func(ctx context.Context) (auth.Credential, error) {
+		if current == nil {
+			t.Fatal("unexpected call to current")
+		}
+		return current(ctx)
+	}
+	authBackend.verify = func(ctx context.Context, src oauth2.TokenSource) (string, *oauth2.Token, error) {
+		if verify == nil {
+			t.Fatal("unexpected call to verify")
+		}
+		return verify(ctx, src)
+	}
+	authBackend.logout = func(ctx context.Context, beforeClear func(auth.LogoutReport, string)) (auth.LogoutReport, error) {
+		if logout == nil {
+			t.Fatal("unexpected call to logout")
+		}
+		return logout(ctx, beforeClear)
+	}
+}
+
+// stubLogout fakes a logout that finds report (and legacyKey) before
+// clearing the keychain, then fails with err.
+func stubLogout(t *testing.T, report auth.LogoutReport, legacyKey string, err error) {
+	t.Helper()
+	stubAuthBackend(t, nil, nil, func(_ context.Context, beforeClear func(auth.LogoutReport, string)) (auth.LogoutReport, error) {
+		beforeClear(report, legacyKey)
+		return report, err
+	})
+}
+
+func runLogout(t *testing.T, stdin string) (string, error) {
 	t.Helper()
 	var out bytes.Buffer
 	cmd := newLogoutCmd()
 	cmd.SetIn(strings.NewReader(stdin))
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	if err := cmd.Execute(); err != nil {
+	err := cmd.Execute()
+	return out.String(), err
+}
+
+func TestLogoutBrowserLogin(t *testing.T) {
+	stubLogout(t, auth.LogoutReport{Kind: auth.KindBrowserLogin}, "", nil)
+
+	out, err := runLogout(t, "")
+	if err != nil {
 		t.Fatalf("logout: %v", err)
 	}
-	return out.String()
-}
-
-func storeLegacyKey(t *testing.T, key string) {
-	t.Helper()
-	keyring.MockInit()
-	t.Setenv("HARDCOVER_TOKEN", "")
-	if err := keyring.Set("oku", "hardcover", key); err != nil {
-		t.Fatalf("keyring.Set: %v", err)
+	if out != "Logged out.\n" {
+		t.Fatalf("logout output = %q, want only the confirmation", out)
 	}
 }
 
-func assertKeyCleared(t *testing.T) {
-	t.Helper()
-	if _, err := keyring.Get("oku", "hardcover"); err != keyring.ErrNotFound {
-		t.Fatalf("legacy entry err = %v, want ErrNotFound", err)
+func TestLogoutWarnsWhenRevokeFails(t *testing.T) {
+	stubLogout(t, auth.LogoutReport{Kind: auth.KindBrowserLogin, RevokeErr: errors.New("revoke token: 500")}, "", nil)
+
+	out, err := runLogout(t, "")
+	if err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+	if want := "warning: failed to revoke token with Hardcover: revoke token: 500\nLogged out.\n"; out != want {
+		t.Fatalf("logout output = %q, want %q", out, want)
 	}
 }
 
 func TestLogoutHintsAccountPageForPersonalAccessTokens(t *testing.T) {
-	storeLegacyKey(t, "hc_pat_abc")
+	stubLogout(t, auth.LogoutReport{Kind: auth.KindPersonalAPIKey}, "", nil)
 
-	out := runLogout(t, "")
-	if !strings.Contains(out, "https://hardcover.app/account/api") {
-		t.Fatalf("logout output has no revoke hint:\n%s", out)
+	out, err := runLogout(t, "")
+	if err != nil {
+		t.Fatalf("logout: %v", err)
 	}
-	if strings.Contains(out, "hc_pat_abc") {
-		t.Fatalf("logout output leaked the key:\n%s", out)
+	if want := "Hint: API keys have to be revoked manually at https://hardcover.app/account/api\nLogged out.\n"; out != want {
+		t.Fatalf("logout output = %q, want %q", out, want)
 	}
-	assertKeyCleared(t)
 }
 
 func TestLogoutLegacyJWTRevokeHint(t *testing.T) {
@@ -71,26 +121,49 @@ func TestLogoutLegacyJWTRevokeHint(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			storeLegacyKey(t, jwt)
+			stubLogout(t, auth.LogoutReport{Kind: auth.KindLegacyAPIKey}, jwt, nil)
 
-			out := runLogout(t, tt.stdin)
+			out, err := runLogout(t, tt.stdin)
+			if err != nil {
+				t.Fatalf("logout: %v", err)
+			}
 			if !strings.Contains(out, "https://api.hardcover.app/invalidate_keys/new") {
 				t.Fatalf("logout output has no invalidate URL:\n%s", out)
 			}
 			if got := strings.Contains(out, jwt); got != tt.showsKey {
 				t.Fatalf("key shown = %v, want %v:\n%s", got, tt.showsKey, out)
 			}
-			assertKeyCleared(t)
+			if !strings.HasSuffix(out, "Logged out.\n") {
+				t.Fatalf("logout output does not confirm the logout:\n%s", out)
+			}
 		})
 	}
 }
 
 func TestLogoutWarnsWhenEnvTokenSet(t *testing.T) {
-	keyring.MockInit()
-	t.Setenv("HARDCOVER_TOKEN", "env-token")
+	stubLogout(t, auth.LogoutReport{EnvTokenSet: true}, "", nil)
 
-	if out := runLogout(t, ""); !strings.Contains(out, "HARDCOVER_TOKEN is set") {
+	out, err := runLogout(t, "")
+	if err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+	if !strings.Contains(out, "HARDCOVER_TOKEN is set") {
 		t.Fatalf("logout output does not name HARDCOVER_TOKEN:\n%s", out)
+	}
+}
+
+func TestLogoutClearFailure(t *testing.T) {
+	stubLogout(t, auth.LogoutReport{Kind: auth.KindPersonalAPIKey}, "", errors.New("keychain locked"))
+
+	out, err := runLogout(t, "")
+	if err == nil || err.Error() != "failed to clear stored token: keychain locked" {
+		t.Fatalf("err = %v, want the clear failure", err)
+	}
+	if !strings.Contains(out, "https://hardcover.app/account/api") {
+		t.Fatalf("logout output has no revoke hint:\n%s", out)
+	}
+	if strings.Contains(out, "Logged out.") {
+		t.Fatalf("failed logout reported success:\n%s", out)
 	}
 }
 
@@ -104,57 +177,55 @@ func runAuthStatus(t *testing.T) (string, error) {
 	return out.String(), err
 }
 
-func stubVerifyLogin(t *testing.T, username string, err error) {
+// stubStatus serves cred as the current login and has Hardcover accept it
+// for username, reporting src's token as the one in use.
+func stubStatus(t *testing.T, cred auth.Credential, username string) {
 	t.Helper()
-	orig := verifyLogin
-	t.Cleanup(func() { verifyLogin = orig })
-	verifyLogin = func(_ context.Context, token *oauth2.Token) (string, *oauth2.Token, error) {
-		if err != nil {
-			return "", nil, err
-		}
-		return username, token, nil
-	}
+	stubAuthBackend(t,
+		func(context.Context) (auth.Credential, error) { return cred, nil },
+		func(_ context.Context, src oauth2.TokenSource) (string, *oauth2.Token, error) {
+			token, err := src.Token()
+			return username, token, err
+		},
+		nil)
 }
 
 func TestAuthStatusReportsCredential(t *testing.T) {
 	expiry := time.Date(2026, 10, 11, 12, 0, 0, 0, time.Local)
 	tests := []struct {
 		name  string
-		env   string
+		kind  auth.Kind
 		token *oauth2.Token
 		want  []string
 	}{
 		{
 			name:  "browser login",
+			kind:  auth.KindBrowserLogin,
 			token: &oauth2.Token{AccessToken: "hc_at_abc", RefreshToken: "hc_rt_abc", Expiry: expiry},
 			want:  []string{"Using: browser login", "expires 11 Oct 2026 12:00", "renews it automatically"},
 		},
 		{
 			name:  "personal access token",
+			kind:  auth.KindPersonalAPIKey,
 			token: &oauth2.Token{AccessToken: "hc_pat_abc"},
 			want:  []string{"Using: personal API key", "https://hardcover.app/account/api"},
 		},
 		{
 			name:  "legacy JWT",
+			kind:  auth.KindLegacyAPIKey,
 			token: &oauth2.Token{AccessToken: "eyJhbGciOiJIUzI1NiJ9.e30.sig"},
 			want:  []string{"Using: legacy API key", "oku auth login"},
 		},
 		{
-			name: "environment variable",
-			env:  "hc_pat_env",
-			want: []string{"Using: HARDCOVER_TOKEN environment variable"},
+			name:  "environment variable",
+			kind:  auth.KindEnv,
+			token: &oauth2.Token{AccessToken: "hc_pat_env"},
+			want:  []string{"Using: HARDCOVER_TOKEN environment variable"},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			keyring.MockInit()
-			t.Setenv("HARDCOVER_TOKEN", tt.env)
-			if tt.token != nil {
-				if err := auth.SetToken(tt.token); err != nil {
-					t.Fatalf("SetToken: %v", err)
-				}
-			}
-			stubVerifyLogin(t, "reader", nil)
+			stubStatus(t, auth.Credential{Kind: tt.kind, TokenSource: oauth2.StaticTokenSource(tt.token)}, "reader")
 
 			out, err := runAuthStatus(t)
 			if err != nil {
@@ -170,23 +241,23 @@ func TestAuthStatusReportsCredential(t *testing.T) {
 }
 
 func TestAuthStatusNotLoggedIn(t *testing.T) {
-	keyring.MockInit()
-	t.Setenv("HARDCOVER_TOKEN", "")
-	stubVerifyLogin(t, "", errors.New("verifyLogin should not be called"))
+	notLoggedIn := errors.New("no token found; run: oku auth login")
+	stubAuthBackend(t, func(context.Context) (auth.Credential, error) { return auth.Credential{}, notLoggedIn }, nil, nil)
 
 	_, err := runAuthStatus(t)
-	if err == nil || !strings.Contains(err.Error(), "oku auth login") {
-		t.Fatalf("err = %v, want a hint to run oku auth login", err)
+	if !errors.Is(err, notLoggedIn) {
+		t.Fatalf("err = %v, want the not-logged-in error unchanged", err)
 	}
 }
 
 func TestAuthStatusRejectedToken(t *testing.T) {
-	keyring.MockInit()
-	t.Setenv("HARDCOVER_TOKEN", "")
-	if err := auth.SetToken(&oauth2.Token{AccessToken: "hc_pat_revoked"}); err != nil {
-		t.Fatalf("SetToken: %v", err)
-	}
-	stubVerifyLogin(t, "", api.ErrUnauthorized)
+	cred := auth.Credential{Kind: auth.KindPersonalAPIKey, TokenSource: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "hc_pat_revoked"})}
+	stubAuthBackend(t,
+		func(context.Context) (auth.Credential, error) { return cred, nil },
+		func(context.Context, oauth2.TokenSource) (string, *oauth2.Token, error) {
+			return "", nil, api.ErrUnauthorized
+		},
+		nil)
 
 	out, err := runAuthStatus(t)
 	if !errors.Is(err, api.ErrUnauthorized) {
@@ -194,5 +265,21 @@ func TestAuthStatusRejectedToken(t *testing.T) {
 	}
 	if strings.Contains(out, "Logged in") {
 		t.Fatalf("rejected token reported as logged in:\n%s", out)
+	}
+}
+
+func TestLogoutOutputOrder(t *testing.T) {
+	stubLogout(t, auth.LogoutReport{Kind: auth.KindPersonalAPIKey, RevokeErr: errors.New("boom"), EnvTokenSet: true}, "", nil)
+
+	out, err := runLogout(t, "")
+	if err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+	want := "warning: HARDCOVER_TOKEN is set; it still overrides the stored login and was not cleared\n" +
+		"warning: failed to revoke token with Hardcover: boom\n" +
+		"Hint: API keys have to be revoked manually at https://hardcover.app/account/api\n" +
+		"Logged out.\n"
+	if out != want {
+		t.Fatalf("logout output = %q, want %q", out, want)
 	}
 }

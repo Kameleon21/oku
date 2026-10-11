@@ -136,8 +136,7 @@ func TestInsertProgressJournalSendsJournalMutation(t *testing.T) {
 	defer srv.Close()
 
 	c := &Client{
-		gql:   graphql.NewClient(srv.URL),
-		token: "Bearer test",
+		gql: graphql.NewClient(srv.URL),
 	}
 
 	if err := c.InsertProgressJournal(t.Context(), 42, 120, 300, 1); err != nil {
@@ -163,8 +162,7 @@ func TestInsertProgressJournalErrorsWithoutJournal(t *testing.T) {
 	defer srv.Close()
 
 	c := &Client{
-		gql:   graphql.NewClient(srv.URL),
-		token: "Bearer test",
+		gql: graphql.NewClient(srv.URL),
 	}
 
 	if err := c.InsertProgressJournal(t.Context(), 42, 120, 300, 1); err == nil {
@@ -180,8 +178,7 @@ func TestInsertUserBookReturnsUserBookID(t *testing.T) {
 	defer srv.Close()
 
 	c := &Client{
-		gql:   graphql.NewClient(srv.URL),
-		token: "Bearer test",
+		gql: graphql.NewClient(srv.URL),
 	}
 
 	id, err := c.InsertUserBook(t.Context(), 10, 1)
@@ -201,8 +198,7 @@ func TestUpdateUserBookRatingReportsAPIError(t *testing.T) {
 	defer srv.Close()
 
 	c := &Client{
-		gql:   graphql.NewClient(srv.URL),
-		token: "Bearer test",
+		gql: graphql.NewClient(srv.URL),
 	}
 
 	err := c.UpdateUserBookRating(t.Context(), 100, 4)

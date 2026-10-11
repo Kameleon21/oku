@@ -20,7 +20,7 @@ func TestListGoals(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := &Client{gql: graphql.NewClient(srv.URL), token: "Bearer test"}
+	c := &Client{gql: graphql.NewClient(srv.URL)}
 
 	goals, err := c.ListGoals(t.Context())
 	if err != nil {
@@ -45,7 +45,7 @@ func TestListGoalsNoUser(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := &Client{gql: graphql.NewClient(srv.URL), token: "Bearer test"}
+	c := &Client{gql: graphql.NewClient(srv.URL)}
 	if _, err := c.ListGoals(t.Context()); err == nil {
 		t.Fatal("ListGoals should error when no user is returned")
 	}
@@ -64,7 +64,7 @@ func TestListReadingJournalsFiltersByUserAndDate(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := &Client{gql: graphql.NewClient(srv.URL), token: "Bearer test"}
+	c := &Client{gql: graphql.NewClient(srv.URL)}
 
 	since := time.Date(2025, 7, 19, 0, 0, 0, 0, time.UTC)
 	journals, err := c.ListReadingJournals(t.Context(), 7, since)

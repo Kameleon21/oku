@@ -167,10 +167,8 @@ func checkCallback(q url.Values, state string) (code string, ok bool, err error)
 	return code, true, nil
 }
 
-func LogOut(ctx context.Context, token *oauth2.Token) error {
-	return logOutAt(ctx, revokeEndpoint, token)
-}
-
+// logOutAt revokes token's refresh token at endpoint. Tokens without one (API
+// keys) can't be revoked over OAuth and are skipped.
 func logOutAt(ctx context.Context, endpoint string, token *oauth2.Token) error {
 	if token == nil {
 		return nil

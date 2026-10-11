@@ -89,8 +89,7 @@ func TestSearchBooksUsesDefaultBookSearch(t *testing.T) {
 	defer srv.Close()
 
 	c := &Client{
-		gql:   graphql.NewClient(srv.URL),
-		token: "Bearer test",
+		gql: graphql.NewClient(srv.URL),
 	}
 
 	results, err := c.SearchBooks(t.Context(), "burning god", 10, model.SearchModeBook)
@@ -130,8 +129,7 @@ func TestSearchBooksFallsBackWhenWeightedSearchIsRejected(t *testing.T) {
 	defer srv.Close()
 
 	c := &Client{
-		gql:   graphql.NewClient(srv.URL),
-		token: "Bearer test",
+		gql: graphql.NewClient(srv.URL),
 	}
 
 	results, err := c.SearchBooks(t.Context(), "dune", 10, model.SearchModeAuthor)
@@ -163,8 +161,7 @@ func TestGetAccountPrivacySetting(t *testing.T) {
 	defer srv.Close()
 
 	c := &Client{
-		gql:   graphql.NewClient(srv.URL),
-		token: "Bearer test",
+		gql: graphql.NewClient(srv.URL),
 	}
 
 	got, err := c.GetAccountPrivacySetting(t.Context())
@@ -184,8 +181,7 @@ func TestGetAccountPrivacySettingMissingField(t *testing.T) {
 	defer srv.Close()
 
 	c := &Client{
-		gql:   graphql.NewClient(srv.URL),
-		token: "Bearer test",
+		gql: graphql.NewClient(srv.URL),
 	}
 
 	if _, err := c.GetAccountPrivacySetting(t.Context()); err == nil {

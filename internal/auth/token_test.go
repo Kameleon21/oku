@@ -70,42 +70,6 @@ func TestNormalizeToken(t *testing.T) {
 	}
 }
 
-func TestGetTokenTrimsEnvToken(t *testing.T) {
-	t.Setenv(envKey, "  env-token\n")
-
-	got, err := GetToken()
-	if err != nil {
-		t.Fatalf("GetToken: %v", err)
-	}
-	if got.AccessToken != "env-token" {
-		t.Fatalf("GetToken().AccessToken = %q, want %q", got.AccessToken, "env-token")
-	}
-}
-
-func TestGetTokenStripsBearerPrefixFromEnvToken(t *testing.T) {
-	t.Setenv(envKey, "Bearer env-token\n")
-
-	got, err := GetToken()
-	if err != nil {
-		t.Fatalf("GetToken: %v", err)
-	}
-	if got.AccessToken != "env-token" {
-		t.Fatalf("GetToken().AccessToken = %q, want %q", got.AccessToken, "env-token")
-	}
-}
-
-func TestGetTokenEnvTokenHasNoExpiry(t *testing.T) {
-	t.Setenv(envKey, "env-token")
-
-	got, err := GetToken()
-	if err != nil {
-		t.Fatalf("GetToken: %v", err)
-	}
-	if !got.Valid() {
-		t.Fatalf("GetToken().Valid() = false, want true for a static env token")
-	}
-}
-
 // rotatingServer mimics Hardcover's token endpoint: each refresh token works
 // once, and replaying a spent one is rejected.
 type rotatingServer struct {
@@ -310,40 +274,6 @@ func TestPersistingTokenSourceKeychainUnreadable(t *testing.T) {
 	}
 }
 
-func TestTokenSourceEnvTokenBypassesKeychain(t *testing.T) {
-	freshKeychain(t)
-	t.Setenv(envKey, "env-token")
-
-	src := TokenSource(context.Background(), &oauth2.Token{AccessToken: "env-token"})
-	token, err := src.Token()
-	if err != nil {
-		t.Fatalf("Token() = %v", err)
-	}
-	if token.AccessToken != "env-token" {
-		t.Fatalf("AccessToken = %q, want %q", token.AccessToken, "env-token")
-	}
-
-	if _, err := loadStoredToken(); err == nil {
-		t.Fatal("TokenSource wrote the env token to the keychain, it should not have")
-	}
-}
-
-func TestStoredTokenIgnoresEnvVar(t *testing.T) {
-	freshKeychain(t)
-	if err := SetToken(&oauth2.Token{AccessToken: "keychain-token"}); err != nil {
-		t.Fatalf("SetToken: %v", err)
-	}
-	t.Setenv(envKey, "env-token")
-
-	got, err := StoredToken()
-	if err != nil {
-		t.Fatalf("StoredToken: %v", err)
-	}
-	if got.AccessToken != "keychain-token" {
-		t.Fatalf("AccessToken = %q, want %q", got.AccessToken, "keychain-token")
-	}
-}
-
 func TestLoadStoredTokenMigratesLegacyToken(t *testing.T) {
 	freshKeychain(t)
 	if err := keyring.Set(serviceName, legacyAccountName, "  legacy-token\n"); err != nil {
@@ -377,8 +307,8 @@ func TestDeleteTokenClearsBothEntries(t *testing.T) {
 		t.Fatalf("keyring.Set: %v", err)
 	}
 
-	if err := DeleteToken(); err != nil {
-		t.Fatalf("DeleteToken: %v", err)
+	if err := deleteToken(); err != nil {
+		t.Fatalf("deleteToken: %v", err)
 	}
 
 	for _, account := range []string{accountName, legacyAccountName} {
@@ -388,7 +318,7 @@ func TestDeleteTokenClearsBothEntries(t *testing.T) {
 	}
 	// logout must not be undone by migrating the legacy token back
 	if token, err := loadStoredToken(); err == nil {
-		t.Fatalf("loadStoredToken after DeleteToken = %+v, want an error", token)
+		t.Fatalf("loadStoredToken after deleteToken = %+v, want an error", token)
 	}
 }
 
@@ -398,8 +328,8 @@ func TestDeleteTokenClearsLegacyEntryWithoutOAuthEntry(t *testing.T) {
 		t.Fatalf("keyring.Set: %v", err)
 	}
 
-	if err := DeleteToken(); err != nil {
-		t.Fatalf("DeleteToken: %v", err)
+	if err := deleteToken(); err != nil {
+		t.Fatalf("deleteToken: %v", err)
 	}
 
 	if _, err := keyring.Get(serviceName, legacyAccountName); !errors.Is(err, keyring.ErrNotFound) {
@@ -410,7 +340,7 @@ func TestDeleteTokenClearsLegacyEntryWithoutOAuthEntry(t *testing.T) {
 func TestDeleteTokenWhenNothingStored(t *testing.T) {
 	freshKeychain(t)
 
-	if err := DeleteToken(); err != nil {
-		t.Fatalf("DeleteToken on an empty keychain = %v, want nil", err)
+	if err := deleteToken(); err != nil {
+		t.Fatalf("deleteToken on an empty keychain = %v, want nil", err)
 	}
 }
