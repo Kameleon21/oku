@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -38,12 +39,29 @@ const (
 	// KindBrowserLogin is an OAuth token from `oku auth login`, refreshed and
 	// re-stored on demand.
 	KindBrowserLogin
-	// KindPersonalAPIKey is an hc_pat_ key stored with `oku auth set-token`.
+	// KindPersonalAPIKey is a stored hc_pat_ key, whether from `oku auth
+	// set-token` or carried over from before OAuth support.
 	KindPersonalAPIKey
 	// KindLegacyAPIKey is a pre-hc_pat_ JWT key stored with `oku auth
 	// set-token` or carried over from before OAuth support.
 	KindLegacyAPIKey
 )
+
+func (k Kind) String() string {
+	switch k {
+	case KindNone:
+		return "none"
+	case KindEnv:
+		return "HARDCOVER_TOKEN"
+	case KindBrowserLogin:
+		return "browser login"
+	case KindPersonalAPIKey:
+		return "personal API key"
+	case KindLegacyAPIKey:
+		return "legacy API key"
+	}
+	return fmt.Sprintf("Kind(%d)", int(k))
+}
 
 // Credential is the login oku should use right now.
 type Credential struct {
@@ -100,18 +118,12 @@ func storedKind(token *oauth2.Token) Kind {
 
 // LogoutReport describes what Logout did, for the caller to tell the user.
 type LogoutReport struct {
-	// Kind is the stored credential that was cleared, or KindNone when none
+	// Kind is the stored credential being cleared, or KindNone when none
 	// could be read.
 	Kind Kind
-	// Revoked reports that Hardcover revoked the browser login.
-	Revoked bool
 	// RevokeErr is set when revoking the browser login with Hardcover failed;
 	// the login is still cleared locally.
 	RevokeErr error
-	// LegacyKey is the cleared key when Kind is KindLegacyAPIKey. Such keys
-	// can only be invalidated by pasting the key itself, so the user may
-	// need to see it once more.
-	LegacyKey string
 	// EnvTokenSet reports that HARDCOVER_TOKEN is set; it still overrides the
 	// stored login and logging out does not clear it.
 	EnvTokenSet bool
@@ -125,25 +137,36 @@ func (r LogoutReport) ManualRevoke() bool {
 
 // Logout revokes a stored browser login with Hardcover where possible and
 // clears every stored credential. Revoking is best-effort: a missing,
-// unreadable or unrevocable token is still cleared locally. The report is
-// filled in even when clearing the keychain fails, the only error returned.
-func Logout(ctx context.Context) (LogoutReport, error) {
-	return logoutAt(ctx, revokeEndpoint)
+// unreadable or unrevocable token is still cleared locally.
+//
+// beforeClear, when not nil, runs after the revoke and before the keychain is
+// cleared, so the caller can tell the user about the credential while it is
+// still stored: if they abort there, nothing is lost. legacyKey is the stored
+// key when the report's Kind is KindLegacyAPIKey, and empty otherwise; such
+// keys can only be invalidated by pasting the key itself.
+//
+// The report is returned even when clearing the keychain fails, the only
+// error returned.
+func Logout(ctx context.Context, beforeClear func(report LogoutReport, legacyKey string)) (LogoutReport, error) {
+	return logoutAt(ctx, revokeEndpoint, beforeClear)
 }
 
-func logoutAt(ctx context.Context, endpoint string) (LogoutReport, error) {
+func logoutAt(ctx context.Context, endpoint string, beforeClear func(LogoutReport, string)) (LogoutReport, error) {
 	report := LogoutReport{EnvTokenSet: EnvTokenSet()}
+	var legacyKey string
 
 	if token, err := loadStoredToken(); err == nil {
 		report.Kind = storedKind(token)
 		switch report.Kind {
 		case KindBrowserLogin:
 			report.RevokeErr = logOutAt(ctx, endpoint, token)
-			report.Revoked = report.RevokeErr == nil
 		case KindLegacyAPIKey:
-			report.LegacyKey = token.AccessToken
+			legacyKey = token.AccessToken
 		}
 	}
 
+	if beforeClear != nil {
+		beforeClear(report, legacyKey)
+	}
 	return report, deleteToken()
 }

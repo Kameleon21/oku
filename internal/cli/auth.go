@@ -55,7 +55,7 @@ func newLoginCmd() *cobra.Command {
 var authBackend = struct {
 	current func(context.Context) (auth.Credential, error)
 	verify  func(context.Context, oauth2.TokenSource) (string, *oauth2.Token, error)
-	logout  func(context.Context) (auth.LogoutReport, error)
+	logout  func(context.Context, func(auth.LogoutReport, string)) (auth.LogoutReport, error)
 }{
 	current: auth.Current,
 	verify:  verifyLogin,
@@ -67,16 +67,19 @@ func newLogoutCmd() *cobra.Command {
 		Use:   "logout",
 		Short: "Sign out and revoke stored credentials",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			report, err := authBackend.logout(cmd.Context())
-			if report.EnvTokenSet {
-				fmt.Fprintln(cmd.ErrOrStderr(), "warning: HARDCOVER_TOKEN is set; it still overrides the stored login and was not cleared")
-			}
-			if report.RevokeErr != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: failed to revoke token with Hardcover: %v\n", report.RevokeErr)
-			}
-			if report.ManualRevoke() {
-				hintManualRevoke(cmd, report)
-			}
+			// Everything is told before the keychain is cleared, so aborting
+			// at the legacy key prompt leaves the key stored to show again.
+			_, err := authBackend.logout(cmd.Context(), func(report auth.LogoutReport, legacyKey string) {
+				if report.EnvTokenSet {
+					fmt.Fprintln(cmd.ErrOrStderr(), "warning: HARDCOVER_TOKEN is set; it still overrides the stored login and was not cleared")
+				}
+				if report.RevokeErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: failed to revoke token with Hardcover: %v\n", report.RevokeErr)
+				}
+				if report.ManualRevoke() {
+					hintManualRevoke(cmd, report.Kind, legacyKey)
+				}
+			})
 			if err != nil {
 				return fmt.Errorf("failed to clear stored token: %w", err)
 			}
@@ -86,12 +89,13 @@ func newLogoutCmd() *cobra.Command {
 	}
 }
 
-// hintManualRevoke tells the user how to revoke the API key oku just forgot.
-// hc_pat_ tokens can be revoked from the account page, but legacy JWTs can
-// only be invalidated by pasting the key itself, so offer to show it once.
-func hintManualRevoke(cmd *cobra.Command, report auth.LogoutReport) {
+// hintManualRevoke tells the user how to revoke an API key that oku is about
+// to forget. hc_pat_ tokens can be revoked from the account page, but legacy
+// JWTs can only be invalidated by pasting the key itself, so offer to show it
+// before it's deleted from the keychain.
+func hintManualRevoke(cmd *cobra.Command, kind auth.Kind, legacyKey string) {
 	out := cmd.OutOrStdout()
-	if report.Kind == auth.KindPersonalAPIKey {
+	if kind == auth.KindPersonalAPIKey {
 		fmt.Fprintln(out, "Hint: API keys have to be revoked manually at https://hardcover.app/account/api")
 		return
 	}
@@ -101,7 +105,7 @@ func hintManualRevoke(cmd *cobra.Command, report auth.LogoutReport) {
 	answer, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
 	fmt.Fprintln(out)
 	if a := strings.ToLower(strings.TrimSpace(answer)); a == "y" || a == "yes" {
-		fmt.Fprintf(out, "Your API key (keep it secret):\n%s\n", report.LegacyKey)
+		fmt.Fprintf(out, "Your API key (keep it secret):\n%s\n", legacyKey)
 		return
 	}
 	fmt.Fprintln(out, "Key not shown. It stays valid until it expires unless you revoke it.")

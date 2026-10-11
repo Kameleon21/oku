@@ -183,6 +183,7 @@ func TestLogoutReport(t *testing.T) {
 		legacy       string
 		revokeStatus int
 		want         LogoutReport
+		wantKey      string
 		wantRevokes  int32
 		wantRevokeEr bool
 		wantManual   bool
@@ -191,7 +192,7 @@ func TestLogoutReport(t *testing.T) {
 			name:         "browser login revoked",
 			stored:       validToken("oauth", "refresh"),
 			revokeStatus: http.StatusOK,
-			want:         LogoutReport{Kind: KindBrowserLogin, Revoked: true},
+			want:         LogoutReport{Kind: KindBrowserLogin},
 			wantRevokes:  1,
 		},
 		{
@@ -211,13 +212,15 @@ func TestLogoutReport(t *testing.T) {
 		{
 			name:       "legacy JWT",
 			stored:     &oauth2.Token{AccessToken: legacyJWT},
-			want:       LogoutReport{Kind: KindLegacyAPIKey, LegacyKey: legacyJWT},
+			want:       LogoutReport{Kind: KindLegacyAPIKey},
+			wantKey:    legacyJWT,
 			wantManual: true,
 		},
 		{
 			name:       "legacy keychain entry",
 			legacy:     legacyJWT,
-			want:       LogoutReport{Kind: KindLegacyAPIKey, LegacyKey: legacyJWT},
+			want:       LogoutReport{Kind: KindLegacyAPIKey},
+			wantKey:    legacyJWT,
 			wantManual: true,
 		},
 		{
@@ -251,9 +254,24 @@ func TestLogoutReport(t *testing.T) {
 			}
 			srv, calls := revokeServer(t, status)
 
-			report, err := logoutAt(context.Background(), srv.URL)
+			var hooked LogoutReport
+			var gotKey string
+			hookCalls := 0
+			report, err := logoutAt(context.Background(), srv.URL, func(r LogoutReport, legacyKey string) {
+				hookCalls++
+				hooked, gotKey = r, legacyKey
+			})
 			if err != nil {
 				t.Fatalf("logoutAt: %v", err)
+			}
+			if hookCalls != 1 {
+				t.Fatalf("beforeClear called %d times, want 1", hookCalls)
+			}
+			if gotKey != tt.wantKey {
+				t.Fatalf("legacyKey = %q, want %q", gotKey, tt.wantKey)
+			}
+			if hooked.Kind != report.Kind || hooked.EnvTokenSet != report.EnvTokenSet || (hooked.RevokeErr == nil) != (report.RevokeErr == nil) {
+				t.Fatalf("beforeClear saw %+v, Logout returned %+v", hooked, report)
 			}
 			if (report.RevokeErr != nil) != tt.wantRevokeEr {
 				t.Fatalf("RevokeErr = %v, want error %v", report.RevokeErr, tt.wantRevokeEr)
@@ -281,7 +299,7 @@ func TestLogoutCorruptEntryIsClearedWithoutHints(t *testing.T) {
 	}
 	srv, calls := revokeServer(t, http.StatusOK)
 
-	report, err := logoutAt(context.Background(), srv.URL)
+	report, err := logoutAt(context.Background(), srv.URL, nil)
 	if err != nil {
 		t.Fatalf("logoutAt: %v", err)
 	}
@@ -297,7 +315,11 @@ func TestLogoutKeyringUnavailable(t *testing.T) {
 	t.Setenv(envKey, "env-token")
 	srv, calls := revokeServer(t, http.StatusOK)
 
-	report, err := logoutAt(context.Background(), srv.URL)
+	hookCalls := 0
+	report, err := logoutAt(context.Background(), srv.URL, func(LogoutReport, string) { hookCalls++ })
+	if hookCalls != 1 {
+		t.Fatalf("beforeClear called %d times, want 1 so the env warning still shows", hookCalls)
+	}
 	if err == nil || !strings.Contains(err.Error(), "keychain locked") {
 		t.Fatalf("err = %v, want the keyring error", err)
 	}
@@ -306,5 +328,54 @@ func TestLogoutKeyringUnavailable(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(calls); got != 0 {
 		t.Fatalf("revoke requests = %d, want 0", got)
+	}
+}
+
+// Aborting at the legacy key prompt must not lose the key, so the hook runs
+// while it is still stored.
+func TestLogoutHookRunsBeforeKeychainIsCleared(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		account string
+		value   string
+	}{
+		{name: "stored token", account: accountName, value: `{"access_token":"` + legacyJWT + `"}`},
+		{name: "legacy keychain entry", account: legacyAccountName, value: legacyJWT},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			freshKeychain(t)
+			t.Setenv(envKey, "")
+			if err := keyring.Set(serviceName, tt.account, tt.value); err != nil {
+				t.Fatalf("keyring.Set: %v", err)
+			}
+			srv, _ := revokeServer(t, http.StatusOK)
+
+			ran := false
+			_, err := logoutAt(context.Background(), srv.URL, func(_ LogoutReport, legacyKey string) {
+				ran = true
+				if legacyKey != legacyJWT {
+					t.Errorf("legacyKey = %q, want %q", legacyKey, legacyJWT)
+				}
+				if got, err := keyring.Get(serviceName, tt.account); err != nil || got != tt.value {
+					t.Errorf("during beforeClear keyring.Get = %q, %v; want the key still stored", got, err)
+				}
+			})
+			if err != nil {
+				t.Fatalf("logoutAt: %v", err)
+			}
+			if !ran {
+				t.Fatal("beforeClear was not called")
+			}
+			assertKeychainEmpty(t)
+		})
+	}
+}
+
+func TestKindString(t *testing.T) {
+	if got := KindPersonalAPIKey.String(); got != "personal API key" {
+		t.Fatalf("KindPersonalAPIKey.String() = %q", got)
+	}
+	if got := Kind(99).String(); got != "Kind(99)" {
+		t.Fatalf("Kind(99).String() = %q", got)
 	}
 }
