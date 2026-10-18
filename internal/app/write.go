@@ -10,11 +10,11 @@ import (
 // ErrCacheRefresh reports that a write reached Hardcover but a local step
 // after it failed: the cache upsert, the active-books bookkeeping or the
 // post-insert sync. Every write-through mutation (ChangeStatus,
-// UpdateProgress, RateBook, ReviewBook) wraps such failures in it, and only
-// those: an error before or from the remote write is returned plain. The
+// UpdateProgress, RateBook, ReviewBook, MoveQueueBook, ImportBooks) wraps
+// such failures in it, and only those: an error before or from the remote write is returned plain. The
 // remote change stands, so callers should report success and warn rather
 // than fail; a retry could repeat the change, an insert most of all.
-var ErrCacheRefresh = errors.New("book updated on Hardcover but the local cache could not be refreshed; run `oku sync`")
+var ErrCacheRefresh = errors.New("change saved on Hardcover but the local cache could not be refreshed; run `oku sync`")
 
 // errNotCached marks a write to a book that is missing from the cached
 // library.

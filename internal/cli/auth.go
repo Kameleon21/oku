@@ -61,7 +61,7 @@ var authBackend = struct {
 	login       func(context.Context, io.Writer) (*oauth2.Token, error)
 	promptToken func() (string, error)
 	current     func(context.Context) (auth.Credential, error)
-	verify      func(context.Context, oauth2.TokenSource) (int, string, *oauth2.Token, error)
+	verify      func(context.Context, auth.Credential) (int, string, *oauth2.Token, error)
 	checkScopes func(context.Context, oauth2.TokenSource) ([]string, error)
 	logout      func(context.Context, func(auth.LogoutReport, string)) (auth.LogoutReport, error)
 	remember    func(userID int) (cleared bool, err error)
@@ -85,7 +85,7 @@ func recordSignedInUser(cmd *cobra.Command) {
 	cred, err := authBackend.current(ctx)
 	var id int
 	if err == nil {
-		id, _, _, err = authBackend.verify(ctx, cred.TokenSource)
+		id, _, _, err = authBackend.verify(ctx, cred)
 	}
 	var cleared bool
 	if err == nil {
@@ -165,15 +165,18 @@ func hintManualRevoke(cmd *cobra.Command, kind auth.Kind, legacyKey string) {
 	fmt.Fprintln(out, "Key not shown. It stays valid until it expires unless you revoke it.")
 }
 
-// verifyLogin asks Hardcover who src's token belongs to, refreshing it first
+// verifyLogin asks Hardcover who cred's token belongs to, refreshing it first
 // if it has expired. It returns the token in use afterwards, so a refresh
-// shows up in the reported expiry.
-func verifyLogin(ctx context.Context, src oauth2.TokenSource) (int, string, *oauth2.Token, error) {
-	id, username, err := api.NewOAuthClient(ctx, src).GetMe(ctx)
+// shows up in the reported expiry. A refusal says how to get the permission
+// for cred's kind, as any other request's does.
+func verifyLogin(ctx context.Context, cred auth.Credential) (int, string, *oauth2.Token, error) {
+	client := api.NewOAuthClient(ctx, cred.TokenSource)
+	client.ScopeRemedy = auth.Remedy(cred.Kind)
+	id, username, err := client.GetMe(ctx)
 	if err != nil {
 		return 0, "", nil, err
 	}
-	current, err := src.Token()
+	current, err := cred.TokenSource.Token()
 	if err != nil {
 		return 0, "", nil, err
 	}
@@ -210,7 +213,8 @@ func warnUngrantedScopes(cmd *cobra.Command, token *oauth2.Token, kind auth.Kind
 	w := cmd.ErrOrStderr()
 	fmt.Fprintln(w, "warning: Hardcover didn't grant oku every permission it needs:")
 	listScopes(w, missing)
-	fmt.Fprintln(w, "Those features won't work until it does. "+scopeRemedy(kind))
+	fmt.Fprintln(w, "Those features won't work until it does. "+auth.Remedy(kind)+".")
+	fmt.Fprintln(w, auth.RemedyDetail(kind))
 }
 
 // listScopes prints one permission per line with the feature it is for.
@@ -224,18 +228,6 @@ func listScopes(w io.Writer, missing []string) {
 	}
 }
 
-// scopeRemedy says how to get the missing permissions for a credential of
-// the given kind.
-func scopeRemedy(kind auth.Kind) string {
-	switch kind {
-	case auth.KindEnv:
-		return "HARDCOVER_TOKEN is in use; replace it with a key that has every permission oku needs:\n" + auth.NewTokenURL()
-	case auth.KindPersonalAPIKey, auth.KindLegacyAPIKey:
-		return "Run `oku auth login`, or create a key with every permission oku needs and store it with `oku auth set-token`:\n" + auth.NewTokenURL()
-	}
-	return "Run `oku auth login` again and approve them. If Hardcover's sign-in page doesn't list them, please report it at https://github.com/Kameleon21/oku/issues"
-}
-
 func newAuthStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
@@ -246,7 +238,7 @@ func newAuthStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			userID, username, token, err := authBackend.verify(cmd.Context(), cred.TokenSource)
+			userID, username, token, err := authBackend.verify(cmd.Context(), cred)
 			if err != nil {
 				return err
 			}
@@ -283,7 +275,8 @@ func newAuthStatusCmd() *cobra.Command {
 			case len(missing) > 0:
 				fmt.Fprintln(out, "Missing permissions:")
 				listScopes(out, missing)
-				fmt.Fprintln(out, scopeRemedy(cred.Kind))
+				fmt.Fprintln(out, auth.Remedy(cred.Kind)+".")
+				fmt.Fprintln(out, auth.RemedyDetail(cred.Kind))
 			case err == nil:
 				fmt.Fprintln(out, "Permissions: every read permission granted (write permissions are checked when used)")
 			}

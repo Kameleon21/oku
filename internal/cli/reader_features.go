@@ -305,8 +305,10 @@ func newImportCmd() *cobra.Command {
 			}
 			return nil
 		})
-		if importErr != nil {
-			return importErr
+		// Books that reached Hardcover stand even when the sync after them
+		// failed, so that is a warning, not a failed import.
+		if err := finishWrite(importErr, func() {}); err != nil {
+			return err
 		}
 		return printErr
 	}}

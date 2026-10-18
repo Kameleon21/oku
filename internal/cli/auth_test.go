@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Kameleon21/oku/internal/api"
+	"github.com/Kameleon21/oku/internal/app"
 	"github.com/Kameleon21/oku/internal/auth"
 	"github.com/Kameleon21/oku/internal/config"
 	"github.com/Kameleon21/oku/internal/model"
@@ -55,11 +56,11 @@ func stubAuthBackend(t *testing.T, current func(context.Context) (auth.Credentia
 		}
 		return current(ctx)
 	}
-	authBackend.verify = func(ctx context.Context, src oauth2.TokenSource) (int, string, *oauth2.Token, error) {
+	authBackend.verify = func(ctx context.Context, cred auth.Credential) (int, string, *oauth2.Token, error) {
 		if verify == nil {
 			t.Fatal("unexpected call to verify")
 		}
-		return verify(ctx, src)
+		return verify(ctx, cred.TokenSource)
 	}
 	authBackend.logout = func(ctx context.Context, beforeClear func(auth.LogoutReport, string)) (auth.LogoutReport, error) {
 		if logout == nil {
@@ -405,9 +406,9 @@ func TestAuthStatusListsMissingPermissions(t *testing.T) {
 		kind auth.Kind
 		want string
 	}{
-		{auth.KindBrowserLogin, "Run `oku auth login` again and approve them"},
+		{auth.KindBrowserLogin, "Run `oku auth login` again and approve every permission"},
 		{auth.KindPersonalAPIKey, "oku auth set-token"},
-		{auth.KindEnv, "HARDCOVER_TOKEN is in use"},
+		{auth.KindEnv, "Replace HARDCOVER_TOKEN with a key"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.kind.String(), func(t *testing.T) {
@@ -496,7 +497,7 @@ func TestLoginWarnsAboutUngrantedScopes(t *testing.T) {
 		"read:journal  notes, quotes and the activity heatmap",
 		"read:goals    reading goals",
 		"read:lists    the reading queue",
-		"Run `oku auth login` again and approve them",
+		"Run `oku auth login` again and approve every permission",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q:\n%s", want, out)
@@ -550,16 +551,18 @@ func TestSetTokenWarnsAboutMissingScopes(t *testing.T) {
 	}
 }
 
+// The hint for a refused permission is the remedy the client attached to
+// the refusal, which follows the credential in use.
 func TestErrorHintForMissingScope(t *testing.T) {
-	err := fmt.Errorf("goals: %w", &api.StatusError{Code: 403, APIError: "insufficient_scope", Scope: "read:goals"})
-
-	t.Setenv("HARDCOVER_TOKEN", "")
-	if hint := errorHint(err); !strings.Contains(hint, "oku auth login") {
-		t.Fatalf("hint = %q, want the login remedy", hint)
+	remedy := auth.Remedy(auth.KindEnv)
+	err := fmt.Errorf("goals: %w", &api.StatusError{Code: 403, APIError: "insufficient_scope", Scope: "read:goals", Remedy: remedy})
+	if hint := errorHint(err); hint != "Hint: "+remedy {
+		t.Fatalf("hint = %q, want %q", hint, "Hint: "+remedy)
 	}
-	t.Setenv("HARDCOVER_TOKEN", "hc_pat_env")
-	if hint := errorHint(err); !strings.Contains(hint, "HARDCOVER_TOKEN is in use") {
-		t.Fatalf("hint = %q, want the environment variable remedy", hint)
+
+	// The stats warning already says how, so it gets no hint of its own.
+	if hint := errorHint(fmt.Errorf("%w: %s", app.ErrStatsIncomplete, remedy)); hint != "" {
+		t.Fatalf("stats warning hint = %q, want none", hint)
 	}
 }
 

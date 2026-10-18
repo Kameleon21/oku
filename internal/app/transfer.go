@@ -273,6 +273,8 @@ type ImportResult struct {
 
 // ImportBooks previews by default. Existing books are always skipped, preserving
 // ratings, progress and reviews. A failed partially-added row is explicitly reported.
+// Books that reached Hardcover stay there when the sync after them fails, so
+// that failure is ErrCacheRefresh.
 func (a *App) ImportBooks(ctx context.Context, rows []TransferBook, apply bool) ([]ImportResult, error) {
 	if _, err := validateImport(rows); err != nil {
 		return nil, err
@@ -374,7 +376,7 @@ func (a *App) ImportBooks(ctx context.Context, rows []TransferBook, apply bool) 
 		}
 	}
 	if err := a.SyncAll(ctx); err != nil && !errors.Is(err, ErrStatsIncomplete) {
-		return results, fmt.Errorf("import saved on Hardcover; refresh local cache with oku sync: %w", err)
+		return results, cacheRefreshed(err)
 	}
 	return results, nil
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Kameleon21/oku/internal/app"
 	"github.com/Kameleon21/oku/internal/model"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/exp/golden"
@@ -296,6 +297,19 @@ func TestQueueMoveKeepsSelection(t *testing.T) {
 	m.handleReaderRequest(queueLoadedMsg{ids: []int{second, first}, bookID: first})
 	if s.books()[0].BookID != second || s.selected().BookID != first {
 		t.Fatal("ranking lost order or selection")
+	}
+}
+func TestQueueMoveThatOnlyMissedTheCacheStillReorders(t *testing.T) {
+	m := newGoldenModel(t, 80, 24, tabOku)
+	s := okuSection(m)
+	books := s.books()
+	first, second := books[0].BookID, books[1].BookID
+	m.handleReaderRequest(queueLoadedMsg{ids: []int{second, first}, bookID: first, err: app.ErrCacheRefresh})
+	if s.books()[0].BookID != second || s.selected().BookID != first {
+		t.Fatal("a move saved on Hardcover was not shown")
+	}
+	if m.toast.level != toastWarn || m.toast.text != "Reading queue saved" || m.toast.note != cacheWarning {
+		t.Fatalf("toast = %v %q %q, want the saved notice with the sync warning", m.toast.level, m.toast.text, m.toast.note)
 	}
 }
 func TestTrendingRejectsStaleSearchResult(t *testing.T) {

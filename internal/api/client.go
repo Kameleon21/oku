@@ -45,6 +45,11 @@ func userAgent() string {
 
 // Client wraps the machinebox/graphql client with authentication and rate limiting.
 type Client struct {
+	// ScopeRemedy says how the user can get permissions Hardcover refuses
+	// this client's credential. It rides on every insufficient-scope
+	// *StatusError the client returns; see ScopeRemedy.
+	ScopeRemedy string
+
 	gql *graphql.Client
 
 	// Simple rate limiter: lastReq holds when the most recently reserved
@@ -84,6 +89,8 @@ type StatusError struct {
 	APIError    string // e.g. "invalid_token", "insufficient_scope"
 	Description string
 	Scope       string // permissions missing, for insufficient_scope
+	// Remedy is the returning Client's ScopeRemedy, for insufficient_scope.
+	Remedy string
 	// Body holds up to maxErrorBody bytes of the response body, with runs of
 	// whitespace collapsed, so failures carry the server's explanation
 	// instead of just a status number.
@@ -209,7 +216,7 @@ func (c *Client) do(ctx context.Context, req *graphql.Request, resp interface{})
 			return &NetworkError{Err: err}
 		}
 
-		err := c.gql.Run(ctx, req, resp)
+		err := c.run(ctx, req, resp)
 		if err == nil {
 			return nil
 		}
@@ -253,6 +260,14 @@ func (c *Client) do(ctx context.Context, req *graphql.Request, resp interface{})
 
 	// The loop only exits via break, which always assigns lastErr first.
 	return &NetworkError{Err: lastErr}
+}
+
+// run sends req once. Every request goes through it, reads and writes, so a
+// refused permission always says how to get it.
+func (c *Client) run(ctx context.Context, req *graphql.Request, resp any) error {
+	err := c.gql.Run(ctx, req, resp)
+	walkErrors(err, func(se *StatusError) { se.Remedy = c.ScopeRemedy })
+	return err
 }
 
 // remaining reports how long ctx has left. do always runs under a deadline

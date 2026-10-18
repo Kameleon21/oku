@@ -9,7 +9,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/Kameleon21/oku/internal/app"
-	"github.com/Kameleon21/oku/internal/auth"
 	"github.com/Kameleon21/oku/internal/model"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -181,20 +180,11 @@ func (m *Model) renderToast(avail int) string {
 	return style.Render(glyph+ansi.Truncate(text, room, "…")+note) + undoHint
 }
 
-// permissionRemedy follows an explanation of a missing Hardcover permission.
-// Signing in again can't help while HARDCOVER_TOKEN overrides the login.
-func permissionRemedy() string {
-	if auth.EnvTokenSet() {
-		return "; HARDCOVER_TOKEN is in use, so replace it with a key that has every permission oku needs"
-	}
-	return "; run: oku auth login"
-}
-
 // errorText is how an error reads in a toast: a missing permission says
 // which one, what it is for and how to get it, rather than where it failed.
 func errorText(err error) string {
 	if why, ok := app.MissingPermission(err); ok {
-		return why + permissionRemedy()
+		return why
 	}
 	return err.Error()
 }

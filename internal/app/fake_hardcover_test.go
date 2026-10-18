@@ -274,7 +274,7 @@ func (f *fakeHardcover) ReadingQueue(ctx context.Context, create bool) (int, []a
 }
 
 func (f *fakeHardcover) QueueBooks(ctx context.Context, listID int, books []api.RankedBook) error {
-	if err := f.record("QueueBooks", listID); err != nil {
+	if err := f.write("QueueBooks", listID); err != nil {
 		return err
 	}
 	f.queued = append(f.queued, append([]api.RankedBook(nil), books...))
@@ -287,7 +287,7 @@ func (f *fakeHardcover) QueueBooks(ctx context.Context, listID int, books []api.
 }
 
 func (f *fakeHardcover) SetQueuePositions(ctx context.Context, listID int, rows []api.RankedBook) error {
-	if err := f.record("SetQueuePositions", listID); err != nil {
+	if err := f.write("SetQueuePositions", listID); err != nil {
 		return err
 	}
 	f.positionUpdates = append(f.positionUpdates, append([]api.RankedBook(nil), rows...))

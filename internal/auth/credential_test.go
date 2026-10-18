@@ -379,3 +379,39 @@ func TestKindString(t *testing.T) {
 		t.Fatalf("Kind(99).String() = %q", got)
 	}
 }
+
+// Signing in again can't help while HARDCOVER_TOKEN overrides the login, and
+// a stored key can be replaced either way. The remedy fits a status bar; the
+// detail says where to go next.
+func TestRemedy(t *testing.T) {
+	tests := []struct {
+		kind       Kind
+		want       []string
+		notWant    string
+		wantDetail string
+	}{
+		{KindEnv, []string{"HARDCOVER_TOKEN"}, "oku auth login", NewTokenURL()},
+		{KindPersonalAPIKey, []string{"oku auth login", "oku auth set-token"}, "", NewTokenURL()},
+		{KindLegacyAPIKey, []string{"oku auth login", "oku auth set-token"}, "", NewTokenURL()},
+		{KindBrowserLogin, []string{"Run `oku auth login` again"}, "set-token", "github.com/Kameleon21/oku/issues"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.kind.String(), func(t *testing.T) {
+			got := Remedy(tt.kind)
+			for _, want := range tt.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("Remedy = %q, missing %q", got, want)
+				}
+			}
+			if tt.notWant != "" && strings.Contains(got, tt.notWant) {
+				t.Errorf("Remedy = %q, should not mention %q", got, tt.notWant)
+			}
+			if len(got) > 90 || strings.Contains(got, "\n") {
+				t.Errorf("Remedy = %q (%d chars), want one short line for a status bar", got, len(got))
+			}
+			if detail := RemedyDetail(tt.kind); !strings.Contains(detail, tt.wantDetail) {
+				t.Errorf("RemedyDetail = %q, missing %q", detail, tt.wantDetail)
+			}
+		})
+	}
+}

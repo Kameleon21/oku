@@ -63,6 +63,32 @@ func (k Kind) String() string {
 	return fmt.Sprintf("Kind(%d)", int(k))
 }
 
+// Remedy says, in a line short enough for a status bar, how to get the
+// Hardcover permissions oku is missing with a credential of kind k: signing
+// in again can't help while HARDCOVER_TOKEN overrides the login, and a
+// stored key can be replaced either way. RemedyDetail follows it where there
+// is room.
+func Remedy(k Kind) string {
+	switch k {
+	case KindEnv:
+		return "Replace HARDCOVER_TOKEN with a key that has every permission oku needs"
+	case KindPersonalAPIKey, KindLegacyAPIKey:
+		return "Run `oku auth login`, or store a key with every permission using `oku auth set-token`"
+	}
+	return "Run `oku auth login` again and approve every permission"
+}
+
+// RemedyDetail is what follows Remedy for kind k where there is room: where
+// to create a key, or, for a browser login, where to report a sign-in page
+// that leaves the permissions out.
+func RemedyDetail(k Kind) string {
+	switch k {
+	case KindEnv, KindPersonalAPIKey, KindLegacyAPIKey:
+		return "Create a key at " + NewTokenURL()
+	}
+	return "If Hardcover's sign-in page doesn't list them, please report it at https://github.com/Kameleon21/oku/issues"
+}
+
 // Credential is the login oku should use right now.
 type Credential struct {
 	Kind Kind
