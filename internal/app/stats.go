@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -88,16 +89,21 @@ func pickBooksGoal(goals []model.Goal) *model.Goal {
 }
 
 // SyncStats refreshes the journal and goal caches from the API. Journal
-// history is limited to what the heatmap can show plus margin.
+// history is limited to what the heatmap can show plus margin. Each cache is
+// refreshed on its own, so a token that may read goals but not the journal
+// (or the other way round) still gets the one it can; the errors are joined.
 func (a *App) SyncStats(ctx context.Context) error {
 	if err := a.requireOnline(); err != nil {
 		return err
 	}
+	return errors.Join(a.syncJournals(ctx), a.syncGoals(ctx))
+}
+
+func (a *App) syncJournals(ctx context.Context) error {
 	userID, err := a.cachedUserID(ctx)
 	if err != nil {
 		return err
 	}
-
 	since := time.Now().AddDate(-1, 0, 0)
 	apiJournals, err := a.hc.ListReadingJournals(ctx, userID, since)
 	if err != nil {
@@ -109,10 +115,10 @@ func (a *App) SyncStats(ctx context.Context) error {
 			entries = append(entries, entry)
 		}
 	}
-	if err := a.store.ReplaceReadingJournals(entries); err != nil {
-		return err
-	}
+	return a.store.ReplaceReadingJournals(entries)
+}
 
+func (a *App) syncGoals(ctx context.Context) error {
 	apiGoals, err := a.hc.ListGoals(ctx)
 	if err != nil {
 		return err

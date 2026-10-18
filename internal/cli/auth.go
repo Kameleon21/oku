@@ -46,6 +46,7 @@ func newLoginCmd() *cobra.Command {
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "Login successful.")
 			recordSignedInUser(cmd)
+			warnUngrantedScopes(cmd, token, auth.KindBrowserLogin)
 			return nil
 		},
 	}
@@ -60,6 +61,7 @@ var authBackend = struct {
 	promptToken func() (string, error)
 	current     func(context.Context) (auth.Credential, error)
 	verify      func(context.Context, oauth2.TokenSource) (int, string, *oauth2.Token, error)
+	checkScopes func(context.Context, oauth2.TokenSource) ([]string, error)
 	logout      func(context.Context, func(auth.LogoutReport, string)) (auth.LogoutReport, error)
 	remember    func(userID int) (cleared bool, err error)
 }{
@@ -67,6 +69,7 @@ var authBackend = struct {
 	promptToken: auth.PromptToken,
 	current:     auth.Current,
 	verify:      verifyLogin,
+	checkScopes: checkReadScopes,
 	logout:      auth.Logout,
 	remember:    rememberSignedInUser,
 }
@@ -176,6 +179,61 @@ func verifyLogin(ctx context.Context, src oauth2.TokenSource) (int, string, *oau
 	return id, username, current, nil
 }
 
+// checkReadScopes asks Hardcover which of oku's read permissions src's
+// token lacks.
+func checkReadScopes(ctx context.Context, src oauth2.TokenSource) ([]string, error) {
+	return api.NewOAuthClient(ctx, src).CheckReadScopes(ctx)
+}
+
+// warnUngrantedScopes tells the user, right after signing in, which
+// permissions the new token lacks, so a feature failing later is no
+// surprise. A browser login's token response lists what was granted; when it
+// doesn't, or for an API key, Hardcover is asked. A failed check is only
+// mentioned: the sign-in itself worked.
+func warnUngrantedScopes(cmd *cobra.Command, token *oauth2.Token, kind auth.Kind) {
+	var missing []string
+	if granted, _ := token.Extra("scope").(string); granted != "" {
+		missing = api.UngrantedScopes(granted)
+	} else {
+		var err error
+		missing, err = authBackend.checkScopes(cmd.Context(), oauth2.StaticTokenSource(token))
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not check permissions: %v\n", err)
+			return
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+	w := cmd.ErrOrStderr()
+	fmt.Fprintln(w, "warning: Hardcover didn't grant oku every permission it needs:")
+	listScopes(w, missing)
+	fmt.Fprintln(w, "Those features won't work until it does. "+scopeRemedy(kind))
+}
+
+// listScopes prints one permission per line with the feature it is for.
+func listScopes(w io.Writer, missing []string) {
+	width := 0
+	for _, s := range missing {
+		width = max(width, len(s))
+	}
+	for _, s := range missing {
+		fmt.Fprintf(w, "  %-*s  %s\n", width, s, api.ScopeFeature(s))
+	}
+}
+
+// scopeRemedy says how to get the missing permissions for a credential of
+// the given kind.
+func scopeRemedy(kind auth.Kind) string {
+	switch kind {
+	case auth.KindEnv:
+		return "HARDCOVER_TOKEN is in use; replace it with a key that has every permission oku needs:\n" + auth.NewTokenURL()
+	case auth.KindPersonalAPIKey, auth.KindLegacyAPIKey:
+		return "Run `oku auth login`, or create a key with every permission oku needs and store it with `oku auth set-token`:\n" + auth.NewTokenURL()
+	}
+	return "Run `oku auth login` again and approve them. If Hardcover's sign-in page doesn't list them, please report it at https://github.com/Kameleon21/oku/issues"
+}
+
 func newAuthStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
@@ -213,6 +271,18 @@ func newAuthStatusCmd() *cobra.Command {
 				fmt.Fprintln(out, "Using: legacy API key")
 				fmt.Fprintln(out, "Hint: run `oku auth login` to switch to browser login")
 			}
+
+			missing, err := authBackend.checkScopes(cmd.Context(), cred.TokenSource)
+			switch {
+			case err != nil:
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not check permissions: %v\n", err)
+			case len(missing) > 0:
+				fmt.Fprintln(out, "Missing permissions:")
+				listScopes(out, missing)
+				fmt.Fprintln(out, scopeRemedy(cred.Kind))
+			default:
+				fmt.Fprintln(out, "Permissions: all read permissions granted")
+			}
 			return nil
 		},
 	}
@@ -234,6 +304,7 @@ func newSetTokenCmd() *cobra.Command {
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "Token stored successfully.")
 			recordSignedInUser(cmd)
+			warnUngrantedScopes(cmd, token, auth.KindPersonalAPIKey)
 			return nil
 		},
 	}

@@ -78,9 +78,17 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		m.detail.stamp++
 		return nil, true
 	case journalLoadedMsg:
+		if why, ok := app.MissingPermission(r.err); ok {
+			// Not a failure of this book: the rest of the detail loaded, and
+			// the pane says why notes and quotes are missing.
+			m.shared.journalDenied = why
+			m.detail.stamp++
+			return nil, true
+		}
 		if r.err != nil {
 			return m.showToast(toastError, "Load journal: "+r.err.Error()), true
 		}
+		m.shared.journalDenied = ""
 		if m.shared.journals == nil {
 			m.shared.journals = map[int][]model.BookJournalEntry{}
 		}
@@ -305,8 +313,14 @@ func (n *journalModal) Resize(lay layout) {
 func (n *journalModal) Init() tea.Cmd       { return n.focusCmd }
 func (n *journalModal) Cursor() *tea.Cursor { return nil }
 
-func renderBookJournal(entries []model.BookJournalEntry, w int, st styles) string {
-	if len(entries) == 0 || w <= 0 {
+func renderBookJournal(entries []model.BookJournalEntry, denied string, w int, st styles) string {
+	if w <= 0 {
+		return ""
+	}
+	if denied != "" {
+		return "\n\n" + st.label.Render("Your notes & quotes") + "\n" + st.dim.Render(lipgloss.NewStyle().Width(w).Render(denied))
+	}
+	if len(entries) == 0 {
 		return ""
 	}
 	var out strings.Builder

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Kameleon21/oku/internal/api"
 	"github.com/pkg/browser"
 	"golang.org/x/oauth2"
 )
@@ -21,19 +22,9 @@ const (
 	clientID = "41696682-fd7a-45ad-8145-eb002ac6179d"
 )
 
-// scopes is the minimum the app needs, per https://api.hardcover.app/capabilities.json
-var scopes = []string{
-	"read:me:content", // me: current user id/username
-	"read:library",    // user_books: library, reading progress
-	"read:journal",    // reading_journals: notes/quotes, activity stats
-	"read:goals",      // goals: reading goals
-	"read:lists",      // lists, list_books: reading queue
-	"read:catalog",    // search, books, editions: search, trending, ISBN lookup
-	"write:library",   // insert/update_user_book, insert_reading_journal: library writes, ratings/reviews, journal entries
-	"write:reviews",   // review writing
-	"write:goals",     // insert/update_goal: reading goals
-	"write:lists",     // insert_list, update_list_books: reading queue
-}
+// scopes is every permission oku requests; api owns the list because it
+// knows which operations need which permission.
+var scopes = api.ScopeNames()
 
 // const OAUTH_AUTHORIZATION_SERVER = "https://api.hardcover.app/.well-known/oauth-authorization-server"
 const (
