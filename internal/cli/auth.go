@@ -274,15 +274,17 @@ func newAuthStatusCmd() *cobra.Command {
 				fmt.Fprintln(out, "Hint: run `oku auth login` to switch to browser login")
 			}
 
+			// A check that fails part-way still reports what it found.
 			missing, err := authBackend.checkScopes(cmd.Context(), cred.TokenSource)
-			switch {
-			case err != nil:
+			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not check permissions: %v\n", err)
+			}
+			switch {
 			case len(missing) > 0:
 				fmt.Fprintln(out, "Missing permissions:")
 				listScopes(out, missing)
 				fmt.Fprintln(out, scopeRemedy(cred.Kind))
-			default:
+			case err == nil:
 				fmt.Fprintln(out, "Permissions: every read permission granted (write permissions are checked when used)")
 			}
 			return nil

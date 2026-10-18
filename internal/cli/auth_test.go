@@ -562,3 +562,22 @@ func TestErrorHintForMissingScope(t *testing.T) {
 		t.Fatalf("hint = %q, want the environment variable remedy", hint)
 	}
 }
+
+func TestAuthStatusKeepsPermissionsFoundBeforeACheckFails(t *testing.T) {
+	stubStatus(t, auth.Credential{Kind: auth.KindBrowserLogin, TokenSource: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "x"})}, "reader")
+	authBackend.checkScopes = func(context.Context, oauth2.TokenSource) ([]string, error) {
+		return []string{"read:journal"}, errors.New("timeout")
+	}
+	out, err := runAuthStatus(t)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	for _, want := range []string{"warning: could not check permissions: timeout", "Missing permissions:", "read:journal"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "every read permission granted") {
+		t.Errorf("a failed check must not claim everything is granted:\n%s", out)
+	}
+}
