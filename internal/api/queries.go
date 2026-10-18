@@ -89,6 +89,7 @@ func (c *Client) ListUserBooks(ctx context.Context, statusID int) ([]APIUserBook
 func userBooksQuery(statusID int, sel userBooksSelection) string {
 	if sel == userBooksMinimal {
 		return fmt.Sprintf(`query {
+  `+permissionCheck("user_books")+`
   me {
     user_books(where: { status_id: { _eq: %d } }) {
       id
@@ -131,6 +132,7 @@ func userBooksQuery(statusID int, sel userBooksSelection) string {
 	}
 
 	return fmt.Sprintf(`query {
+  `+permissionCheck("user_books")+`
   me {
     user_books(where: { status_id: { _eq: %d } }) {
       id
@@ -174,6 +176,7 @@ func userBooksQuery(statusID int, sel userBooksSelection) string {
 // ListGoals returns the user's reading goals.
 func (c *Client) ListGoals(ctx context.Context) ([]APIGoal, error) {
 	req := graphql.NewRequest(`query {
+  ` + permissionCheck("goals") + `
   me {
     id
     goals {

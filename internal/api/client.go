@@ -93,6 +93,9 @@ type StatusError struct {
 }
 
 func (e *StatusError) Error() string {
+	if e.Is(ErrInsufficientScope) {
+		return DescribeMissingScopes(refusedScopes(e))
+	}
 	msg := fmt.Sprintf("unexpected HTTP status %d (%s)", e.Code, http.StatusText(e.Code))
 	switch {
 	case e.APIError != "" && e.Description != "":

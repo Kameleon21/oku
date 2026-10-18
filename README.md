@@ -48,8 +48,10 @@ oku             # Launch the dashboard
 
 `oku auth login` opens Hardcover in your browser to approve access, then stores
 the resulting token in your system keychain; it's refreshed automatically as
-needed. Run `oku auth status` to check who you're signed in as and how, and
-`oku auth logout` to sign out and revoke it.
+needed. Run `oku auth status` to check who you're signed in as, how, and
+whether any permission oku needs is missing, and `oku auth logout` to sign out
+and revoke it. If Hardcover grants fewer permissions than oku asks for, login
+says which features won't work; the rest of oku keeps working.
 
 No browser handy (e.g. over SSH)? Run `oku auth set-token` instead: it prints
 a link to Hardcover's "New API Key" form with the scopes oku needs already

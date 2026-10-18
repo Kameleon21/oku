@@ -78,7 +78,11 @@ type shared struct {
 	queueOrder   []int
 	details      map[int]*model.BookDetail
 	journals     map[int][]model.BookJournalEntry
-	privateNotes map[int]string
+	// journalDenied explains Hardcover's refusal to read the journal for lack
+	// of a permission; the detail pane shows it in place of notes and quotes.
+	// It is account-wide, so the next journal that loads clears it.
+	journalDenied string
+	privateNotes  map[int]string
 	// shelf is every cached user book by book id, across all statuses, so
 	// the search detail can say whether the library already has a result,
 	// and what it was rated.

@@ -69,7 +69,7 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		return m.run(detail), true
 	case detailLoadedMsg:
 		if r.err != nil {
-			return m.showToast(toastError, r.err.Error()), true
+			return m.showToast(toastError, errorText(r.err)), true
 		}
 		if m.shared.details == nil {
 			m.shared.details = map[int]*model.BookDetail{}
@@ -78,9 +78,17 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		m.detail.stamp++
 		return nil, true
 	case journalLoadedMsg:
-		if r.err != nil {
-			return m.showToast(toastError, "Load journal: "+r.err.Error()), true
+		if why, ok := app.MissingPermission(r.err); ok {
+			// Not a failure of this book: the rest of the detail loaded, and
+			// the pane says why notes and quotes are missing.
+			m.shared.journalDenied = why + permissionRemedy()
+			m.detail.stamp++
+			return nil, true
 		}
+		if r.err != nil {
+			return m.showToast(toastError, "Load journal: "+errorText(r.err)), true
+		}
+		m.shared.journalDenied = ""
 		if m.shared.journals == nil {
 			m.shared.journals = map[int][]model.BookJournalEntry{}
 		}
@@ -94,7 +102,7 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		return m.run(pausedShelfCmd(m.ctx, m.backend)), true
 	case pausedLoadedMsg:
 		if r.err != nil {
-			return m.showToast(toastError, r.err.Error()), true
+			return m.showToast(toastError, errorText(r.err)), true
 		}
 		m.shared.paused = r.books
 		return m.broadcast(dataChangedMsg{dataLibrary}), true
@@ -116,7 +124,7 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		return m.run(queueRefreshCmd(m.ctx, m.backend)), true
 	case queueLoadedMsg:
 		if r.err != nil {
-			return m.showToast(toastError, r.err.Error()), true
+			return m.showToast(toastError, errorText(r.err)), true
 		}
 		m.shared.queueOrder = r.ids
 		app.SortQueue(m.shared.oku, r.ids)
@@ -305,8 +313,14 @@ func (n *journalModal) Resize(lay layout) {
 func (n *journalModal) Init() tea.Cmd       { return n.focusCmd }
 func (n *journalModal) Cursor() *tea.Cursor { return nil }
 
-func renderBookJournal(entries []model.BookJournalEntry, w int, st styles) string {
-	if len(entries) == 0 || w <= 0 {
+func renderBookJournal(entries []model.BookJournalEntry, denied string, w int, st styles) string {
+	if w <= 0 {
+		return ""
+	}
+	if denied != "" {
+		return "\n\n" + st.label.Render("Your notes & quotes") + "\n" + st.dim.Render(lipgloss.NewStyle().Width(w).Render(denied))
+	}
+	if len(entries) == 0 {
 		return ""
 	}
 	var out strings.Builder

@@ -516,7 +516,7 @@ func (s *searchSection) applyLoaded(msg searchLoadedMsg) tea.Cmd {
 	if msg.err != nil {
 		// The results already on screen stay there, and the control row
 		// keeps counting them.
-		return request(reqToast{toastError, msg.err.Error()})
+		return request(reqToast{toastError, errorText(msg.err)})
 	}
 	s.lastQuery = msg.query
 	s.lastMode = msg.mode

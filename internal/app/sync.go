@@ -2,10 +2,16 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/Kameleon21/oku/internal/model"
 )
+
+// ErrStatsIncomplete is returned, wrapped with the reason, when the library
+// synced but Hardcover refused part of the stats for lack of a permission.
+// Like ErrCacheRefresh, callers should report success and warn.
+var ErrStatsIncomplete = errors.New("library synced, but some stats could not be refreshed")
 
 // SyncAll refreshes all tracked status lists into the local cache.
 func (a *App) SyncAll(ctx context.Context) error {
@@ -34,8 +40,10 @@ func (a *App) SyncAll(ctx context.Context) error {
 	_ = a.store.PruneOrphanBooks(orphanBookMaxAgeDays)
 
 	// Journals and goals feed the stats view only; their failure should not
-	// fail the core library sync.
-	_ = a.SyncStats(ctx)
-
+	// fail the core library sync. A missing permission is reported, though:
+	// it won't go away by itself, and the stats would be empty unexplained.
+	if why, ok := MissingPermission(a.SyncStats(ctx)); ok {
+		return fmt.Errorf("%w: %s", ErrStatsIncomplete, why)
+	}
 	return nil
 }

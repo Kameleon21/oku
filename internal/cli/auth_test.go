@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/Kameleon21/oku/internal/config"
 	"github.com/Kameleon21/oku/internal/model"
 	"github.com/Kameleon21/oku/internal/store"
+	"github.com/spf13/cobra"
 	"github.com/zalando/go-keyring"
 	"golang.org/x/oauth2"
 )
@@ -44,6 +46,8 @@ func stubAuthBackend(t *testing.T, current func(context.Context) (auth.Credentia
 		return "", nil
 	}
 	authBackend.remember = func(int) (bool, error) { return false, nil }
+	// Every permission is granted unless the test says otherwise.
+	authBackend.checkScopes = func(context.Context, oauth2.TokenSource) ([]string, error) { return nil, nil }
 
 	authBackend.current = func(ctx context.Context) (auth.Credential, error) {
 		if current == nil {
@@ -393,5 +397,187 @@ func TestAuthStatusNotesAClearedCache(t *testing.T) {
 				t.Fatalf("stdout = %q, want the status", stdout.String())
 			}
 		})
+	}
+}
+
+func TestAuthStatusListsMissingPermissions(t *testing.T) {
+	tests := []struct {
+		kind auth.Kind
+		want string
+	}{
+		{auth.KindBrowserLogin, "Run `oku auth login` again and approve them"},
+		{auth.KindPersonalAPIKey, "oku auth set-token"},
+		{auth.KindEnv, "HARDCOVER_TOKEN is in use"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.kind.String(), func(t *testing.T) {
+			stubStatus(t, auth.Credential{Kind: tt.kind, TokenSource: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "x"})}, "reader")
+			authBackend.checkScopes = func(context.Context, oauth2.TokenSource) ([]string, error) {
+				return []string{"read:journal", "read:goals"}, nil
+			}
+
+			out, err := runAuthStatus(t)
+			if err != nil {
+				t.Fatalf("status: %v", err)
+			}
+			for _, want := range []string{"Missing permissions:", "read:journal  notes, quotes and the activity heatmap", "read:goals    reading goals", tt.want} {
+				if !strings.Contains(out, want) {
+					t.Errorf("output missing %q:\n%s", want, out)
+				}
+			}
+		})
+	}
+}
+
+func TestAuthStatusPermissionsGranted(t *testing.T) {
+	stubStatus(t, auth.Credential{Kind: auth.KindBrowserLogin, TokenSource: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "x"})}, "reader")
+	out, err := runAuthStatus(t)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(out, "Permissions: every read permission granted") || strings.Contains(out, "Missing") {
+		t.Fatalf("output = %q", out)
+	}
+}
+
+func TestAuthStatusPermissionCheckFailureIsOnlyAWarning(t *testing.T) {
+	stubStatus(t, auth.Credential{Kind: auth.KindBrowserLogin, TokenSource: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "x"})}, "reader")
+	authBackend.checkScopes = func(context.Context, oauth2.TokenSource) ([]string, error) {
+		return nil, errors.New("network down")
+	}
+	out, err := runAuthStatus(t)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(out, "warning: could not check permissions: network down") {
+		t.Fatalf("output = %q", out)
+	}
+}
+
+// runSignIn runs a sign-in command (login or set-token) that ends up with
+// token, Hardcover accepting it, and returns everything printed. probe, when
+// set, answers the permission check; otherwise every read permission works.
+func runSignIn(t *testing.T, cmd func() *cobra.Command, token *oauth2.Token, probe func(context.Context, oauth2.TokenSource) ([]string, error)) string {
+	t.Helper()
+	stubAuthBackend(t,
+		func(context.Context) (auth.Credential, error) {
+			return auth.Credential{Kind: auth.KindBrowserLogin, TokenSource: oauth2.StaticTokenSource(token)}, nil
+		},
+		func(_ context.Context, src oauth2.TokenSource) (int, string, *oauth2.Token, error) {
+			tok, err := src.Token()
+			return 1, "reader", tok, err
+		},
+		nil)
+	authBackend.login = func(context.Context, io.Writer) (*oauth2.Token, error) { return token, nil }
+	authBackend.promptToken = func() (string, error) { return token.AccessToken, nil }
+	if probe != nil {
+		authBackend.checkScopes = probe
+	}
+
+	var out bytes.Buffer
+	c := cmd()
+	c.SetOut(&out)
+	c.SetErr(&out)
+	if err := c.Execute(); err != nil {
+		t.Fatalf("%s: %v", c.Name(), err)
+	}
+	return out.String()
+}
+
+func TestLoginWarnsAboutUngrantedScopes(t *testing.T) {
+	// The consent screen from issue #59 dropped three read permissions.
+	token := (&oauth2.Token{AccessToken: "hc_at_x", RefreshToken: "hc_rt_x"}).WithExtra(map[string]any{
+		"scope": "read:me:content read:library read:catalog write:library write:reviews write:goals write:lists",
+	})
+	out := runSignIn(t, newLoginCmd, token, nil)
+	for _, want := range []string{
+		"Login successful.",
+		"warning: Hardcover didn't grant oku every permission it needs:",
+		"read:journal  notes, quotes and the activity heatmap",
+		"read:goals    reading goals",
+		"read:lists    the reading queue",
+		"Run `oku auth login` again and approve them",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestLoginWithEveryScopeIsQuiet(t *testing.T) {
+	token := (&oauth2.Token{AccessToken: "hc_at_x", RefreshToken: "hc_rt_x"}).WithExtra(map[string]any{
+		"scope": strings.Join(api.ScopeNames(), " "),
+	})
+	if out := runSignIn(t, newLoginCmd, token, nil); out != "Login successful.\n" {
+		t.Fatalf("output = %q", out)
+	}
+}
+
+// The token response alone can't be trusted (a server may echo the request),
+// so login also asks Hardcover, and reports what either found.
+func TestLoginCombinesTheProbeAndTheTokenResponse(t *testing.T) {
+	granted := strings.ReplaceAll(strings.Join(api.ScopeNames(), " "), "write:goals", "")
+	token := (&oauth2.Token{AccessToken: "hc_at_x", RefreshToken: "hc_rt_x"}).WithExtra(map[string]any{"scope": granted})
+	out := runSignIn(t, newLoginCmd, token, func(context.Context, oauth2.TokenSource) ([]string, error) {
+		return []string{"read:journal"}, nil
+	})
+	for _, want := range []string{"read:journal  notes, quotes", "write:goals   editing reading goals"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestLoginProbesWhenScopesAreNotReported(t *testing.T) {
+	token := &oauth2.Token{AccessToken: "hc_at_x", RefreshToken: "hc_rt_x"}
+	out := runSignIn(t, newLoginCmd, token, func(context.Context, oauth2.TokenSource) ([]string, error) {
+		return []string{"read:journal"}, nil
+	})
+	if !strings.Contains(out, "read:journal  notes, quotes") {
+		t.Fatalf("output = %q", out)
+	}
+}
+
+func TestSetTokenWarnsAboutMissingScopes(t *testing.T) {
+	token := &oauth2.Token{AccessToken: "hc_pat_x", TokenType: "Bearer"}
+	out := runSignIn(t, newSetTokenCmd, token, func(context.Context, oauth2.TokenSource) ([]string, error) {
+		return []string{"read:goals"}, nil
+	})
+	for _, want := range []string{"Token stored successfully.", "read:goals  reading goals", "oku auth set-token", "account/api/keys/new"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestErrorHintForMissingScope(t *testing.T) {
+	err := fmt.Errorf("goals: %w", &api.StatusError{Code: 403, APIError: "insufficient_scope", Scope: "read:goals"})
+
+	t.Setenv("HARDCOVER_TOKEN", "")
+	if hint := errorHint(err); !strings.Contains(hint, "oku auth login") {
+		t.Fatalf("hint = %q, want the login remedy", hint)
+	}
+	t.Setenv("HARDCOVER_TOKEN", "hc_pat_env")
+	if hint := errorHint(err); !strings.Contains(hint, "HARDCOVER_TOKEN is in use") {
+		t.Fatalf("hint = %q, want the environment variable remedy", hint)
+	}
+}
+
+func TestAuthStatusKeepsPermissionsFoundBeforeACheckFails(t *testing.T) {
+	stubStatus(t, auth.Credential{Kind: auth.KindBrowserLogin, TokenSource: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "x"})}, "reader")
+	authBackend.checkScopes = func(context.Context, oauth2.TokenSource) ([]string, error) {
+		return []string{"read:journal"}, errors.New("timeout")
+	}
+	out, err := runAuthStatus(t)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	for _, want := range []string{"warning: could not check permissions: timeout", "Missing permissions:", "read:journal"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "every read permission granted") {
+		t.Errorf("a failed check must not claim everything is granted:\n%s", out)
 	}
 }

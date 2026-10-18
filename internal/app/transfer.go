@@ -373,7 +373,7 @@ func (a *App) ImportBooks(ctx context.Context, rows []TransferBook, apply bool) 
 			return results, fmt.Errorf("import stopped after adding %q; repair metadata before retrying: %w", b.Title, e)
 		}
 	}
-	if err := a.SyncAll(ctx); err != nil {
+	if err := a.SyncAll(ctx); err != nil && !errors.Is(err, ErrStatsIncomplete) {
 		return results, fmt.Errorf("import saved on Hardcover; refresh local cache with oku sync: %w", err)
 	}
 	return results, nil

@@ -502,14 +502,17 @@ func addJournalEntryCmd(ctx context.Context, a backend, bookID, token int, event
 
 func syncAllAndReloadCmd(ctx context.Context, a backend) tea.Cmd {
 	return func() tea.Msg {
-		if err := a.SyncAll(ctx); err != nil {
-			return opDoneMsg{op: opSync, err: err}
-		}
-		return opDoneMsg{
+		done := opDoneMsg{
 			op:     opSync,
 			info:   "Sync complete",
 			reload: true,
 		}
+		if err := a.SyncAll(ctx); errors.Is(err, app.ErrStatsIncomplete) {
+			done.warn = err.Error() + permissionRemedy()
+		} else if err != nil {
+			return opDoneMsg{op: opSync, err: err}
+		}
+		return done
 	}
 }
 

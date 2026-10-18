@@ -114,8 +114,11 @@ func errorHint(err error) string {
 			return "Hint: the HARDCOVER_TOKEN environment variable was rejected; fix it, or unset it to use your stored login"
 		}
 		return "Hint: token rejected or expired; run: oku auth login"
-	case errors.Is(err, api.ErrInsufficientScope):
-		return "Hint: this token lacks the required permission; run: oku auth login"
+	case errors.Is(err, api.ErrInsufficientScope), errors.Is(err, app.ErrStatsIncomplete):
+		if auth.EnvTokenSet() {
+			return "Hint: " + scopeRemedy(auth.KindEnv)
+		}
+		return "Hint: run `oku auth login` and approve every permission oku asks for"
 	}
 	return ""
 }

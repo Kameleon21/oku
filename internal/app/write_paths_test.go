@@ -472,6 +472,25 @@ func TestSyncAllFailureKeepsPreviousCache(t *testing.T) {
 	assertCalls(t, hc, "ListGoals")
 }
 
+// A missing permission is not transient, so the library sync succeeds but
+// says why the stats are incomplete.
+func TestSyncAllWarnsWhenStatsLackAPermission(t *testing.T) {
+	hc := newFakeHardcover()
+	hc.errs = map[string]error{"ListReadingJournals": &api.StatusError{Code: 403, APIError: "insufficient_scope", Scope: "read:journal"}}
+	a := newTestAppWith(t, hc)
+	err := a.SyncAll(context.Background())
+	if !errors.Is(err, ErrStatsIncomplete) || !strings.Contains(err.Error(), "read:journal") {
+		t.Fatalf("SyncAll err = %v, want ErrStatsIncomplete naming read:journal", err)
+	}
+
+	// Both stats refused: the warning names both permissions.
+	hc.errs["ListGoals"] = &api.StatusError{Code: 403, APIError: "insufficient_scope", Scope: "read:goals"}
+	err = a.SyncAll(context.Background())
+	if !strings.Contains(err.Error(), "read:journal, read:goals permissions") {
+		t.Fatalf("SyncAll err = %v, want both permissions named", err)
+	}
+}
+
 func TestSyncAllIgnoresStatsFailure(t *testing.T) {
 	hc := newFakeHardcover()
 	hc.errs = map[string]error{"ListGoals": errors.New("goals down")}
