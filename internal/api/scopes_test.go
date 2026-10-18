@@ -211,7 +211,12 @@ func TestClientAttachesScopeRemedy(t *testing.T) {
 
 	_, err := c.ListGoals(t.Context())
 	if got := ScopeRemedy(err); got != "Run the fix" {
-		t.Fatalf("ScopeRemedy(%v) = %q, want the client's remedy", err, got)
+		t.Fatalf("read: ScopeRemedy(%v) = %q, want the client's remedy", err, got)
+	}
+	// Writes make a single attempt on a path of their own.
+	err = c.SetQueuePositions(t.Context(), 1, []RankedBook{{ID: 1, BookID: 2, Position: 1}})
+	if got := ScopeRemedy(err); got != "Run the fix" {
+		t.Fatalf("write: ScopeRemedy(%v) = %q, want the client's remedy", err, got)
 	}
 	if got := ScopeRemedy(errors.New("boom")); got != "" {
 		t.Fatalf("ScopeRemedy of a plain error = %q, want none", got)

@@ -408,7 +408,7 @@ func TestAuthStatusListsMissingPermissions(t *testing.T) {
 	}{
 		{auth.KindBrowserLogin, "Run `oku auth login` again and approve every permission"},
 		{auth.KindPersonalAPIKey, "oku auth set-token"},
-		{auth.KindEnv, "HARDCOVER_TOKEN is in use"},
+		{auth.KindEnv, "Replace HARDCOVER_TOKEN with a key"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.kind.String(), func(t *testing.T) {

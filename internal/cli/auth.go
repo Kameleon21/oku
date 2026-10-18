@@ -210,7 +210,8 @@ func warnUngrantedScopes(cmd *cobra.Command, token *oauth2.Token, kind auth.Kind
 	w := cmd.ErrOrStderr()
 	fmt.Fprintln(w, "warning: Hardcover didn't grant oku every permission it needs:")
 	listScopes(w, missing)
-	fmt.Fprintln(w, "Those features won't work until it does. "+auth.Remedy(kind))
+	fmt.Fprintln(w, "Those features won't work until it does. "+auth.Remedy(kind)+".")
+	fmt.Fprintln(w, auth.RemedyDetail(kind))
 }
 
 // listScopes prints one permission per line with the feature it is for.
@@ -271,7 +272,8 @@ func newAuthStatusCmd() *cobra.Command {
 			case len(missing) > 0:
 				fmt.Fprintln(out, "Missing permissions:")
 				listScopes(out, missing)
-				fmt.Fprintln(out, auth.Remedy(cred.Kind))
+				fmt.Fprintln(out, auth.Remedy(cred.Kind)+".")
+				fmt.Fprintln(out, auth.RemedyDetail(cred.Kind))
 			case err == nil:
 				fmt.Fprintln(out, "Permissions: every read permission granted (write permissions are checked when used)")
 			}

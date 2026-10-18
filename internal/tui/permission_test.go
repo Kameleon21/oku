@@ -13,7 +13,7 @@ import (
 
 // loginRemedy stands in for the remedy the API client attaches to a refused
 // permission; which remedy fits which credential is auth.Remedy's to test.
-const loginRemedy = "Run `oku auth login` again and approve every permission oku asks for"
+const loginRemedy = "Run `oku auth login` again and approve every permission"
 
 // Issue #59: a token without read:journal still shows the book's detail, with
 // a note where the journal would be, instead of an error toast.

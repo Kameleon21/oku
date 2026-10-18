@@ -201,13 +201,9 @@ func baseHTTPClient() *http.Client {
 }
 
 // do executes a GraphQL request with rate limiting and retries.
-func (c *Client) do(ctx context.Context, req *graphql.Request, resp interface{}) (err error) {
+func (c *Client) do(ctx context.Context, req *graphql.Request, resp interface{}) error {
 	ctx, cancel := withRequestTimeout(ctx)
 	defer cancel()
-	// However the request failed, a refused permission says how to get it.
-	defer func() {
-		walkErrors(err, func(se *StatusError) { se.Remedy = c.ScopeRemedy })
-	}()
 
 	req.Header.Set("User-Agent", userAgent())
 
@@ -220,7 +216,7 @@ func (c *Client) do(ctx context.Context, req *graphql.Request, resp interface{})
 			return &NetworkError{Err: err}
 		}
 
-		err := c.gql.Run(ctx, req, resp)
+		err := c.run(ctx, req, resp)
 		if err == nil {
 			return nil
 		}
@@ -264,6 +260,14 @@ func (c *Client) do(ctx context.Context, req *graphql.Request, resp interface{})
 
 	// The loop only exits via break, which always assigns lastErr first.
 	return &NetworkError{Err: lastErr}
+}
+
+// run sends req once. Every request goes through it, reads and writes, so a
+// refused permission always says how to get it.
+func (c *Client) run(ctx context.Context, req *graphql.Request, resp any) error {
+	err := c.gql.Run(ctx, req, resp)
+	walkErrors(err, func(se *StatusError) { se.Remedy = c.ScopeRemedy })
+	return err
 }
 
 // remaining reports how long ctx has left. do always runs under a deadline

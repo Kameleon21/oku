@@ -381,17 +381,19 @@ func TestKindString(t *testing.T) {
 }
 
 // Signing in again can't help while HARDCOVER_TOKEN overrides the login, and
-// a stored key can be replaced either way.
+// a stored key can be replaced either way. The remedy fits a status bar; the
+// detail says where to go next.
 func TestRemedy(t *testing.T) {
 	tests := []struct {
-		kind    Kind
-		want    []string
-		notWant string
+		kind       Kind
+		want       []string
+		notWant    string
+		wantDetail string
 	}{
-		{KindEnv, []string{"HARDCOVER_TOKEN is in use", NewTokenURL()}, "oku auth login"},
-		{KindPersonalAPIKey, []string{"oku auth login", "oku auth set-token", NewTokenURL()}, ""},
-		{KindLegacyAPIKey, []string{"oku auth login", "oku auth set-token", NewTokenURL()}, ""},
-		{KindBrowserLogin, []string{"Run `oku auth login` again", "github.com/Kameleon21/oku/issues"}, "set-token"},
+		{KindEnv, []string{"HARDCOVER_TOKEN"}, "oku auth login", NewTokenURL()},
+		{KindPersonalAPIKey, []string{"oku auth login", "oku auth set-token"}, "", NewTokenURL()},
+		{KindLegacyAPIKey, []string{"oku auth login", "oku auth set-token"}, "", NewTokenURL()},
+		{KindBrowserLogin, []string{"Run `oku auth login` again"}, "set-token", "github.com/Kameleon21/oku/issues"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.kind.String(), func(t *testing.T) {
@@ -404,8 +406,11 @@ func TestRemedy(t *testing.T) {
 			if tt.notWant != "" && strings.Contains(got, tt.notWant) {
 				t.Errorf("Remedy = %q, should not mention %q", got, tt.notWant)
 			}
-			if strings.Contains(got, "\n") {
-				t.Errorf("Remedy = %q, want one line for a toast", got)
+			if len(got) > 90 || strings.Contains(got, "\n") {
+				t.Errorf("Remedy = %q (%d chars), want one short line for a status bar", got, len(got))
+			}
+			if detail := RemedyDetail(tt.kind); !strings.Contains(detail, tt.wantDetail) {
+				t.Errorf("RemedyDetail = %q, missing %q", detail, tt.wantDetail)
 			}
 		})
 	}

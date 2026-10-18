@@ -393,7 +393,7 @@ func (c *Client) doMutation(ctx context.Context, req *graphql.Request, resp any)
 	if err := c.throttle(ctx); err != nil {
 		return err
 	}
-	if err := c.gql.Run(ctx, req, resp); err != nil {
+	if err := c.run(ctx, req, resp); err != nil {
 		if isNetworkish(err) {
 			return &NetworkError{Err: fmt.Errorf("write outcome uncertain; check Hardcover before retrying: %w", err)}
 		}
