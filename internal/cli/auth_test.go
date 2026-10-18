@@ -56,11 +56,11 @@ func stubAuthBackend(t *testing.T, current func(context.Context) (auth.Credentia
 		}
 		return current(ctx)
 	}
-	authBackend.verify = func(ctx context.Context, src oauth2.TokenSource) (int, string, *oauth2.Token, error) {
+	authBackend.verify = func(ctx context.Context, cred auth.Credential) (int, string, *oauth2.Token, error) {
 		if verify == nil {
 			t.Fatal("unexpected call to verify")
 		}
-		return verify(ctx, src)
+		return verify(ctx, cred.TokenSource)
 	}
 	authBackend.logout = func(ctx context.Context, beforeClear func(auth.LogoutReport, string)) (auth.LogoutReport, error) {
 		if logout == nil {
