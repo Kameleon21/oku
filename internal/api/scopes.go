@@ -100,6 +100,18 @@ func MissingScopes(err error) []string {
 	return missing
 }
 
+// ScopeRemedy returns how to get the permissions refused in err's tree, as
+// the Client that was refused set it, or "" when none says.
+func ScopeRemedy(err error) string {
+	remedy := ""
+	walkErrors(err, func(se *StatusError) {
+		if remedy == "" {
+			remedy = se.Remedy
+		}
+	})
+	return remedy
+}
+
 // walkErrors calls fn for each insufficient-scope *StatusError in err's tree,
 // following both single and joined wrapping.
 func walkErrors(err error, fn func(*StatusError)) {
@@ -138,7 +150,7 @@ func refusedScopes(se *StatusError) []string {
 
 // DescribeMissingScopes says which permissions are missing and what they
 // are for; a refusal's Error() is this in place of the raw 403. How to get
-// them depends on the credential, so that is left to the caller.
+// them depends on the credential: see ScopeRemedy.
 func DescribeMissingScopes(missing []string) string {
 	if len(missing) == 0 {
 		return "Hardcover hasn't granted oku a permission this needs"

@@ -379,3 +379,34 @@ func TestKindString(t *testing.T) {
 		t.Fatalf("Kind(99).String() = %q", got)
 	}
 }
+
+// Signing in again can't help while HARDCOVER_TOKEN overrides the login, and
+// a stored key can be replaced either way.
+func TestRemedy(t *testing.T) {
+	tests := []struct {
+		kind    Kind
+		want    []string
+		notWant string
+	}{
+		{KindEnv, []string{"HARDCOVER_TOKEN is in use", NewTokenURL()}, "oku auth login"},
+		{KindPersonalAPIKey, []string{"oku auth login", "oku auth set-token", NewTokenURL()}, ""},
+		{KindLegacyAPIKey, []string{"oku auth login", "oku auth set-token", NewTokenURL()}, ""},
+		{KindBrowserLogin, []string{"Run `oku auth login` again", "github.com/Kameleon21/oku/issues"}, "set-token"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.kind.String(), func(t *testing.T) {
+			got := Remedy(tt.kind)
+			for _, want := range tt.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("Remedy = %q, missing %q", got, want)
+				}
+			}
+			if tt.notWant != "" && strings.Contains(got, tt.notWant) {
+				t.Errorf("Remedy = %q, should not mention %q", got, tt.notWant)
+			}
+			if strings.Contains(got, "\n") {
+				t.Errorf("Remedy = %q, want one line for a toast", got)
+			}
+		})
+	}
+}

@@ -82,7 +82,7 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		if why, ok := app.MissingPermission(r.err); ok {
 			// Not a failure of this book: the rest of the detail loaded, and
 			// the pane says why notes and quotes are missing.
-			m.shared.journalDenied = why + permissionRemedy()
+			m.shared.journalDenied = why
 			m.detail.stamp++
 			return nil, true
 		}

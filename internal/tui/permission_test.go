@@ -11,13 +11,16 @@ import (
 	"github.com/Kameleon21/oku/internal/model"
 )
 
+// loginRemedy stands in for the remedy the API client attaches to a refused
+// permission; which remedy fits which credential is auth.Remedy's to test.
+const loginRemedy = "Run `oku auth login` again and approve every permission oku asks for"
+
 // Issue #59: a token without read:journal still shows the book's detail, with
 // a note where the journal would be, instead of an error toast.
 func TestJournalWithoutPermissionShowsANoteNotAnError(t *testing.T) {
-	t.Setenv("HARDCOVER_TOKEN", "")
 	m, fb := loadedDashboard(t)
 	m.setTab(tabReading)
-	fb.errs["BookJournal"] = fmt.Errorf("BookJournal: %w", &api.StatusError{Code: 403, APIError: "insufficient_scope", Scope: "read:journal"})
+	fb.errs["BookJournal"] = fmt.Errorf("BookJournal: %w", &api.StatusError{Code: 403, APIError: "insufficient_scope", Scope: "read:journal", Remedy: loginRemedy})
 
 	drain(t, m, send(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}))
 
@@ -59,9 +62,8 @@ func TestJournalFailureStillToasts(t *testing.T) {
 
 // A sync whose stats lacked a permission completes, with a warning.
 func TestSyncWarnsWhenStatsLackAPermission(t *testing.T) {
-	t.Setenv("HARDCOVER_TOKEN", "")
 	m, fb := loadedDashboard(t)
-	fb.errs["SyncAll"] = fmt.Errorf("%w: Hardcover hasn't granted oku the read:journal permission", app.ErrStatsIncomplete)
+	fb.errs["SyncAll"] = fmt.Errorf("%w: Hardcover hasn't granted oku the read:journal permission. %s", app.ErrStatsIncomplete, loginRemedy)
 
 	drain(t, m, send(t, m, reqSync{}))
 
@@ -73,23 +75,13 @@ func TestSyncWarnsWhenStatsLackAPermission(t *testing.T) {
 // Any other refusal toasts which permission is missing and how to get it,
 // not where the request failed.
 func TestRefusedRequestToastsTheRemedy(t *testing.T) {
-	t.Setenv("HARDCOVER_TOKEN", "")
 	m, fb := loadedDashboard(t)
-	fb.errs["RefreshQueue"] = fmt.Errorf("ReadingQueue: %w", &api.StatusError{Code: 403, APIError: "insufficient_scope", Scope: "read:lists"})
+	fb.errs["RefreshQueue"] = fmt.Errorf("ReadingQueue: %w", &api.StatusError{Code: 403, APIError: "insufficient_scope", Scope: "read:lists", Remedy: loginRemedy})
 
 	drain(t, m, send(t, m, reqQueueRefresh{}))
 
-	want := "Hardcover hasn't granted oku the read:lists permission, needed for the reading queue; run: oku auth login"
+	want := "Hardcover hasn't granted oku the read:lists permission, needed for the reading queue. " + loginRemedy
 	if m.toast.level != toastError || m.toast.text != want {
 		t.Fatalf("toast = %v %q, want %q", m.toast.level, m.toast.text, want)
-	}
-}
-
-// With HARDCOVER_TOKEN overriding the login, signing in again can't help.
-func TestRefusalRemedyWithAnEnvironmentToken(t *testing.T) {
-	t.Setenv("HARDCOVER_TOKEN", "hc_pat_env")
-	err := fmt.Errorf("ReadingQueue: %w", &api.StatusError{Code: 403, APIError: "insufficient_scope", Scope: "read:lists"})
-	if got := errorText(err); strings.Contains(got, "oku auth login") || !strings.Contains(got, "HARDCOVER_TOKEN is in use") {
-		t.Fatalf("errorText = %q, want the environment variable remedy", got)
 	}
 }

@@ -210,7 +210,7 @@ func warnUngrantedScopes(cmd *cobra.Command, token *oauth2.Token, kind auth.Kind
 	w := cmd.ErrOrStderr()
 	fmt.Fprintln(w, "warning: Hardcover didn't grant oku every permission it needs:")
 	listScopes(w, missing)
-	fmt.Fprintln(w, "Those features won't work until it does. "+scopeRemedy(kind))
+	fmt.Fprintln(w, "Those features won't work until it does. "+auth.Remedy(kind))
 }
 
 // listScopes prints one permission per line with the feature it is for.
@@ -222,18 +222,6 @@ func listScopes(w io.Writer, missing []string) {
 	for _, s := range missing {
 		fmt.Fprintf(w, "  %-*s  %s\n", width, s, api.ScopeFeature(s))
 	}
-}
-
-// scopeRemedy says how to get the missing permissions for a credential of
-// the given kind.
-func scopeRemedy(kind auth.Kind) string {
-	switch kind {
-	case auth.KindEnv:
-		return "HARDCOVER_TOKEN is in use; replace it with a key that has every permission oku needs:\n" + auth.NewTokenURL()
-	case auth.KindPersonalAPIKey, auth.KindLegacyAPIKey:
-		return "Run `oku auth login`, or create a key with every permission oku needs and store it with `oku auth set-token`:\n" + auth.NewTokenURL()
-	}
-	return "Run `oku auth login` again and approve them. If Hardcover's sign-in page doesn't list them, please report it at https://github.com/Kameleon21/oku/issues"
 }
 
 func newAuthStatusCmd() *cobra.Command {
@@ -283,7 +271,7 @@ func newAuthStatusCmd() *cobra.Command {
 			case len(missing) > 0:
 				fmt.Fprintln(out, "Missing permissions:")
 				listScopes(out, missing)
-				fmt.Fprintln(out, scopeRemedy(cred.Kind))
+				fmt.Fprintln(out, auth.Remedy(cred.Kind))
 			case err == nil:
 				fmt.Fprintln(out, "Permissions: every read permission granted (write permissions are checked when used)")
 			}

@@ -56,14 +56,18 @@ var ErrOffline = errors.New("Hardcover is unavailable")
 
 // MissingPermission reports whether err is Hardcover refusing requests
 // because the signed-in token lacks permissions, and if so explains which
-// ones and what they are for, without the call-site context wrapped around
-// it. How to get them depends on the credential, so that is the caller's.
+// ones, what they are for and how to get them, without the call-site context
+// wrapped around it.
 func MissingPermission(err error) (string, bool) {
 	missing := api.MissingScopes(err)
 	if len(missing) == 0 {
 		return "", false
 	}
-	return api.DescribeMissingScopes(missing), true
+	why := api.DescribeMissingScopes(missing)
+	if remedy := api.ScopeRemedy(err); remedy != "" {
+		why += ". " + remedy
+	}
+	return why, true
 }
 
 // Online reports whether the App can reach Hardcover. A nil App is offline.

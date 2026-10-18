@@ -198,3 +198,22 @@ func TestMeNestedReadsAreRefusedWithoutTheirPermission(t *testing.T) {
 		t.Fatalf("ListUserBooks err = %v, want read:library refused", err)
 	}
 }
+
+// A refusal carries the remedy of the client it came back to, whatever
+// wraps it on the way out; other failures carry none.
+func TestClientAttachesScopeRemedy(t *testing.T) {
+	c, srv := testClientForServer(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"error":"insufficient_scope","scope":"read:goals"}`)
+	})
+	defer srv.Close()
+	c.ScopeRemedy = "Run the fix"
+
+	_, err := c.ListGoals(t.Context())
+	if got := ScopeRemedy(err); got != "Run the fix" {
+		t.Fatalf("ScopeRemedy(%v) = %q, want the client's remedy", err, got)
+	}
+	if got := ScopeRemedy(errors.New("boom")); got != "" {
+		t.Fatalf("ScopeRemedy of a plain error = %q, want none", got)
+	}
+}
