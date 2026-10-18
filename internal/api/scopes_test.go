@@ -64,6 +64,14 @@ func TestMissingScopes(t *testing.T) {
 	if got := MissingScopes(bare); !reflect.DeepEqual(got, []string{"read:goals", "read:lists"}) {
 		t.Fatalf("MissingScopes(description only) = %v", got)
 	}
+	joined := errors.Join(fmt.Errorf("journals: %w", scopeError("read:journal")), fmt.Errorf("goals: %w", scopeError("read:goals")))
+	if got := MissingScopes(joined); !reflect.DeepEqual(got, []string{"read:journal", "read:goals"}) {
+		t.Fatalf("MissingScopes(joined) = %v, want both", got)
+	}
+	withURL := &StatusError{Code: 403, APIError: "insufficient_scope", Description: "Missing scopes: read:lists; see https://docs.hardcover.app/api"}
+	if got := MissingScopes(withURL); !reflect.DeepEqual(got, []string{"read:lists"}) {
+		t.Fatalf("MissingScopes(description with URL) = %v", got)
+	}
 	prefixed := &StatusError{Code: 403, APIError: "insufficient_scope", Description: "insufficient_scope: Missing scopes: read:journal"}
 	if got := MissingScopes(prefixed); !reflect.DeepEqual(got, []string{"read:journal"}) {
 		t.Fatalf("MissingScopes(prefixed description) = %v", got)
@@ -101,7 +109,9 @@ func scopeServer(refused map[string]string, requests *[]string) http.HandlerFunc
 		_ = json.Unmarshal(body, &req)
 		*requests = append(*requests, req.Query)
 		for _, field := range readProbes {
-			if scope, ok := refused[field.field]; ok && strings.Contains(req.Query, field.field+"(") {
+			// Top-level reads only: the probe's and permissionCheck's
+			// "(limit:" form, as Hardcover checks no nested field.
+			if scope, ok := refused[field.field]; ok && strings.Contains(req.Query, field.field+"(limit:") {
 				w.WriteHeader(http.StatusForbidden)
 				fmt.Fprintf(w, `{"error":"insufficient_scope","error_description":"Missing scopes: %s","scope":%q}`, scope, scope)
 				return

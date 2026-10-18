@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -86,31 +85,61 @@ func UngrantedScopes(granted string) []string {
 	return missing
 }
 
-// MissingScopes returns the permissions Hardcover named when it refused a
-// request for lack of them, or nil when err is anything else.
+// MissingScopes returns every permission Hardcover named when it refused
+// requests for lack of them, across all the errors err joins, or nil when
+// none of them is such a refusal.
 func MissingScopes(err error) []string {
-	var se *StatusError
-	if !errors.As(err, &se) || !se.Is(ErrInsufficientScope) {
-		return nil
+	var missing []string
+	walkErrors(err, func(se *StatusError) {
+		for _, s := range refusedScopes(se) {
+			if !slices.Contains(missing, s) {
+				missing = append(missing, s)
+			}
+		}
+	})
+	return missing
+}
+
+// walkErrors calls fn for each insufficient-scope *StatusError in err's tree,
+// following both single and joined wrapping.
+func walkErrors(err error, fn func(*StatusError)) {
+	switch e := err.(type) {
+	case nil:
+		return
+	case *StatusError:
+		if e.Is(ErrInsufficientScope) {
+			fn(e)
+		}
+		return
+	case interface{ Unwrap() []error }:
+		for _, inner := range e.Unwrap() {
+			walkErrors(inner, fn)
+		}
+	case interface{ Unwrap() error }:
+		walkErrors(e.Unwrap(), fn)
 	}
+}
+
+// refusedScopes reads the permissions one refusal names: its scope field,
+// or failing that the scope names in "Missing scopes: read:journal".
+func refusedScopes(se *StatusError) []string {
 	if s := splitScopes(se.Scope); len(s) > 0 {
 		return s
 	}
-	// "Missing scopes: read:journal": the scope names are the words with a
-	// colon inside, not at the end.
 	var names []string
 	for _, w := range splitScopes(se.Description) {
-		if i := strings.Index(w, ":"); i > 0 && i < len(w)-1 {
+		w = strings.TrimRight(w, ".;")
+		if (strings.HasPrefix(w, "read:") || strings.HasPrefix(w, "write:")) && !strings.HasSuffix(w, ":") {
 			names = append(names, w)
 		}
 	}
 	return names
 }
 
-// insufficientScopeMessage says which permission is missing and what it is
-// for, in place of the raw 403. How to get it depends on the credential, so
-// that is left to the caller.
-func insufficientScopeMessage(missing []string) string {
+// DescribeMissingScopes says which permissions are missing and what they
+// are for; a refusal's Error() is this in place of the raw 403. How to get
+// them depends on the credential, so that is left to the caller.
+func DescribeMissingScopes(missing []string) string {
 	if len(missing) == 0 {
 		return "Hardcover hasn't granted oku a permission this needs"
 	}
@@ -134,7 +163,8 @@ func insufficientScopeMessage(missing []string) string {
 // for a query that reads field nested under me. Hardcover checks permissions
 // on top-level fields only, so without it a token lacking the permission gets
 // an empty list (a shelf or goals that seem to have vanished) instead of a
-// refusal. The response ignores it.
+// refusal. The response ignores it. It must stay a valid query on its own:
+// if Hardcover ever rejects it, every read carrying it fails with it.
 func permissionCheck(field string) string {
 	return "permission_check: " + field + "(limit: 0) { id }"
 }

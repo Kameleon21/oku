@@ -508,7 +508,7 @@ func syncAllAndReloadCmd(ctx context.Context, a backend) tea.Cmd {
 			reload: true,
 		}
 		if err := a.SyncAll(ctx); errors.Is(err, app.ErrStatsIncomplete) {
-			done.warn = err.Error()
+			done.warn = err.Error() + permissionRemedy
 		} else if err != nil {
 			return opDoneMsg{op: opSync, err: err}
 		}

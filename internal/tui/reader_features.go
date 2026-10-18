@@ -69,7 +69,7 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		return m.run(detail), true
 	case detailLoadedMsg:
 		if r.err != nil {
-			return m.showToast(toastError, r.err.Error()), true
+			return m.showToast(toastError, errorText(r.err)), true
 		}
 		if m.shared.details == nil {
 			m.shared.details = map[int]*model.BookDetail{}
@@ -81,12 +81,12 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		if why, ok := app.MissingPermission(r.err); ok {
 			// Not a failure of this book: the rest of the detail loaded, and
 			// the pane says why notes and quotes are missing.
-			m.shared.journalDenied = why
+			m.shared.journalDenied = why + permissionRemedy
 			m.detail.stamp++
 			return nil, true
 		}
 		if r.err != nil {
-			return m.showToast(toastError, "Load journal: "+r.err.Error()), true
+			return m.showToast(toastError, "Load journal: "+errorText(r.err)), true
 		}
 		m.shared.journalDenied = ""
 		if m.shared.journals == nil {
@@ -102,7 +102,7 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		return m.run(pausedShelfCmd(m.ctx, m.backend)), true
 	case pausedLoadedMsg:
 		if r.err != nil {
-			return m.showToast(toastError, r.err.Error()), true
+			return m.showToast(toastError, errorText(r.err)), true
 		}
 		m.shared.paused = r.books
 		return m.broadcast(dataChangedMsg{dataLibrary}), true
@@ -124,7 +124,7 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		return m.run(queueRefreshCmd(m.ctx, m.backend)), true
 	case queueLoadedMsg:
 		if r.err != nil {
-			return m.showToast(toastError, r.err.Error()), true
+			return m.showToast(toastError, errorText(r.err)), true
 		}
 		m.shared.queueOrder = r.ids
 		app.SortQueue(m.shared.oku, r.ids)

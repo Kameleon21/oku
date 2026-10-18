@@ -63,7 +63,21 @@ func TestSyncWarnsWhenStatsLackAPermission(t *testing.T) {
 
 	drain(t, m, send(t, m, reqSync{}))
 
-	if m.toast.level != toastWarn || m.toast.text != "Sync complete" || !strings.Contains(m.toast.note, "read:journal") {
+	if m.toast.level != toastWarn || m.toast.text != "Sync complete" || !strings.Contains(m.toast.note, "read:journal") || !strings.Contains(m.toast.note, "oku auth login") {
 		t.Fatalf("toast = %v %q (note %q), want the sync completed with a warning naming the permission", m.toast.level, m.toast.text, m.toast.note)
+	}
+}
+
+// Any other refusal toasts which permission is missing and how to get it,
+// not where the request failed.
+func TestRefusedRequestToastsTheRemedy(t *testing.T) {
+	m, fb := loadedDashboard(t)
+	fb.errs["RefreshQueue"] = fmt.Errorf("ReadingQueue: %w", &api.StatusError{Code: 403, APIError: "insufficient_scope", Scope: "read:lists"})
+
+	drain(t, m, send(t, m, reqQueueRefresh{}))
+
+	want := "Hardcover hasn't granted oku the read:lists permission, needed for the reading queue; run: oku auth login"
+	if m.toast.level != toastError || m.toast.text != want {
+		t.Fatalf("toast = %v %q, want %q", m.toast.level, m.toast.text, want)
 	}
 }

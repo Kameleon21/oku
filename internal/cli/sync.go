@@ -24,6 +24,9 @@ func newSyncCmd() *cobra.Command {
 			fmt.Println("Syncing...")
 			if err := a.SyncAll(ctx()); errors.Is(err, app.ErrStatsIncomplete) {
 				fmt.Fprintln(os.Stderr, "warning:", err)
+				if hint := errorHint(err); hint != "" {
+					fmt.Fprintln(os.Stderr, hint)
+				}
 			} else if err != nil {
 				return err
 			}

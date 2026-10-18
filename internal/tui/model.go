@@ -419,7 +419,7 @@ func (m *Model) handleCommon(msg tea.Msg) tea.Cmd {
 	case timerOpDoneMsg:
 		var toastCmd tea.Cmd
 		if msg.err != nil {
-			toastCmd = m.showToast(toastError, msg.err.Error())
+			toastCmd = m.showToast(toastError, errorText(msg.err))
 		} else {
 			toastCmd = m.showToast(toastSuccess, msg.info)
 		}
@@ -463,7 +463,7 @@ func (m *Model) applyLibraryLoaded(msg libraryLoadedMsg) tea.Cmd {
 		if msg.quiet {
 			return nil
 		}
-		return m.showToast(toastError, msg.err.Error())
+		return m.showToast(toastError, errorText(msg.err))
 	}
 	if msg.refreshed && (msg.writes != m.writes || m.writing > 0) {
 		// A write started or landed while this refresh was out, or is
@@ -500,7 +500,7 @@ func (m *Model) applyLocalDataLoaded(msg localDataLoadedMsg) tea.Cmd {
 		if msg.quiet {
 			return nil
 		}
-		return m.showToast(toastError, msg.err.Error())
+		return m.showToast(toastError, errorText(msg.err))
 	}
 	m.shared.stats = msg.readingStats
 	m.shared.privateNotes = msg.privateNotes

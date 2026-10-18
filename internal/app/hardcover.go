@@ -54,16 +54,16 @@ var _ Hardcover = (*api.Client)(nil)
 // without a client, as local-only commands are.
 var ErrOffline = errors.New("Hardcover is unavailable")
 
-// MissingPermission reports whether err is Hardcover refusing a request
-// because the signed-in token lacks a permission, and if so returns the
-// explanation: which permission, what it is for and how to get it, without
-// the call-site context wrapped around it.
+// MissingPermission reports whether err is Hardcover refusing requests
+// because the signed-in token lacks permissions, and if so explains which
+// ones and what they are for, without the call-site context wrapped around
+// it. How to get them depends on the credential, so that is the caller's.
 func MissingPermission(err error) (string, bool) {
-	var se *api.StatusError
-	if !errors.As(err, &se) || !se.Is(api.ErrInsufficientScope) {
+	missing := api.MissingScopes(err)
+	if len(missing) == 0 {
 		return "", false
 	}
-	return se.Error() + "; run: oku auth login", true
+	return api.DescribeMissingScopes(missing), true
 }
 
 // Online reports whether the App can reach Hardcover. A nil App is offline.
