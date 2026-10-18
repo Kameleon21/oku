@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Kameleon21/oku/internal/api"
+	"github.com/Kameleon21/oku/internal/app"
 	"github.com/Kameleon21/oku/internal/model"
 )
 
@@ -52,5 +53,17 @@ func TestJournalFailureStillToasts(t *testing.T) {
 
 	if m.toast.level != toastError || !strings.HasPrefix(m.toast.text, "Load journal:") {
 		t.Fatalf("toast = %v %q, want the journal error", m.toast.level, m.toast.text)
+	}
+}
+
+// A sync whose stats lacked a permission completes, with a warning.
+func TestSyncWarnsWhenStatsLackAPermission(t *testing.T) {
+	m, fb := loadedDashboard(t)
+	fb.errs["SyncAll"] = fmt.Errorf("%w: Hardcover hasn't granted oku the read:journal permission", app.ErrStatsIncomplete)
+
+	drain(t, m, send(t, m, reqSync{}))
+
+	if m.toast.level != toastWarn || m.toast.text != "Sync complete" || !strings.Contains(m.toast.note, "read:journal") {
+		t.Fatalf("toast = %v %q (note %q), want the sync completed with a warning naming the permission", m.toast.level, m.toast.text, m.toast.note)
 	}
 }

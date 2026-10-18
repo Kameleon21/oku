@@ -435,7 +435,7 @@ func TestAuthStatusPermissionsGranted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	if !strings.Contains(out, "Permissions: all read permissions granted") || strings.Contains(out, "Missing") {
+	if !strings.Contains(out, "Permissions: every read permission granted") || strings.Contains(out, "Missing") {
 		t.Fatalf("output = %q", out)
 	}
 }
@@ -455,8 +455,8 @@ func TestAuthStatusPermissionCheckFailureIsOnlyAWarning(t *testing.T) {
 }
 
 // runSignIn runs a sign-in command (login or set-token) that ends up with
-// token, Hardcover accepting it, and returns everything printed. A nil probe
-// fails the test if the permissions are checked over the network.
+// token, Hardcover accepting it, and returns everything printed. probe, when
+// set, answers the permission check; otherwise every read permission works.
 func runSignIn(t *testing.T, cmd func() *cobra.Command, token *oauth2.Token, probe func(context.Context, oauth2.TokenSource) ([]string, error)) string {
 	t.Helper()
 	stubAuthBackend(t,
@@ -472,11 +472,6 @@ func runSignIn(t *testing.T, cmd func() *cobra.Command, token *oauth2.Token, pro
 	authBackend.promptToken = func() (string, error) { return token.AccessToken, nil }
 	if probe != nil {
 		authBackend.checkScopes = probe
-	} else {
-		authBackend.checkScopes = func(context.Context, oauth2.TokenSource) ([]string, error) {
-			t.Fatal("permissions probed although the token response listed them")
-			return nil, nil
-		}
 	}
 
 	var out bytes.Buffer
@@ -518,6 +513,21 @@ func TestLoginWithEveryScopeIsQuiet(t *testing.T) {
 	}
 }
 
+// The token response alone can't be trusted (a server may echo the request),
+// so login also asks Hardcover, and reports what either found.
+func TestLoginCombinesTheProbeAndTheTokenResponse(t *testing.T) {
+	granted := strings.ReplaceAll(strings.Join(api.ScopeNames(), " "), "write:goals", "")
+	token := (&oauth2.Token{AccessToken: "hc_at_x", RefreshToken: "hc_rt_x"}).WithExtra(map[string]any{"scope": granted})
+	out := runSignIn(t, newLoginCmd, token, func(context.Context, oauth2.TokenSource) ([]string, error) {
+		return []string{"read:journal"}, nil
+	})
+	for _, want := range []string{"read:journal  notes, quotes", "write:goals   editing reading goals"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestLoginProbesWhenScopesAreNotReported(t *testing.T) {
 	token := &oauth2.Token{AccessToken: "hc_at_x", RefreshToken: "hc_rt_x"}
 	out := runSignIn(t, newLoginCmd, token, func(context.Context, oauth2.TokenSource) ([]string, error) {
@@ -544,8 +554,8 @@ func TestErrorHintForMissingScope(t *testing.T) {
 	err := fmt.Errorf("goals: %w", &api.StatusError{Code: 403, APIError: "insufficient_scope", Scope: "read:goals"})
 
 	t.Setenv("HARDCOVER_TOKEN", "")
-	if hint := errorHint(err); hint != "" {
-		t.Fatalf("hint = %q; the error itself already says to sign in again", hint)
+	if hint := errorHint(err); !strings.Contains(hint, "oku auth login") {
+		t.Fatalf("hint = %q, want the login remedy", hint)
 	}
 	t.Setenv("HARDCOVER_TOKEN", "hc_pat_env")
 	if hint := errorHint(err); !strings.Contains(hint, "HARDCOVER_TOKEN is in use") {

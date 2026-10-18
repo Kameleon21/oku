@@ -132,7 +132,7 @@ func (f *fakeBackend) remote(method string, args ...any) error {
 // to the caller after apply has run, any other error before.
 func (f *fakeBackend) write(apply func(), method string, args ...any) error {
 	err := f.remote(method, args...)
-	if err != nil && !errors.Is(err, app.ErrCacheRefresh) {
+	if err != nil && !errors.Is(err, app.ErrCacheRefresh) && !errors.Is(err, app.ErrStatsIncomplete) {
 		return err
 	}
 	apply()

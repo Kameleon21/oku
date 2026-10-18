@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/machinebox/graphql"
@@ -41,17 +42,18 @@ func ScopeNames() []string {
 // read:journal:private describes its parent; an unknown scope gives "".
 func ScopeFeature(name string) string {
 	for _, s := range scopes {
-		if covers(name, s.name) {
+		if within(name, s.name) {
 			return s.feature
 		}
 	}
 	return ""
 }
 
-// covers reports whether scope granted provides wanted: the same scope, or
-// one of its sub-scopes (read:journal:private for read:journal).
-func covers(granted, wanted string) bool {
-	return granted == wanted || strings.HasPrefix(granted, wanted+":")
+// within reports whether scope is parent or one of its sub-scopes
+// (read:journal:private within read:journal). Hardcover's parents imply
+// their sub-scopes, never the reverse.
+func within(scope, parent string) bool {
+	return scope == parent || strings.HasPrefix(scope, parent+":")
 }
 
 // splitScopes reads a scope list separated by spaces or commas.
@@ -72,7 +74,7 @@ func UngrantedScopes(granted string) []string {
 	for _, s := range scopes {
 		found := false
 		for _, g := range got {
-			if g == "all" || covers(g, s.name) {
+			if g == "all" || within(s.name, g) {
 				found = true
 				break
 			}
@@ -94,19 +96,27 @@ func MissingScopes(err error) []string {
 	if s := splitScopes(se.Scope); len(s) > 0 {
 		return s
 	}
-	_, list, _ := strings.Cut(se.Description, ":")
-	return splitScopes(list)
+	// "Missing scopes: read:journal": the scope names are the words with a
+	// colon inside, not at the end.
+	var names []string
+	for _, w := range splitScopes(se.Description) {
+		if i := strings.Index(w, ":"); i > 0 && i < len(w)-1 {
+			names = append(names, w)
+		}
+	}
+	return names
 }
 
-// insufficientScopeMessage says which permission is missing, what it is for
-// and how to get it, in place of the raw 403.
+// insufficientScopeMessage says which permission is missing and what it is
+// for, in place of the raw 403. How to get it depends on the credential, so
+// that is left to the caller.
 func insufficientScopeMessage(missing []string) string {
 	if len(missing) == 0 {
-		return "Hardcover hasn't granted oku a permission this needs; run: oku auth login"
+		return "Hardcover hasn't granted oku a permission this needs"
 	}
 	var features []string
 	for _, m := range missing {
-		if f := ScopeFeature(m); f != "" && !contains(features, f) {
+		if f := ScopeFeature(m); f != "" && !slices.Contains(features, f) {
 			features = append(features, f)
 		}
 	}
@@ -115,18 +125,18 @@ func insufficientScopeMessage(missing []string) string {
 		msg += "s"
 	}
 	if len(features) > 0 {
-		msg += ", needed for " + strings.Join(features, "; ")
+		msg += ", needed for " + strings.Join(features, " and for ")
 	}
-	return msg + "; run: oku auth login"
+	return msg
 }
 
-func contains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
+// permissionCheck returns a top-level field that reads no rows from field,
+// for a query that reads field nested under me. Hardcover checks permissions
+// on top-level fields only, so without it a token lacking the permission gets
+// an empty list (a shelf or goals that seem to have vanished) instead of a
+// refusal. The response ignores it.
+func permissionCheck(field string) string {
+	return "permission_check: " + field + "(limit: 0) { id }"
 }
 
 // readProbes are the cheapest reads behind each read permission oku needs
@@ -180,7 +190,7 @@ func (c *Client) CheckReadScopes(ctx context.Context) ([]string, error) {
 
 func refusedAny(refused []string, scope string) bool {
 	for _, r := range refused {
-		if covers(r, scope) {
+		if within(r, scope) {
 			return true
 		}
 	}

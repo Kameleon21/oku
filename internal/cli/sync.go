@@ -1,7 +1,11 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"os"
+
+	"github.com/Kameleon21/oku/internal/app"
 
 	"github.com/spf13/cobra"
 )
@@ -18,7 +22,9 @@ func newSyncCmd() *cobra.Command {
 			defer a.Close()
 
 			fmt.Println("Syncing...")
-			if err := a.SyncAll(ctx()); err != nil {
+			if err := a.SyncAll(ctx()); errors.Is(err, app.ErrStatsIncomplete) {
+				fmt.Fprintln(os.Stderr, "warning:", err)
+			} else if err != nil {
 				return err
 			}
 			fmt.Println("Done.")

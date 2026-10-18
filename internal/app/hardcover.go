@@ -63,7 +63,7 @@ func MissingPermission(err error) (string, bool) {
 	if !errors.As(err, &se) || !se.Is(api.ErrInsufficientScope) {
 		return "", false
 	}
-	return se.Error(), true
+	return se.Error() + "; run: oku auth login", true
 }
 
 // Online reports whether the App can reach Hardcover. A nil App is offline.

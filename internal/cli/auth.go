@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -187,19 +188,20 @@ func checkReadScopes(ctx context.Context, src oauth2.TokenSource) ([]string, err
 
 // warnUngrantedScopes tells the user, right after signing in, which
 // permissions the new token lacks, so a feature failing later is no
-// surprise. A browser login's token response lists what was granted; when it
-// doesn't, or for an API key, Hardcover is asked. A failed check is only
+// surprise. Hardcover is asked which read permissions work, and a browser
+// login's token response adds any write permission it left out (it can't
+// be trusted alone: a server may echo the request). A failed check is only
 // mentioned: the sign-in itself worked.
 func warnUngrantedScopes(cmd *cobra.Command, token *oauth2.Token, kind auth.Kind) {
-	var missing []string
+	missing, err := authBackend.checkScopes(cmd.Context(), oauth2.StaticTokenSource(token))
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not check permissions: %v\n", err)
+	}
 	if granted, _ := token.Extra("scope").(string); granted != "" {
-		missing = api.UngrantedScopes(granted)
-	} else {
-		var err error
-		missing, err = authBackend.checkScopes(cmd.Context(), oauth2.StaticTokenSource(token))
-		if err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not check permissions: %v\n", err)
-			return
+		for _, s := range api.UngrantedScopes(granted) {
+			if !slices.Contains(missing, s) {
+				missing = append(missing, s)
+			}
 		}
 	}
 	if len(missing) == 0 {
@@ -281,7 +283,7 @@ func newAuthStatusCmd() *cobra.Command {
 				listScopes(out, missing)
 				fmt.Fprintln(out, scopeRemedy(cred.Kind))
 			default:
-				fmt.Fprintln(out, "Permissions: all read permissions granted")
+				fmt.Fprintln(out, "Permissions: every read permission granted (write permissions are checked when used)")
 			}
 			return nil
 		},
