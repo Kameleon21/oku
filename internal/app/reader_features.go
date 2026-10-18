@@ -211,6 +211,8 @@ func SortQueue(books []model.UserBook, ids []int) {
 
 // MoveQueueBook updates one adjacent pair. Missing shelf books are appended to
 // the private ranked list; reading status remains independent of priority.
+// Like any write-through mutation, a failure to cache the new order is
+// ErrCacheRefresh, returned with the order Hardcover now holds.
 func (a *App) MoveQueueBook(ctx context.Context, bookID, delta int) ([]int, error) {
 	if delta != -1 && delta != 1 {
 		return nil, fmt.Errorf("queue direction must be -1 or 1")
@@ -253,7 +255,7 @@ func (a *App) MoveQueueBook(ctx context.Context, bookID, delta int) ([]int, erro
 	}
 	if len(pending) > 0 {
 		if err := a.hc.QueueBooks(ctx, listID, pending); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("queue books: %w", err)
 		}
 
 		listID, rows, err = a.hc.ReadingQueue(ctx, false)
@@ -287,7 +289,7 @@ func (a *App) MoveQueueBook(ctx context.Context, bookID, delta int) ([]int, erro
 		changes := []api.RankedBook{rows[i], rows[j]}
 		changes[0].Position, changes[1].Position = changes[1].Position, changes[0].Position
 		if err := a.hc.SetQueuePositions(ctx, listID, changes); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("reorder queue: %w", err)
 		}
 		rows[i], rows[j] = rows[j], rows[i]
 	}
@@ -295,10 +297,7 @@ func (a *App) MoveQueueBook(ctx context.Context, bookID, delta int) ([]int, erro
 	for _, r := range rows {
 		ids = append(ids, r.BookID)
 	}
-	if err := a.saveQueue(ids); err != nil {
-		return ids, fmt.Errorf("ranking saved remotely; local cache failed: %w", err)
-	}
-	return ids, nil
+	return ids, cacheRefreshed(a.saveQueue(ids))
 }
 
 // curateTrending keeps rank order, skips owned books, keeps the first book

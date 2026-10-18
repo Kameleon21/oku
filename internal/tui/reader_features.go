@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -123,7 +124,9 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 		}
 		return m.run(queueRefreshCmd(m.ctx, m.backend)), true
 	case queueLoadedMsg:
-		if r.err != nil {
+		// A move that reached Hardcover but not the cache still reorders
+		// the shelf, with a warning, like any other write.
+		if r.err != nil && !errors.Is(r.err, app.ErrCacheRefresh) {
 			return m.showToast(toastError, errorText(r.err)), true
 		}
 		m.shared.queueOrder = r.ids
@@ -136,6 +139,11 @@ func (m *Model) handleReaderRequest(msg tea.Msg) (tea.Cmd, bool) {
 					break
 				}
 			}
+		}
+		if r.err != nil {
+			toast := m.showToast(toastWarn, "Reading queue saved")
+			m.toast.note = cacheWarning
+			return tea.Batch(cmd, toast), true
 		}
 		return tea.Batch(cmd, m.showToast(toastSuccess, "Reading queue saved")), true
 	case reqTrending:

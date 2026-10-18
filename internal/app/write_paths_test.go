@@ -732,6 +732,38 @@ func TestWriteThroughFailurePolicy(t *testing.T) {
 			run:    func(a *App) (int, error) { return 0, a.ReviewBook(ctx, 1, 4, "Spice") },
 			prefix: "update review: ",
 		},
+		{
+			name: "MoveQueueBook queue", method: "QueueBooks",
+			setup: func(t *testing.T, a *App) {
+				upsertBookWithStatus(t, a, 100, 1, model.StatusWantToRead, "Dune")
+				upsertBookWithStatus(t, a, 101, 2, model.StatusWantToRead, "Emma")
+			},
+			run:    func(a *App) (int, error) { _, err := a.MoveQueueBook(ctx, 1, 1); return 0, err },
+			prefix: "queue books: ",
+		},
+		{
+			name: "MoveQueueBook reorder", method: "SetQueuePositions",
+			setup: func(t *testing.T, a *App) {
+				hc := a.hc.(*fakeHardcover)
+				hc.queueListID = 77
+				hc.queue = []api.RankedBook{{ID: 11, BookID: 1, Position: 1}, {ID: 12, BookID: 2, Position: 2}}
+				upsertBookWithStatus(t, a, 100, 1, model.StatusWantToRead, "Dune")
+				upsertBookWithStatus(t, a, 101, 2, model.StatusWantToRead, "Emma")
+			},
+			run:    func(a *App) (int, error) { _, err := a.MoveQueueBook(ctx, 1, 1); return 0, err },
+			prefix: "reorder queue: ",
+		},
+		{
+			name: "ImportBooks", method: "InsertUserBook",
+			setup: func(t *testing.T, a *App) {
+				a.hc.(*fakeHardcover).details = map[int]*api.BookDetail{42: {APIBook: api.APIBook{ID: 42, Title: "Emma"}}}
+			},
+			run: func(a *App) (int, error) {
+				_, err := a.ImportBooks(ctx, []TransferBook{{BookID: 42, Status: "reading"}}, true)
+				return 0, err
+			},
+			prefix: "import stopped at ",
+		},
 	}
 
 	// snapshot is everything a mutation could change locally.
@@ -753,7 +785,11 @@ func TestWriteThroughFailurePolicy(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return fmt.Sprintf("%+v %+v %+v %v %d", ub, inserted, read, ids, localJournalCount(t, a))
+		queue, err := a.CachedQueueOrder()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fmt.Sprintf("%+v %+v %+v %v %v %d", ub, inserted, read, ids, queue, localJournalCount(t, a))
 	}
 
 	for _, tc := range cases {
