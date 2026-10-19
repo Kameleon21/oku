@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -826,5 +827,76 @@ func TestWriteThroughFailurePolicy(t *testing.T) {
 				t.Fatalf("page = %d, want %d alongside the warning", page, tc.wantPage)
 			}
 		})
+	}
+}
+
+// upsertReading caches a currently-reading book last changed at updatedAt.
+func upsertReading(t *testing.T, a *App, userBookID, bookID int, title string, updatedAt time.Time) {
+	t.Helper()
+	ub := model.UserBook{ID: userBookID, BookID: bookID, StatusID: model.StatusCurrentlyReading,
+		Book: model.Book{ID: bookID, Title: title, Pages: 100}, UpdatedAt: updatedAt}
+	if err := a.store.UpsertUserBook(ub); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// titles is the order a book list comes in, by title.
+func titles(books []model.UserBook) []string {
+	out := make([]string, len(books))
+	for i, b := range books {
+		out[i] = b.Book.Title
+	}
+	return out
+}
+
+// TestRecentlyReadingPutsTheLastProgressFirst: logging progress on the older
+// of two books makes it the one a prompt shows, without reordering the
+// Reading list the dashboard draws from CachedBooks.
+func TestRecentlyReadingPutsTheLastProgressFirst(t *testing.T) {
+	hc := newFakeHardcover()
+	a := newTestAppWith(t, hc)
+	upsertReading(t, a, 100, 1, "Piranesi", time.Now().UTC().Add(-2*time.Hour))
+	upsertReading(t, a, 200, 2, "Dune", time.Now().UTC().Add(-time.Hour))
+
+	if _, err := a.UpdateProgress(context.Background(), 1, model.PageUpdate{Delta: 10, Relative: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	recent, err := a.RecentlyReading()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := titles(recent); !slices.Equal(got, []string{"Piranesi", "Dune"}) {
+		t.Fatalf("RecentlyReading = %v, want Piranesi first", got)
+	}
+	cached, err := a.CachedBooks(model.StatusCurrentlyReading)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := titles(cached); !slices.Equal(got, []string{"Dune", "Piranesi"}) {
+		t.Fatalf("CachedBooks = %v, want the Reading list order unchanged", got)
+	}
+}
+
+// TestRecentlyReadingNewerChangeWins: a book changed after the last logged
+// progress (a status change, or a sync of an update made on the website)
+// comes first again.
+func TestRecentlyReadingNewerChangeWins(t *testing.T) {
+	hc := newFakeHardcover()
+	a := newTestAppWith(t, hc)
+	upsertReading(t, a, 100, 1, "Piranesi", time.Now().UTC().Add(-2*time.Hour))
+	upsertReading(t, a, 200, 2, "Dune", time.Now().UTC().Add(-time.Hour))
+	if _, err := a.UpdateProgress(context.Background(), 1, model.PageUpdate{Delta: 10, Relative: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	upsertReading(t, a, 200, 2, "Dune", time.Now().UTC().Add(time.Hour))
+
+	recent, err := a.RecentlyReading()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := titles(recent); !slices.Equal(got, []string{"Dune", "Piranesi"}) {
+		t.Fatalf("RecentlyReading = %v, want Dune first", got)
 	}
 }

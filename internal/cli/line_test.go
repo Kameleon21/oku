@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -39,6 +40,10 @@ func TestFormatLine(t *testing.T) {
 		{"no space left before the ellipsis", []model.UserBook{reading("Piranesi and the House", 10, 272)}, 10, "📖 Piranesi… 3%"},
 		{"wide characters count by cell", []model.UserBook{reading("ノルウェイの森", 10, 100)}, 7, "📖 ノルウ… 10%"},
 		{"surrounding whitespace ignored", []model.UserBook{reading("  Dune \n", 256, 412)}, 24, "📖 Dune 62%"},
+		{"inner newlines and tabs become one space", []model.UserBook{reading("Dune\n\tPart  One", 256, 412)}, 24, "📖 Dune Part One 62%"},
+		{"escape sequences are dropped", []model.UserBook{reading("\x1b[31mDune\x1b[0m\x1b]52;c;aGk=\x07", 256, 412)}, 24, "📖 Dune 62%"},
+		{"other control characters are dropped", []model.UserBook{reading("Du\x07ne\x00", 256, 412)}, 24, "📖 Dune 62%"},
+		{"blank title leaves just the percent", []model.UserBook{reading("  ", 256, 412)}, 24, "📖 62%"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -118,6 +123,41 @@ func TestLineBeforeFirstRun(t *testing.T) {
 	}
 	if _, err := os.Stat(dbPath); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("cache created at %s (stat err %v)", dbPath, err)
+	}
+	dataDir, err := config.DataDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dataDir); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("data dir created at %s (stat err %v)", dataDir, err)
+	}
+}
+
+// TestLineIgnoresABrokenConfig: oku line reads neither the theme nor any
+// other setting, so a bad config must not print an error into every prompt.
+func TestLineIgnoresABrokenConfig(t *testing.T) {
+	for name, cfg := range map[string]string{
+		"unknown theme":  "theme = \"nope\"\n",
+		"not valid TOML": "theme = \n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			isolateConfig(t)
+			seedReading(t, reading("Dune", 256, 412))
+			cfgPath, err := config.FilePath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			if out, want := runLine(t), "📖 Dune 62%\n"; out != want {
+				t.Fatalf("output = %q, want %q", out, want)
+			}
+		})
 	}
 }
 

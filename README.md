@@ -151,7 +151,7 @@ Timer sessions are stored locally, separately from your Hardcover reading stats.
 
 ### Shell prompt and tmux
 
-`oku line` prints the book you're reading as one line, such as
+`oku line` prints the book you worked on most recently as one line, such as
 `📖 Dune 62% +1` (`+1` counts your other books in progress). Long titles are cut
 at 24 columns; change that with `--width`. It reads only oku's local cache, so it
 is fast enough to run on every prompt and needs no network. It prints nothing

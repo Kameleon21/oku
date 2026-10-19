@@ -201,8 +201,8 @@ func StarString(rating float64) string {
 	return b.String()
 }
 
-// Page is where a book stands: the open read's progress when there is one,
-// the book's own page otherwise.
+// Page is where a book stands: the latest read's progress (finished or not)
+// when there is one, the book's own page otherwise.
 func (ub UserBook) Page() int {
 	if len(ub.UserBookReads) > 0 {
 		return ub.UserBookReads[0].ProgressPages

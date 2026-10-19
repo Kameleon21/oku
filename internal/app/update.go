@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 
@@ -46,9 +47,10 @@ func (a *App) UpdateProgress(ctx context.Context, bookID int, pageUpdate model.P
 	}
 
 	cacheErr := a.store.UpsertUserBookRead(read)
+	recentErr := a.recordProgress(ub.ID)
 	a.logLocalJournal(journalEventProgress)
 	a.logRemoteProgress(ctx, resolvedID, newPage, ub.Book.Pages)
-	return newPage, cacheRefreshed(cacheErr)
+	return newPage, cacheRefreshed(cmp.Or(cacheErr, recentErr))
 }
 
 func unfinishedRead(read *model.UserBookRead) *model.UserBookRead {

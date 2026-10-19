@@ -6,9 +6,12 @@ import (
 	"io/fs"
 	"os"
 	"strings"
+	"unicode"
 
+	"github.com/Kameleon21/oku/internal/app"
 	"github.com/Kameleon21/oku/internal/config"
 	"github.com/Kameleon21/oku/internal/model"
+	"github.com/Kameleon21/oku/internal/store"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/spf13/cobra"
 )
@@ -17,8 +20,8 @@ import (
 // the directory and git status.
 const defaultLineWidth = 24
 
-// lineJSON is `oku line --json`: the full title rather than the cut one, and
-// a null percent when the book has no page count.
+// lineJSON is `oku line --json`: the full title rather than the cut one
+// (cleaned the same way), and a null percent when the book has no page count.
 type lineJSON struct {
 	Title   string `json:"title"`
 	Page    int    `json:"page"`
@@ -29,14 +32,18 @@ type lineJSON struct {
 
 // newLineCmd is the shell prompt and status-line segment. A prompt runs it
 // on every redraw, so it reads only the local cache: no auth, no network, no
-// styled output (styles query the terminal's background first). It prints
-// nothing when nothing is in progress, so the segment disappears.
+// config, no styled output (styles query the terminal's background first).
+// It prints nothing when nothing is in progress, so the segment disappears.
 func newLineCmd() *cobra.Command {
 	var width int
 	cmd := &cobra.Command{
 		Use:   "line",
 		Short: "Print the book you're reading as one line, for a shell prompt or tmux",
 		Args:  cobra.NoArgs,
+		// Replaces the root's hook, which loads the config to apply its
+		// theme: line draws nothing, and a bad config would otherwise print
+		// an error into every prompt.
+		PersistentPreRunE: func(*cobra.Command, []string) error { return nil },
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateCount("width", width, 0); err != nil {
 				return err
@@ -50,7 +57,7 @@ func newLineCmd() *cobra.Command {
 			var summary *lineJSON
 			if len(books) > 0 {
 				b := books[0]
-				summary = &lineJSON{Title: b.Book.Title, Page: b.Page(), Pages: b.Book.Pages, Others: len(books) - 1}
+				summary = &lineJSON{Title: cleanTitle(b.Book.Title), Page: b.Page(), Pages: b.Book.Pages, Others: len(books) - 1}
 				if b.Book.Pages > 0 {
 					pct := int(model.Fraction(b.Page(), b.Book.Pages) * 100)
 					summary.Percent = &pct
@@ -68,9 +75,11 @@ func newLineCmd() *cobra.Command {
 	return cmd
 }
 
-// cachedReading is the cached currently-reading list, newest first. Before
-// oku has ever run there is no cache, and opening one would create it, so a
-// missing cache is simply no books.
+// cachedReading is the cached currently-reading list, the book worked on
+// most recently first. Before oku has ever run there is no cache, and opening
+// one would create it, so a missing cache is simply no books. The store is
+// opened directly rather than through initLocalApp, which loads the config
+// this command has no use for.
 func cachedReading() ([]model.UserBook, error) {
 	dbPath, err := config.DBPath()
 	if err != nil {
@@ -80,12 +89,26 @@ func cachedReading() ([]model.UserBook, error) {
 		return nil, nil
 	}
 
-	a, err := initLocalApp()
+	db, err := store.New(dbPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open database: %w", err)
 	}
+	a := app.New(nil, db, config.Defaults())
 	defer a.Close()
-	return a.CachedBooks(model.StatusCurrentlyReading)
+	return a.RecentlyReading()
+}
+
+// cleanTitle makes a title from Hardcover safe for one line of a prompt:
+// escape sequences and control characters dropped, runs of whitespace
+// (newlines and tabs included) folded to one space.
+func cleanTitle(title string) string {
+	title = strings.Join(strings.Fields(ansi.Strip(title)), " ")
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, title)
 }
 
 // formatLine is the prompt segment for the currently-reading books, newest
@@ -97,17 +120,19 @@ func formatLine(books []model.UserBook, width int) string {
 	}
 	b := books[0]
 
-	title := strings.TrimSpace(b.Book.Title)
+	parts := []string{"📖"}
+	title := cleanTitle(b.Book.Title)
 	if ansi.StringWidth(title) > width {
 		title = strings.TrimRight(ansi.Truncate(title, width-1, ""), " ") + "…"
 	}
-
-	line := "📖 " + title
+	if title != "" {
+		parts = append(parts, title)
+	}
 	if b.Book.Pages > 0 {
-		line += fmt.Sprintf(" %d%%", int(model.Fraction(b.Page(), b.Book.Pages)*100))
+		parts = append(parts, fmt.Sprintf("%d%%", int(model.Fraction(b.Page(), b.Book.Pages)*100)))
 	}
 	if others := len(books) - 1; others > 0 {
-		line += fmt.Sprintf(" +%d", others)
+		parts = append(parts, fmt.Sprintf("+%d", others))
 	}
-	return line
+	return strings.Join(parts, " ")
 }

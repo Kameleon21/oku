@@ -227,7 +227,7 @@ func TestUserBookPage(t *testing.T) {
 		ub   UserBook
 		want int
 	}{
-		{"open read wins", UserBook{CurrentPage: 40, UserBookReads: []UserBookRead{{ProgressPages: 120}}}, 120},
+		{"latest read wins", UserBook{CurrentPage: 40, UserBookReads: []UserBookRead{{ProgressPages: 120}}}, 120},
 		{"no read falls back to the book's page", UserBook{CurrentPage: 40}, 40},
 		{"nothing recorded", UserBook{}, 0},
 	}
