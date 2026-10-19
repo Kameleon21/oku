@@ -12,6 +12,7 @@ import (
 	"github.com/Kameleon21/oku/internal/config"
 	"github.com/Kameleon21/oku/internal/model"
 	"github.com/Kameleon21/oku/internal/store"
+	"github.com/Kameleon21/oku/internal/tui"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/spf13/cobra"
 )
@@ -42,8 +43,11 @@ func newLineCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		// Replaces the root's hook, which loads the config to apply its
 		// theme: line draws nothing, and a bad config would otherwise print
-		// an error into every prompt.
-		PersistentPreRunE: func(*cobra.Command, []string) error { return nil },
+		// an error into every prompt. The flag check it also does stays.
+		PersistentPreRunE: func(*cobra.Command, []string) error {
+			_, err := tui.ParseDensity(outputView)
+			return err
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateCount("width", width, 0); err != nil {
 				return err
@@ -99,16 +103,23 @@ func cachedReading() ([]model.UserBook, error) {
 }
 
 // cleanTitle makes a title from Hardcover safe for one line of a prompt:
-// escape sequences and control characters dropped, runs of whitespace
-// (newlines and tabs included) folded to one space.
+// escape sequences, control characters and bidi overrides (which would
+// reverse the rest of the prompt) dropped, runs of whitespace (newlines and
+// tabs included) folded to one space. Zero-width joiners stay: emoji and
+// some scripts need them.
 func cleanTitle(title string) string {
 	title = strings.Join(strings.Fields(ansi.Strip(title)), " ")
 	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
+		if unicode.IsControl(r) || isBidiControl(r) {
 			return -1
 		}
 		return r
 	}, title)
+}
+
+// isBidiControl reports the embedding, override and isolate characters.
+func isBidiControl(r rune) bool {
+	return (r >= '\u202a' && r <= '\u202e') || (r >= '\u2066' && r <= '\u2069')
 }
 
 // formatLine is the prompt segment for the currently-reading books, newest

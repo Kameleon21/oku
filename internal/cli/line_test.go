@@ -43,6 +43,9 @@ func TestFormatLine(t *testing.T) {
 		{"inner newlines and tabs become one space", []model.UserBook{reading("Dune\n\tPart  One", 256, 412)}, 24, "📖 Dune Part One 62%"},
 		{"escape sequences are dropped", []model.UserBook{reading("\x1b[31mDune\x1b[0m\x1b]52;c;aGk=\x07", 256, 412)}, 24, "📖 Dune 62%"},
 		{"other control characters are dropped", []model.UserBook{reading("Du\x07ne\x00", 256, 412)}, 24, "📖 Dune 62%"},
+		{"line and paragraph separators become spaces", []model.UserBook{reading("Dune\u2028Part\u2029One", 256, 412)}, 24, "📖 Dune Part One 62%"},
+		{"bidi overrides are dropped", []model.UserBook{reading("\u202eDune\u2066\u2069", 256, 412)}, 24, "📖 Dune 62%"},
+		{"zero-width joiners are kept", []model.UserBook{reading("👩\u200d💻", 256, 412)}, 24, "📖 👩\u200d💻 62%"},
 		{"blank title leaves just the percent", []model.UserBook{reading("  ", 256, 412)}, 24, "📖 62%"},
 	}
 	for _, tt := range tests {
@@ -233,5 +236,16 @@ func TestLineJSONUnknownPagesAndNothingInProgress(t *testing.T) {
 `
 	if out := runLine(t, "--json"); out != want {
 		t.Fatalf("output = %q, want %q", out, want)
+	}
+}
+
+func TestLineRejectsAnUnknownView(t *testing.T) {
+	isolateConfig(t)
+	t.Cleanup(func() { jsonOutput = false; outputView = "default" })
+	cmd := newRootCmd("test")
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetArgs([]string{"line", "--view", "bogus"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("--view bogus accepted")
 	}
 }

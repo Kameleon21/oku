@@ -900,3 +900,32 @@ func TestRecentlyReadingNewerChangeWins(t *testing.T) {
 		t.Fatalf("RecentlyReading = %v, want Dune first", got)
 	}
 }
+
+// TestRecentlyReadingFallsBack: when the recorded progress can't apply, the
+// list keeps CachedBooks' order.
+func TestRecentlyReadingFallsBack(t *testing.T) {
+	future := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
+	for name, state := range map[string]string{
+		"book no longer reading": "999 " + future,
+		"already first":          "200 " + future,
+		"malformed":              "garbage",
+		"missing time":           "100",
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := newTestAppWith(t, newFakeHardcover())
+			upsertReading(t, a, 100, 1, "Piranesi", time.Now().UTC().Add(-2*time.Hour))
+			upsertReading(t, a, 200, 2, "Dune", time.Now().UTC().Add(-time.Hour))
+			if err := a.store.SetState(lastProgressKey, state); err != nil {
+				t.Fatal(err)
+			}
+
+			recent, err := a.RecentlyReading()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := titles(recent); !slices.Equal(got, []string{"Dune", "Piranesi"}) {
+				t.Fatalf("RecentlyReading = %v, want Dune first", got)
+			}
+		})
+	}
+}
