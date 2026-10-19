@@ -41,7 +41,7 @@ func (i userBookItem) Description() string {
 	}
 	progress := i.book.Progress()
 	if i.book.Book.Pages > 0 {
-		progress += " " + miniProgressBar(currentPage(i.book), i.book.Book.Pages, i.barW)
+		progress += " " + miniProgressBar(i.book.Page(), i.book.Book.Pages, i.barW)
 	}
 
 	switch i.density {
@@ -332,15 +332,6 @@ func (s *librarySection) overflowBadge() string {
 		return ""
 	}
 	return fmt.Sprintf("%d/%d", s.list.Index()+1, total)
-}
-
-// currentPage is where a book stands: the open read's progress when there
-// is one, the book's own page otherwise.
-func currentPage(b model.UserBook) int {
-	if len(b.UserBookReads) > 0 {
-		return b.UserBookReads[0].ProgressPages
-	}
-	return b.CurrentPage
 }
 
 // newListDelegate is the item renderer every list shares: title over

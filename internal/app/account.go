@@ -14,7 +14,7 @@ const userIDKey = "user_id"
 // account rather than to this device: the per-status sync stamps, the
 // reading queue order, the account's privacy setting and the active books.
 func accountStateKeys() []string {
-	keys := []string{queueStateKey, privacySettingKey, activeBookIDKey, activeBookIDsKey}
+	keys := []string{queueStateKey, privacySettingKey, activeBookIDKey, activeBookIDsKey, lastProgressKey}
 	for _, status := range model.AllStatuses {
 		keys = append(keys, syncStateKey(status))
 	}

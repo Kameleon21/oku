@@ -220,7 +220,7 @@ func newPageModal(sh *shared, st styles, b model.UserBook) *pageModal {
 	return &pageModal{
 		bookID:   b.Book.ID,
 		title:    b.Book.Title,
-		current:  currentPage(b),
+		current:  b.Page(),
 		total:    b.Book.Pages,
 		input:    in,
 		focusCmd: focusCmd,

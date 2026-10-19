@@ -240,7 +240,7 @@ func (f *fakeBackend) UpdateProgress(ctx context.Context, bookID int, update mod
 			return
 		}
 		if update.Relative {
-			page = currentPage(*b) + update.Delta
+			page = b.Page() + update.Delta
 		} else {
 			page = update.Absolute
 		}

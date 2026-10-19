@@ -3,6 +3,9 @@ package app
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Kameleon21/oku/internal/model"
@@ -55,6 +58,43 @@ func (a *App) ListBooks(ctx context.Context, status model.Status, refresh bool) 
 // freshness. It never performs a network request.
 func (a *App) CachedBooks(status model.Status) ([]model.UserBook, error) {
 	return a.store.ListUserBooks(status)
+}
+
+// lastProgressKey is the book whose progress was last logged here and when,
+// as "<user book id> <RFC3339 time>". A progress write leaves
+// user_books.updated_at alone: touching it would reorder the Reading list
+// under the dashboard's cursor between two presses of +.
+const lastProgressKey = "last_progress"
+
+func (a *App) recordProgress(userBookID int) error {
+	return a.store.SetState(lastProgressKey, fmt.Sprintf("%d %s", userBookID, time.Now().UTC().Format(time.RFC3339)))
+}
+
+// RecentlyReading is the cached currently-reading list with the book worked
+// on most recently first: the one whose progress was last logged here, unless
+// another book changed after that. The rest keep CachedBooks' order. It never
+// performs a network request.
+func (a *App) RecentlyReading() ([]model.UserBook, error) {
+	books, err := a.CachedBooks(model.StatusCurrentlyReading)
+	if err != nil || len(books) < 2 {
+		return books, err
+	}
+	val, err := a.store.GetState(lastProgressKey)
+	if err != nil {
+		return nil, err
+	}
+	idStr, atStr, _ := strings.Cut(val, " ")
+	id, idErr := strconv.Atoi(idStr)
+	at, atErr := time.Parse(time.RFC3339, atStr)
+	if idErr != nil || atErr != nil || !at.After(books[0].UpdatedAt) {
+		return books, nil
+	}
+	if i := slices.IndexFunc(books, func(b model.UserBook) bool { return b.ID == id }); i > 0 {
+		recent := books[i]
+		copy(books[1:i+1], books[:i])
+		books[0] = recent
+	}
+	return books, nil
 }
 
 func (a *App) isStatusCacheStale(status model.Status) (bool, error) {

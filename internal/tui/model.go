@@ -622,7 +622,7 @@ func (m *Model) handleRequest(msg tea.Msg) tea.Cmd {
 			return m.showToast(toastWarn, inFlightNotice)
 		}
 		b := r.book
-		return m.runWrite(quickProgressCmd(m.ctx, m.backend, b.Book.ID, b.Book.Title, currentPage(b), r.delta))
+		return m.runWrite(quickProgressCmd(m.ctx, m.backend, b.Book.ID, b.Book.Title, b.Page(), r.delta))
 
 	case reqSetPage:
 		if m.busy() {

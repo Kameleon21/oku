@@ -149,6 +149,26 @@ oku timer stats     # Review reading time
 
 Timer sessions are stored locally, separately from your Hardcover reading stats.
 
+### Shell prompt and tmux
+
+`oku line` prints the book you worked on most recently as one line, such as
+`📖 Dune 62% +1` (`+1` counts your other books in progress). Long titles are cut
+at 24 columns; change that with `--width`. It reads only oku's local cache, so it
+is fast enough to run on every prompt and needs no network. It prints nothing
+when no book is in progress, so the segment disappears. The cache is refreshed
+whenever oku syncs, for example by `oku sync` or opening the dashboard.
+
+```toml
+# ~/.config/starship.toml
+[custom.oku]
+command = "oku line"
+when = "command -v oku"
+style = "bold red"
+```
+
+For tmux, add `set -g status-right '#(oku line) %H:%M'` to `~/.tmux.conf`.
+`oku line --json` gives the full title, page, page count, percent and other book count.
+
 ## Configuration
 
 Run `oku config edit` to open your settings, or `oku config show` to see the

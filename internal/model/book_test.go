@@ -220,3 +220,43 @@ func TestSeriesLabel(t *testing.T) {
 		}
 	}
 }
+
+func TestUserBookPage(t *testing.T) {
+	tests := []struct {
+		name string
+		ub   UserBook
+		want int
+	}{
+		{"latest read wins", UserBook{CurrentPage: 40, UserBookReads: []UserBookRead{{ProgressPages: 120}}}, 120},
+		{"no read falls back to the book's page", UserBook{CurrentPage: 40}, 40},
+		{"nothing recorded", UserBook{}, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.ub.Page(); got != tt.want {
+				t.Errorf("Page() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFraction(t *testing.T) {
+	tests := []struct {
+		name           string
+		current, total int
+		want           float64
+	}{
+		{"part way", 256, 412, 256.0 / 412.0},
+		{"finished", 412, 412, 1},
+		{"past the end clamps", 500, 412, 1},
+		{"negative clamps", -3, 412, 0},
+		{"unknown total", 120, 0, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Fraction(tt.current, tt.total); got != tt.want {
+				t.Errorf("Fraction(%d, %d) = %v, want %v", tt.current, tt.total, got, tt.want)
+			}
+		})
+	}
+}
