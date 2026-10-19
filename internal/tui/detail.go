@@ -241,7 +241,7 @@ func renderUserBook(ub model.UserBook, sessions []model.ReadingSession, now time
 	line(st.value.Render(cut(statusLine(ub), w)))
 	line("")
 
-	page := currentPage(ub)
+	page := ub.Page()
 	line(progressRow(page, b.Pages, w, st))
 	if pace := paceLine(ub, page, now); pace != "" {
 		line(st.dim.Render(cut(pace, w)))
@@ -335,7 +335,7 @@ func progressRow(page, pages, w int, st styles) string {
 	if pages <= 0 {
 		return st.dim.Render(cut(fmt.Sprintf("p.%d", page), w))
 	}
-	suffix := fmt.Sprintf("  p.%d / %d · %d%%", page, pages, int(percent(page, pages)*100))
+	suffix := fmt.Sprintf("  p.%d / %d · %d%%", page, pages, int(model.Fraction(page, pages)*100))
 	barW := clampInt(w-lipgloss.Width(suffix), 0, 48)
 	if barW == 0 {
 		return st.dim.Render(cut(strings.TrimSpace(suffix), w))

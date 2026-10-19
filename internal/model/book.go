@@ -201,12 +201,34 @@ func StarString(rating float64) string {
 	return b.String()
 }
 
+// Page is where a book stands: the open read's progress when there is one,
+// the book's own page otherwise.
+func (ub UserBook) Page() int {
+	if len(ub.UserBookReads) > 0 {
+		return ub.UserBookReads[0].ProgressPages
+	}
+	return ub.CurrentPage
+}
+
+// Fraction is how far through total current is, clamped to 0..1. An unknown
+// total (0 or less) counts as no progress.
+func Fraction(current, total int) float64 {
+	if total <= 0 {
+		return 0
+	}
+	f := float64(current) / float64(total)
+	if f > 1 {
+		return 1
+	}
+	if f < 0 {
+		return 0
+	}
+	return f
+}
+
 // Progress returns current page / total pages as a string.
 func (ub UserBook) Progress() string {
-	page := ub.CurrentPage
-	if len(ub.UserBookReads) > 0 {
-		page = ub.UserBookReads[0].ProgressPages
-	}
+	page := ub.Page()
 	if ub.Book.Pages > 0 {
 		return fmt.Sprintf("%d/%d", page, ub.Book.Pages)
 	}

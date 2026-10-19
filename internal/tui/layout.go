@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/Kameleon21/oku/internal/model"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -247,7 +248,7 @@ func progressBar(current, total, width int, st styles) string {
 		return st.dim.Render(fmt.Sprintf("p.%d", current))
 	}
 	return fmt.Sprintf("%s %s", bar(current, total, width, st),
-		st.dim.Render(fmt.Sprintf("%3d%%", int(percent(current, total)*100))))
+		st.dim.Render(fmt.Sprintf("%3d%%", int(model.Fraction(current, total)*100))))
 }
 
 // bar is the block-character track on its own, for the rows that print the
@@ -256,7 +257,7 @@ func bar(current, total, width int, st styles) string {
 	if width < 0 {
 		width = 0
 	}
-	filled := int(percent(current, total) * float64(width))
+	filled := int(model.Fraction(current, total) * float64(width))
 	if filled > width {
 		filled = width
 	}
@@ -269,26 +270,11 @@ func miniProgressBar(current, total, width int) string {
 	if total <= 0 {
 		return ""
 	}
-	pct := percent(current, total)
+	pct := model.Fraction(current, total)
 	filled := int(pct * float64(width))
 	if filled > width {
 		filled = width
 	}
 	return strings.Repeat("█", filled) + strings.Repeat("░", width-filled) +
 		fmt.Sprintf(" %d%%", int(pct*100))
-}
-
-// percent is how far through total current is, clamped to 0..1.
-func percent(current, total int) float64 {
-	if total <= 0 {
-		return 0
-	}
-	pct := float64(current) / float64(total)
-	if pct > 1 {
-		return 1
-	}
-	if pct < 0 {
-		return 0
-	}
-	return pct
 }
