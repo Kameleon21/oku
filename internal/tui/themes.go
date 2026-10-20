@@ -17,9 +17,9 @@ import (
 // for — so lipgloss.LightDark never has to guess and PinnedDark answers with
 // the palette's own side.
 //
-// Every colour below is quoted from the scheme's published palette; the
-// per-theme comment names the source and the deviations, of which there are
-// a handful: a scheme's own "comment" grey is sometimes too dark to serve as
+// Oku's own pair comes first and is drawn for Oku. Every other colour below
+// is quoted from the scheme's published palette; the per-theme comment names
+// the source and the deviations, of which there are a handful: a scheme's own "comment" grey is sometimes too dark to serve as
 // TextDim on the scheme's own panel background, and the nearest palette
 // colour that clears the contrast floor is used instead (see
 // TestNamedThemeRoles, which holds every palette to those floors).
