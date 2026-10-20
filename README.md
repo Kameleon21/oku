@@ -199,6 +199,7 @@ a palette to use it instead of the built-in one:
 | --- | --- |
 | `auto` (default) | the built-in palette, for whichever background the terminal reports |
 | `dark`, `light` | the built-in palette with a dark or light dashboard background |
+| `oku`, `oku-light` | Oku's own palette: sumi ink (or washi paper) with a vermilion accent |
 | `nord` | Nord |
 | `tokyo-night` | Tokyo Night (night) |
 | `dracula` | Dracula |
