@@ -87,14 +87,17 @@ func metricCount(n int, metric string) string {
 	return Thousands(n) + " " + metric
 }
 
-// metricRate is a weekly rate in a goal's unit. A book rate keeps a decimal,
-// since 1.4 a week and 1 a week are different plans; a rate of ten or more
-// is a whole number, since a tenth of a page is not.
+// metricRate is a weekly rate in a goal's unit, rounded up so that keeping
+// to it never falls short. A book rate under ten keeps a decimal, since 1.4
+// a week and 1 a week are different plans; anything else is a whole number,
+// since a tenth of a page is not. The epsilon keeps float noise, 0.3 a week
+// stored as 0.30000000000000004, from rounding up a whole tenth.
 func metricRate(rate float64, metric string) string {
-	if rate >= 10 {
-		return metricCount(int(math.Ceil(rate)), metric)
+	const eps = 1e-9
+	if rate >= 10 || metric != "books" {
+		return metricCount(int(math.Ceil(rate-eps)), metric)
 	}
-	r := math.Ceil(rate*10) / 10
+	r := math.Ceil(rate*10-eps) / 10
 	if r == 1 {
 		return "1 " + singular(metric)
 	}

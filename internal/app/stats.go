@@ -59,7 +59,7 @@ func (a *App) GetReadingStats() (*model.ReadingStats, error) {
 		return nil, err
 	}
 
-	goal := pickBooksGoal(goals)
+	goal := pickBooksGoal(goals, now)
 	var goalPace *model.GoalPace
 	if goal != nil {
 		if p, ok := model.ForecastGoal(*goal, now); ok {
@@ -82,23 +82,28 @@ func (a *App) GetReadingStats() (*model.ReadingStats, error) {
 	}, nil
 }
 
-// pickBooksGoal returns the active books goal, preferring one whose window
-// covers today. Returns nil when there is none.
-func pickBooksGoal(goals []model.Goal) *model.Goal {
-	today := time.Now()
-	var fallback *model.Goal
+// pickBooksGoal returns the active books goal whose window covers now,
+// else the first that has not ended, else the first at all. Returns nil
+// when there is none.
+func pickBooksGoal(goals []model.Goal, now time.Time) *model.Goal {
+	var upcoming, fallback *model.Goal
 	for i := range goals {
 		g := goals[i]
 		if g.State != "active" || g.Metric != "books" {
 			continue
 		}
+		if g.Covers(now) {
+			return &g
+		}
 		if fallback == nil {
 			fallback = &g
 		}
-		if !g.EndDate.IsZero() && g.EndDate.Before(today) {
-			continue
+		if upcoming == nil && !g.Ended(now) {
+			upcoming = &g
 		}
-		return &g
+	}
+	if upcoming != nil {
+		return upcoming
 	}
 	return fallback
 }

@@ -39,7 +39,8 @@ func (p ReadPace) Stalled() bool {
 }
 
 // ForecastRead is the pace of a read started at started and standing at page
-// of pages, as of now.
+// of pages, as of now, which is in the reader's zone. started is taken as a
+// calendar date (see DaysBetween).
 func ForecastRead(started, now time.Time, page, pages int) ReadPace {
 	p := ReadPace{Page: page, Pages: pages, Days: DaysBetween(started, now)}
 	if p.Days <= 0 {
@@ -55,7 +56,7 @@ func ForecastRead(started, now time.Time, page, pages int) ReadPace {
 		return p
 	}
 	p.DaysLeft = left
-	p.Finish = midnight(now.Local()).AddDate(0, 0, left)
+	p.Finish = calendarDay(now, now.Location()).AddDate(0, 0, left)
 	return p
 }
 
@@ -128,55 +129,65 @@ func (g GoalPace) Reached() bool { return g.Progress >= float64(g.Target) }
 // Remaining is what is still to read to meet the goal, never negative.
 func (g GoalPace) Remaining() float64 { return math.Max(0, float64(g.Target)-g.Progress) }
 
-// ForecastGoal measures g against an even pace as of now. ok is false when
-// the goal has no target or no window, or now falls outside the window.
+// ForecastGoal measures g against an even pace as of now, a day at a time:
+// a day counts once it has passed, so every reading of the goal on one day
+// agrees, whichever screen it is read on. ok is false when the goal has no
+// target or no window, or today falls outside the window.
 //
-// The window is taken as calendar days, start and end inclusive, in now's
-// zone: Hardcover sends bare dates, and a goal ending on 31 Dec ends at the
+// The window is the goal's calendar days, start and end inclusive, read as
+// the reader's dates (see DaysBetween): a goal ending on 31 Dec runs to the
 // reader's midnight, not UTC's.
 func ForecastGoal(g Goal, now time.Time) (GoalPace, bool) {
 	if g.Target <= 0 || g.StartDate.IsZero() || g.EndDate.IsZero() {
 		return GoalPace{}, false
 	}
-	loc := now.Location()
-	from := calendarDay(g.StartDate, loc)
-	end := calendarDay(g.EndDate, loc)
-	to := end.AddDate(0, 0, 1)
-	if !to.After(from) || now.Before(from) || !now.Before(to) {
+	total := DaysBetween(g.StartDate, g.EndDate) + 1
+	elapsed := DaysBetween(g.StartDate, now)
+	if total <= 0 || elapsed < 0 || elapsed >= total {
 		return GoalPace{}, false
 	}
 
-	elapsed := now.Sub(from)
-	fraction := elapsed.Seconds() / to.Sub(from).Seconds()
+	fraction := float64(elapsed) / float64(total)
 	p := GoalPace{
 		Metric:   g.Metric,
 		Target:   g.Target,
 		Progress: g.Progress,
-		End:      end,
+		End:      calendarDay(g.EndDate, now.Location()),
 		Expected: float64(g.Target) * fraction,
-		DaysLeft: int(math.Round(to.Sub(midnight(now)).Hours() / 24)),
+		DaysLeft: total - elapsed,
 	}
 	p.Ahead = p.Progress - p.Expected
-	if weeks := to.Sub(now).Hours() / (24 * 7); weeks > 0 {
-		p.PerWeek = p.Remaining() / weeks
-	}
-	if elapsed >= 24*time.Hour {
+	p.PerWeek = p.Remaining() / (float64(p.DaysLeft) / 7)
+	if elapsed > 0 {
 		p.Projected = int(math.Round(p.Progress / fraction))
 	}
 	return p, true
 }
 
-// DaysBetween counts whole days from a to b, bucketed to the reader's own
-// midnight: a book started last night at 23:50 is a day old this morning,
-// not an hour.
-func DaysBetween(a, b time.Time) int {
-	from := midnight(a.Local())
-	to := midnight(b.Local())
-	return int(math.Round(to.Sub(from).Hours() / 24))
+// Ended reports a goal whose last day is behind the reader, read as
+// calendar dates like ForecastGoal's window. A goal without an end date
+// never ends.
+func (g Goal) Ended(now time.Time) bool {
+	return !g.EndDate.IsZero() && DaysBetween(g.EndDate, now) > 0
 }
 
-func midnight(t time.Time) time.Time {
-	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+// Covers reports a goal whose window includes now's date. A missing start
+// or end leaves that side of the window open.
+func (g Goal) Covers(now time.Time) bool {
+	started := g.StartDate.IsZero() || DaysBetween(g.StartDate, now) >= 0
+	return started && !g.Ended(now)
+}
+
+// DaysBetween counts calendar days from a's date to b's, each read in its
+// own zone. Hardcover sends bare dates, which parse as UTC midnight and mean
+// that day wherever the reader is, so they must not be converted: west of
+// Greenwich the instant is the evening before. now, for its part, is
+// already in the reader's zone, so a book started last night at 23:50 is a
+// day old this morning, not an hour.
+func DaysBetween(a, b time.Time) int {
+	da := time.Date(a.Year(), a.Month(), a.Day(), 0, 0, 0, 0, time.UTC)
+	db := time.Date(b.Year(), b.Month(), b.Day(), 0, 0, 0, 0, time.UTC)
+	return int(db.Sub(da).Hours() / 24)
 }
 
 // calendarDay is t's own calendar date as midnight in loc.

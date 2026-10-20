@@ -353,7 +353,10 @@ func (s *statsSection) render(w int) string {
 const finishingNextRows = 3
 
 // finishingNextBlock is when each open read finishes at its pace so far,
-// soonest first, or "" when none of them can be measured. The title column
+// soonest first, or "" when none of them can be measured. It is measured on
+// the live Reading list rather than taken from ReadingStats.Reading, which
+// is only as fresh as the last local load: a page logged here should move
+// the estimate at once. The title column
 // takes at most a third of the pane, so the estimate is the part that shows.
 func (s *statsSection) finishingNextBlock(w int, now time.Time) string {
 	reads := model.ForecastShelf(s.sh.reading, now)

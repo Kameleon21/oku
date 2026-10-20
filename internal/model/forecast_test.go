@@ -148,3 +148,56 @@ func TestForecastReadDeclines(t *testing.T) {
 		}
 	}
 }
+
+// TestForecastReadUsesTheReadersCalendar: a start date from Hardcover is UTC
+// midnight, which in New York is the evening before. A book started this
+// morning is still a book started today.
+func TestForecastReadUsesTheReadersCalendar(t *testing.T) {
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skip("no tzdata:", err)
+	}
+	started := time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)
+	morning := time.Date(2026, 10, 20, 9, 0, 0, 0, ny)
+	if p := ForecastRead(started, morning, 50, 300); p.Days != 0 {
+		t.Fatalf("Days = %d on the day the read started, want 0", p.Days)
+	}
+	if p := ForecastRead(started, morning.AddDate(0, 0, 1), 50, 300); p.Days != 1 || p.PagesPerDay != 50 {
+		t.Fatalf("next day: Days = %d, %v pages/day; want 1 and 50", p.Days, p.PagesPerDay)
+	}
+}
+
+// TestGoalEnded: a goal ending on 31 Dec is live all of that day in the
+// reader's zone, even after UTC has moved on.
+func TestGoalEnded(t *testing.T) {
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skip("no tzdata:", err)
+	}
+	g := Goal{EndDate: time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC)}
+	for _, c := range []struct {
+		now  time.Time
+		want bool
+	}{
+		{time.Date(2026, 12, 30, 20, 0, 0, 0, ny), false},
+		{time.Date(2026, 12, 31, 23, 0, 0, 0, ny), false},
+		{time.Date(2027, 1, 1, 0, 30, 0, 0, ny), true},
+	} {
+		if got := g.Ended(c.now); got != c.want {
+			t.Errorf("Ended(%v) = %v, want %v", c.now, got, c.want)
+		}
+	}
+	if (Goal{}).Ended(time.Now()) {
+		t.Error("a goal with no end date should never end")
+	}
+}
+
+// TestForecastGoalIsADayAtATime: every moment of one day reads the same, so
+// the dashboard's once-a-day page and `oku stats` never disagree.
+func TestForecastGoalIsADayAtATime(t *testing.T) {
+	morning, _ := ForecastGoal(booksGoal(20, 8), halfway.Add(time.Hour))
+	evening, _ := ForecastGoal(booksGoal(20, 8), halfway.Add(23*time.Hour))
+	if morning != evening {
+		t.Fatalf("morning %+v and evening %+v differ", morning, evening)
+	}
+}

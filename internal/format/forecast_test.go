@@ -89,6 +89,8 @@ func TestGoalPace(t *testing.T) {
 		{"ahead says where the pace lands", "books", 20, 13, halfway, "3 books ahead · on pace for 26"},
 		{"the last week counts what is left", "books", 20, 17, lastWeek, "2 books behind · 3 more books by 11 Mar"},
 		{"reached", "books", 20, 20, halfway, "goal reached"},
+		{"float noise does not round up a tenth", "books", 21, 7.5, halfway, "3 books behind · 2.7 books a week gets you to 21"},
+		{"a slow pages goal is still whole pages", "pages", 40, 18, halfway, "2 pages behind · 5 pages a week gets you to 40"},
 		{"a pages goal rounds to whole pages", "pages", 10000, 4000, halfway, "1,000 pages behind · 1,200 pages a week gets you to 10,000"},
 	}
 	for _, c := range cases {

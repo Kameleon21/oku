@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Kameleon21/oku/internal/model"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestFinishingNext(t *testing.T) {
@@ -46,5 +47,26 @@ func TestFinishingNextStopsAtTheLimit(t *testing.T) {
 	}
 	if rows := strings.Count(finishingNext(reads, now), "pages/day"); rows != finishingNextLimit {
 		t.Fatalf("printed %d rows, want %d", rows, finishingNextLimit)
+	}
+}
+
+// TestFinishingNextAlignsWideTitles: the column is measured in cells, so a
+// title in a wide script lines up with the rest.
+func TestFinishingNextAlignsWideTitles(t *testing.T) {
+	now := time.Date(2026, 9, 5, 20, 30, 0, 0, time.Local)
+	pace := model.ReadPace{Days: 1, Page: 10, Pages: 100, PagesPerDay: 10}
+	out := finishingNext([]model.BookForecast{
+		{Title: "ノルウェイの森", ReadPace: pace}, // seven runes, fourteen cells
+		{Title: "Norwegian Wood", ReadPace: pace},
+	}, now)
+	rows := strings.Split(strings.TrimSpace(out), "\n")[1:]
+	var cols []int
+	for _, r := range rows {
+		if r = strings.TrimSpace(r); r != "" {
+			cols = append(cols, ansi.StringWidth(r[:strings.Index(r, "10 pages")]))
+		}
+	}
+	if len(cols) != 2 || cols[0] != cols[1] {
+		t.Fatalf("estimates start at columns %v, want them aligned:\n%s", cols, out)
 	}
 }

@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/Kameleon21/oku/internal/charts"
 	"github.com/Kameleon21/oku/internal/format"
 	"github.com/Kameleon21/oku/internal/model"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/spf13/cobra"
 )
 
@@ -151,25 +151,16 @@ func finishingNext(reads []model.BookForecast, now time.Time) string {
 	titles := make([]string, len(reads))
 	w := 0
 	for i, r := range reads {
-		titles[i] = fitTitle(cleanTitle(r.Title), finishingNextTitleW)
-		w = max(w, utf8.RuneCountInString(titles[i]))
+		titles[i] = ansi.Truncate(cleanTitle(r.Title), finishingNextTitleW, "…")
+		w = max(w, ansi.StringWidth(titles[i]))
 	}
 	var sb strings.Builder
 	sb.WriteString("\n  Finishing next\n\n")
 	for i, r := range reads {
-		pad := w - utf8.RuneCountInString(titles[i])
+		pad := w - ansi.StringWidth(titles[i])
 		fmt.Fprintf(&sb, "  %s%s  %s\n", titles[i], strings.Repeat(" ", pad), format.ReadPace(r.ReadPace, now))
 	}
 	return sb.String()
-}
-
-// fitTitle cuts s to n runes, marking the cut with an ellipsis.
-func fitTitle(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return strings.TrimRight(string(r[:n-1]), " ") + "…"
 }
 
 // renderHeatmap prints a GitHub-style heatmap of reading activity.
