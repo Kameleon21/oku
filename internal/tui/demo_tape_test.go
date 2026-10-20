@@ -17,7 +17,7 @@ func TestDemoTapeKeysStillNavigate(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	old := currentThemeSetting()
 	t.Cleanup(func() { _ = ApplyThemeSetting(old) })
-	_ = ApplyThemeSetting("catppuccin-mocha")
+	_ = ApplyThemeSetting("oku")
 	sessions := tapeSessions(t)
 	if len(sessions) != 1 {
 		t.Fatalf("want one TUI session, got %d", len(sessions))
@@ -30,22 +30,20 @@ func TestDemoTapeKeysStillNavigate(t *testing.T) {
 		theme  string
 		picker bool
 	}{
-		{"j", tabReading, focusContent, "catppuccin-mocha", false},
-		{"enter", tabReading, focusDetail, "catppuccin-mocha", false},
-		{"escape", tabReading, focusContent, "catppuccin-mocha", false},
-		{"T", tabReading, focusContent, "catppuccin-mocha", true},
-		{"nord", tabReading, focusContent, "nord", true},
-		{"enter", tabReading, focusContent, "nord", false},
-		{"2", tabOku, focusContent, "nord", false},
-		{"4", tabStats, focusContent, "nord", false},
-		{"T", tabStats, focusContent, "nord", true},
-		{"solarized-light", tabStats, focusContent, "solarized-light", true},
-		{"enter", tabStats, focusContent, "solarized-light", false},
-		{"1", tabReading, focusContent, "solarized-light", false},
-		{"T", tabReading, focusContent, "solarized-light", true},
-		{"mocha", tabReading, focusContent, "catppuccin-mocha", true},
-		{"enter", tabReading, focusContent, "catppuccin-mocha", false},
-		{"k", tabReading, focusContent, "catppuccin-mocha", false},
+		{"j", tabReading, focusContent, "oku", false},
+		{"4", tabStats, focusContent, "oku", false},
+		{"T", tabStats, focusContent, "oku", true},
+		{"oku-light", tabStats, focusContent, "oku-light", true},
+		{"enter", tabStats, focusContent, "oku-light", false},
+		{"2", tabOku, focusContent, "oku-light", false},
+		{"T", tabOku, focusContent, "oku-light", true},
+		{"nord", tabOku, focusContent, "nord", true},
+		{"enter", tabOku, focusContent, "nord", false},
+		{"1", tabReading, focusContent, "nord", false},
+		{"T", tabReading, focusContent, "nord", true},
+		{"oku", tabReading, focusContent, "oku", true},
+		{"enter", tabReading, focusContent, "oku", false},
+		{"k", tabReading, focusContent, "oku", false},
 	}
 	i := 0
 	for _, step := range steps {
@@ -72,8 +70,7 @@ func TestDemoTapeKeysStillNavigate(t *testing.T) {
 		}
 		if step.keys == "enter" && !step.picker {
 			cfg, err := config.Load()
-			// The first Enter opens book details, before any theme is saved.
-			if m.focus != focusDetail && (err != nil || cfg.Theme != step.theme) {
+			if err != nil || cfg.Theme != step.theme {
 				t.Fatalf("theme was not saved: config=%+v err=%v", cfg, err)
 			}
 		}

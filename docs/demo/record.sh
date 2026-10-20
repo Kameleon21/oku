@@ -13,5 +13,5 @@ go build -o "$DEMO_DIR/bin/oku" ./cmd/oku
 # Initialize only the disposable database; this command needs no API.
 oku timer status >/dev/null
 python3 docs/demo/seed.py
-oku config theme catppuccin-mocha >/dev/null
+oku config theme oku >/dev/null
 vhs oku-demo.tape

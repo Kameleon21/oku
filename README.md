@@ -10,7 +10,7 @@
 
 Your [Hardcover](https://hardcover.app) library in your terminal. Browse your shelves, find your next book, and track your reading with a keyboard-driven dashboard or quick CLI commands.
 
-![Oku TUI: browse books and statistics, then preview and apply Nord, Solarized Light and Catppuccin Mocha in the built-in theme picker](oku-demo.gif)
+![Oku TUI in the oku theme: finish estimates for each book, the reading goal's pace in Stats, then oku-light and Nord previewed and applied in the built-in theme picker](oku-demo.gif)
 
 *The recording uses fictional books and sample reading data. [Recording instructions](docs/demo/README.md).*
 
