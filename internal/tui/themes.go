@@ -40,6 +40,61 @@ func hex(s string) color.Color { return lipgloss.Color(s) }
 // listing prints them: dark schemes first, each light companion beside its
 // dark one.
 var namedThemes = []NamedTheme{
+	// Oku — the house palette, drawn from the mascot rather than quoted from
+	// a published scheme: sumi ink for the ground, washi ivory for the text
+	// and the one vermilion fold for the accent. The activity ramp climbs
+	// from the ink into the vermilion, so a busy week reads as the fold.
+	// Success and warning borrow matcha and yamabuki, and the error leans to
+	// rose so it is never mistaken for the accent.
+	{
+		Name:   "oku",
+		IsDark: true,
+		Theme: Theme{
+			Accent:        hex("#E5533C"), // vermilion
+			Heading:       hex("#E3B47C"), // kraft gold
+			Text:          hex("#EEE7D8"), // washi ivory
+			TextMuted:     hex("#C8BEAB"),
+			TextDim:       hex("#91877A"),
+			Border:        hex("#3B3732"),
+			BorderFocused: hex("#E5533C"), // vermilion
+			Background:    hex("#1A1917"), // sumi ink
+			Surface:       hex("#25231F"),
+			Success:       hex("#93AD78"), // matcha
+			Warning:       hex("#E0A93E"), // yamabuki
+			Error:         hex("#EC6F86"), // rose
+			Heat1:         hex("#4B2C25"),
+			Heat2:         hex("#8E3B2B"),
+			Heat3:         hex("#D04B34"),
+			Heat4:         hex("#F39470"),
+		},
+	},
+
+	// Oku light — the same palette on the paper instead of the ink: washi
+	// ground, ink text, and the vermilion deepened until it reads on ivory.
+	{
+		Name:   "oku-light",
+		IsDark: false,
+		Theme: Theme{
+			Accent:        hex("#B5321E"), // deep vermilion
+			Heading:       hex("#8A5A2B"), // kraft brown
+			Text:          hex("#22201C"), // sumi ink
+			TextMuted:     hex("#4F4940"),
+			TextDim:       hex("#776D61"),
+			Border:        hex("#CFC4AF"),
+			BorderFocused: hex("#B5321E"), // deep vermilion
+			Background:    hex("#F7F2E8"), // washi
+			Surface:       hex("#EDE5D5"),
+			Success:       hex("#5B7A39"), // matcha
+			Warning:       hex("#A2650F"), // yamabuki
+			Error:         hex("#A3214A"), // rose
+			// On paper the ramp darkens as the day gets busier.
+			Heat1: hex("#E8C4AF"),
+			Heat2: hex("#D98567"),
+			Heat3: hex("#B5321E"),
+			Heat4: hex("#6E1D12"),
+		},
+	},
+
 	// Nord — nordtheme.com/docs/colors-and-palettes. Polar Night nord0
 	// #2E3440 … nord3 #4C566A, Snow Storm nord4 #D8DEE9 … nord6 #ECEFF4,
 	// Frost nord7 #8FBCBB … nord10 #5E81AC, Aurora nord11 #BF616A,
