@@ -15,7 +15,8 @@ const genreBreakdownLimit = 6
 // GetReadingStats assembles everything the stats view displays from the local
 // cache. It never performs a network request; run a sync first for fresh data.
 func (a *App) GetReadingStats() (*model.ReadingStats, error) {
-	year := time.Now().Year()
+	now := time.Now()
+	year := now.Year()
 
 	summary, err := a.store.GetYearSummary(year)
 	if err != nil {
@@ -53,11 +54,25 @@ func (a *App) GetReadingStats() (*model.ReadingStats, error) {
 	if err != nil {
 		return nil, err
 	}
+	reading, err := a.CachedBooks(model.StatusCurrentlyReading)
+	if err != nil {
+		return nil, err
+	}
+
+	goal := pickBooksGoal(goals)
+	var goalPace *model.GoalPace
+	if goal != nil {
+		if p, ok := model.ForecastGoal(*goal, now); ok {
+			goalPace = &p
+		}
+	}
 
 	return &model.ReadingStats{
 		Year:     summary,
 		Finished: finished,
-		Goal:     pickBooksGoal(goals),
+		Goal:     goal,
+		GoalPace: goalPace,
+		Reading:  model.ForecastShelf(reading, now),
 		Months:   months,
 		Years:    years,
 		Ratings:  ratings,

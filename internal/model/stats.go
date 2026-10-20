@@ -62,11 +62,13 @@ type LabelCount struct {
 type ReadingStats struct {
 	Finished []UserBook // completed reads in Year, newest first; rereads are separate entries
 	Year     YearSummary
-	Goal     *Goal        // active "books" goal, nil when none
-	Months   [12]int      // books finished per month of Year (Jan=0)
-	Years    []LabelCount // books finished per year, ascending
-	Ratings  [10]int      // count per half-star bucket: index i = (i+1)*0.5 stars
-	Genres   []LabelCount // top genres across finished books, descending
+	Goal     *Goal          // active "books" goal, nil when none
+	GoalPace *GoalPace      // Goal against an even pace, nil when it has no window covering today
+	Reading  []BookForecast // currently-reading books with a measurable pace, soonest finish first
+	Months   [12]int        // books finished per month of Year (Jan=0)
+	Years    []LabelCount   // books finished per year, ascending
+	Ratings  [10]int        // count per half-star bucket: index i = (i+1)*0.5 stars
+	Genres   []LabelCount   // top genres across finished books, descending
 	Heatmap  []DayActivity
 	Weekly   WeeklyStats // timer minutes for the current week
 }
