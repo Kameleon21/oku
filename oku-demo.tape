@@ -15,12 +15,13 @@ Env CLICOLOR "1"
 
 # Start inside the app. Setup and the shell are outside the recording. The
 # launch refresh meets the placeholder token and raises an error toast once
-# its retries give up; the toast clears eight seconds later, before the
-# camera rolls.
+# it gives up, which takes up to the API client's 30-second request budget
+# when Hardcover is slow; the toast clears eight seconds after that, before
+# the camera rolls. Hidden time is not in the recording.
 Hide
 Type "oku"
 Enter
-Sleep 14s
+Sleep 40s
 Show
 Sleep 3s
 
