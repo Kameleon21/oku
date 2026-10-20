@@ -15,7 +15,8 @@ const genreBreakdownLimit = 6
 // GetReadingStats assembles everything the stats view displays from the local
 // cache. It never performs a network request; run a sync first for fresh data.
 func (a *App) GetReadingStats() (*model.ReadingStats, error) {
-	year := time.Now().Year()
+	now := time.Now()
+	year := now.Year()
 
 	summary, err := a.store.GetYearSummary(year)
 	if err != nil {
@@ -53,11 +54,25 @@ func (a *App) GetReadingStats() (*model.ReadingStats, error) {
 	if err != nil {
 		return nil, err
 	}
+	reading, err := a.CachedBooks(model.StatusCurrentlyReading)
+	if err != nil {
+		return nil, err
+	}
+
+	goal := pickBooksGoal(goals, now)
+	var goalPace *model.GoalPace
+	if goal != nil {
+		if p, ok := model.ForecastGoal(*goal, now); ok {
+			goalPace = &p
+		}
+	}
 
 	return &model.ReadingStats{
 		Year:     summary,
 		Finished: finished,
-		Goal:     pickBooksGoal(goals),
+		Goal:     goal,
+		GoalPace: goalPace,
+		Reading:  model.ForecastShelf(reading, now),
 		Months:   months,
 		Years:    years,
 		Ratings:  ratings,
@@ -67,23 +82,28 @@ func (a *App) GetReadingStats() (*model.ReadingStats, error) {
 	}, nil
 }
 
-// pickBooksGoal returns the active books goal, preferring one whose window
-// covers today. Returns nil when there is none.
-func pickBooksGoal(goals []model.Goal) *model.Goal {
-	today := time.Now()
-	var fallback *model.Goal
+// pickBooksGoal returns the active books goal whose window covers now,
+// else the first that has not ended, else the first at all. Returns nil
+// when there is none.
+func pickBooksGoal(goals []model.Goal, now time.Time) *model.Goal {
+	var upcoming, fallback *model.Goal
 	for i := range goals {
 		g := goals[i]
 		if g.State != "active" || g.Metric != "books" {
 			continue
 		}
+		if g.Covers(now) {
+			return &g
+		}
 		if fallback == nil {
 			fallback = &g
 		}
-		if !g.EndDate.IsZero() && g.EndDate.Before(today) {
-			continue
+		if upcoming == nil && !g.Ended(now) {
+			upcoming = &g
 		}
-		return &g
+	}
+	if upcoming != nil {
+		return upcoming
 	}
 	return fallback
 }

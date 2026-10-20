@@ -224,7 +224,10 @@ func (c *Client) UpdateReadProgress(ctx context.Context, userBookReadID int, pro
 
 // InsertUserBookRead creates a new reading progress entry for the given user book.
 func (c *Client) InsertUserBookRead(ctx context.Context, userBookID int, progressPages int) (*APIUserBookRead, error) {
-	startedAt := time.Now().UTC().Format("2006-01-02")
+	// The reader's own date: started_at is a bare date, read back as that day
+	// wherever the reader is, and a book opened at 00:30 in Tokyo was started
+	// today, not on the UTC date of the evening before.
+	startedAt := time.Now().Format("2006-01-02")
 	q := fmt.Sprintf(`mutation {
   insert_user_book_read(
     user_book_id: %d,

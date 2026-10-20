@@ -10,38 +10,6 @@ import (
 	"github.com/Kameleon21/oku/internal/model"
 )
 
-// TestPaceAndETA pins the estimate the detail pane prints. The pace assumes
-// the read started at page 0 (see paceAndETA), so these are the numbers that
-// assumption gives.
-func TestPaceAndETA(t *testing.T) {
-	now := time.Date(2026, 9, 5, 20, 30, 0, 0, time.Local)
-	day := func(n int) time.Time { return now.AddDate(0, 0, -n) }
-
-	cases := []struct {
-		name        string
-		started     time.Time
-		page, pages int
-		want        string
-	}{
-		{"started today has no pace yet", now.Add(-3 * time.Hour), 40, 300, "started today"},
-		{"a day in", day(1), 30, 300, "30 pages/day · ~9 days left (≈ 14 Sep)"},
-		{"a week in, rounded to weeks", day(7), 70, 300, "10 pages/day · ~3 weeks left (≈ 28 Sep)"},
-		{"months out", day(24), 70, 305, "3 pages/day · ~3 months left (≈ 25 Nov)"},
-		{"a page a day is singular", day(20), 20, 40, "1 page/day · ~3 weeks left (≈ 25 Sep)"},
-		{"under a page a day, still estimable", day(30), 20, 300, "<1 page/day · ~14 months left (≈ 30 Oct 2027)"},
-		{"finished books get the pace only", day(10), 300, 300, "30 pages/day"},
-		{"too slow to estimate", day(400), 20, 3000, "<1 page/day · pace too low to estimate"},
-		{"past two years is not an estimate", day(2), 2, 3000, "1 page/day"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := paceAndETA(c.started, now, c.page, c.pages); got != c.want {
-				t.Fatalf("paceAndETA = %q, want %q", got, c.want)
-			}
-		})
-	}
-}
-
 // TestPaceLineOnlyForAnOpenRead checks the row is left out rather than
 // guessed at when the data behind it is not there.
 func TestPaceLineOnlyForAnOpenRead(t *testing.T) {
@@ -52,29 +20,31 @@ func TestPaceLineOnlyForAnOpenRead(t *testing.T) {
 		Book:          model.Book{Pages: 300},
 		UserBookReads: []model.UserBookRead{{ProgressPages: 100, StartedAt: &started}},
 	}
-	if got := paceLine(reading, 100, now); got == "" {
+	if got := paceLine(reading, now); got == "" {
 		t.Fatal("an open read with a start date and pages should have a pace")
 	}
 
 	noStart := reading
 	noStart.UserBookReads = []model.UserBookRead{{ProgressPages: 100}}
-	if got := paceLine(noStart, 100, now); got != "" {
+	if got := paceLine(noStart, now); got != "" {
 		t.Fatalf("no start date should mean no pace, got %q", got)
 	}
 
 	noPages := reading
 	noPages.Book.Pages = 0
-	if got := paceLine(noPages, 100, now); got != "" {
+	if got := paceLine(noPages, now); got != "" {
 		t.Fatalf("no page count should mean no pace, got %q", got)
 	}
 
 	shelved := reading
 	shelved.StatusID = model.StatusWantToRead
-	if got := paceLine(shelved, 100, now); got != "" {
+	if got := paceLine(shelved, now); got != "" {
 		t.Fatalf("a book that is not being read has no pace, got %q", got)
 	}
 
-	if got := paceLine(reading, 0, now); got != "" {
+	unopened := reading
+	unopened.UserBookReads = []model.UserBookRead{{StartedAt: &started}}
+	if got := paceLine(unopened, now); got != "" {
 		t.Fatalf("page 0 has no pace to report, got %q", got)
 	}
 }

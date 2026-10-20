@@ -46,6 +46,9 @@ type statsKey struct {
 	stats   *model.ReadingStats
 	weekly  model.WeeklyStats
 	density Density
+	// day is the reader's date: the forecasts are measured against it, so
+	// the page is built again when midnight passes.
+	day time.Time
 	// built marks a key as a real one, so the zero value never matches.
 	built bool
 }
@@ -62,6 +65,11 @@ func (s *statsSection) Update(msg tea.Msg) tea.Cmd {
 		if msg.kind == dataLocal || msg.kind == dataDensity {
 			s.key = statsKey{}
 			return s.rebuildFinished()
+		}
+		// The finishing-next block is measured on the Reading list, which
+		// comes with the library rather than the local data.
+		if msg.kind == dataLibrary {
+			s.key = statsKey{}
 		}
 		return nil
 	}
@@ -110,7 +118,9 @@ func (s *statsSection) Update(msg tea.Msg) tea.Cmd {
 // drawn from has changed. A rebuild of the same page keeps the reader where
 // they were, clamped in case the page is now shorter.
 func (s *statsSection) build() {
-	k := statsKey{w: s.w, stats: s.sh.stats, weekly: s.sh.weekly, density: s.sh.density, built: true}
+	now := s.sh.now()
+	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	k := statsKey{w: s.w, stats: s.sh.stats, weekly: s.sh.weekly, density: s.sh.density, day: day, built: true}
 	if k == s.key {
 		return
 	}
@@ -276,6 +286,7 @@ func (s *statsSection) render(w int) string {
 	st := s.st
 
 	// No heading: the pane's own title already names the page and the year.
+	now := s.sh.now()
 	var sb strings.Builder
 	if rs == nil {
 		sb.WriteString(st.dim.Render("  No stats yet. Press s to sync with Hardcover."))
@@ -304,8 +315,15 @@ func (s *statsSection) render(w int) string {
 		sb.WriteString("\n")
 		sb.WriteString("  " + progressBar(int(g.Progress), g.Target, chartBarW(w, 8), st))
 		sb.WriteString(st.dim.Render(fmt.Sprintf("  %d/%d", int(g.Progress), g.Target)))
-		sb.WriteString("\n\n")
+		sb.WriteString("\n")
+		if p, ok := model.ForecastGoal(*g, now); ok {
+			sb.WriteString(st.dim.Render(cut("  "+format.GoalPace(p), w)))
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
 	}
+
+	sb.WriteString(s.finishingNextBlock(w, now))
 
 	// Activity heatmap.
 	if len(rs.Heatmap) > 0 {
@@ -329,6 +347,44 @@ func (s *statsSection) render(w int) string {
 	sb.WriteString(s.weeklyTimerBlock(w))
 
 	return strings.TrimRight(sb.String(), "\n")
+}
+
+// finishingNextRows is how many open reads the stats page forecasts.
+const finishingNextRows = 3
+
+// finishingNextBlock is when each open read finishes at its pace so far,
+// soonest first, or "" when none of them can be measured. It is measured on
+// the live Reading list rather than taken from ReadingStats.Reading, which
+// is only as fresh as the last local load: a page logged here should move
+// the estimate at once. The title column
+// takes at most a third of the pane, so the estimate is the part that shows.
+func (s *statsSection) finishingNextBlock(w int, now time.Time) string {
+	reads := model.ForecastShelf(s.sh.reading, now)
+	if len(reads) == 0 {
+		return ""
+	}
+	if len(reads) > finishingNextRows {
+		reads = reads[:finishingNextRows]
+	}
+	titleW := 0
+	for _, r := range reads {
+		titleW = max(titleW, lipgloss.Width(r.Title))
+	}
+	titleW = clampInt(titleW, 8, max(8, w/3))
+
+	st := s.st
+	var sb strings.Builder
+	sb.WriteString(st.label.Render("  Finishing next"))
+	sb.WriteString("\n")
+	for _, r := range reads {
+		title := cut(r.Title, titleW)
+		pad := strings.Repeat(" ", titleW-lipgloss.Width(title))
+		row := "  " + st.value.Render(title) + pad + "  "
+		sb.WriteString(row + st.dim.Render(cut(format.ReadPace(r.ReadPace, now), w-lipgloss.Width(row))))
+		sb.WriteString("\n")
+	}
+	sb.WriteString("\n")
+	return sb.String()
 }
 
 // chartBarW is the track width a bar chart gets in w columns: what is left

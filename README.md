@@ -64,6 +64,14 @@ Browse reading lists, search by book, author, or genre, and update your progress
 without leaving the terminal. The dashboard also shows your Hardcover reading
 goal, yearly summary, activity heatmap, ratings, and genre breakdowns.
 
+Oku also forecasts from your pace. Each book you're reading gets a finish
+estimate (`30 pages/day · ~3 days left (≈ Thursday)`), and your goal shows how
+far ahead or behind schedule you are and what it takes from here
+(`2 books behind · 1.4 books a week gets you to 24`). Both appear in Stats and
+in `oku stats`; `oku stats --json` includes them as `GoalPace` and `Reading`.
+The pace counts from the day a read started, so a book needs a start date and a
+page count to get an estimate.
+
 ```sh
 oku reading                          # Currently reading
 oku finished                         # Finished books

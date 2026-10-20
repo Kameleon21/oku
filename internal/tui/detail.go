@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -243,7 +242,7 @@ func renderUserBook(ub model.UserBook, sessions []model.ReadingSession, now time
 
 	page := ub.Page()
 	line(progressRow(page, b.Pages, w, st))
-	if pace := paceLine(ub, page, now); pace != "" {
+	if pace := paceLine(ub, now); pace != "" {
 		line(st.dim.Render(cut(pace, w)))
 	}
 	line("")
@@ -344,96 +343,13 @@ func progressRow(page, pages, w int, st styles) string {
 }
 
 // paceLine is how fast the book is being read and when it would be finished
-// at that rate. It is only shown for an open read with a start date and a
-// page count: anything else would be a guess presented as an estimate.
-func paceLine(ub model.UserBook, page int, now time.Time) string {
-	if ub.StatusID != model.StatusCurrentlyReading || page <= 0 || ub.Book.Pages <= 0 {
-		return ""
-	}
-	if len(ub.UserBookReads) == 0 || ub.UserBookReads[0].StartedAt == nil {
-		return ""
-	}
-	return paceAndETA(*ub.UserBookReads[0].StartedAt, now, page, ub.Book.Pages)
-}
-
-// paceAndETA is the pace-and-estimate row for a read started at started and
-// standing at page of pages.
-//
-// It assumes the read began at page 0: user_book_reads records where a read
-// started in time but not in pages, and neither the timer sessions nor the
-// journal entries carry a page locally. A book picked up at its halfway mark
-// therefore reads as faster than it was.
-func paceAndETA(started, now time.Time, page, pages int) string {
-	days := daysBetween(started, now)
-	if days <= 0 {
-		return "started today"
-	}
-	pace := float64(page) / float64(days)
-
-	paceStr := "<1 page/day"
-	if pace >= 1 {
-		paceStr = plural(int(math.Round(pace)), "page") + "/day"
-	}
-
-	remaining := pages - page
-	if remaining <= 0 {
-		return paceStr
-	}
-	if pace < 0.5 {
-		return paceStr + " · pace too low to estimate"
-	}
-	etaDays := int(math.Ceil(float64(remaining) / pace))
-	left, ok := humanDays(etaDays)
+// at that rate, or "" when model.ForecastBook has nothing honest to say.
+func paceLine(ub model.UserBook, now time.Time) string {
+	p, ok := model.ForecastBook(ub, now)
 	if !ok {
-		return paceStr
+		return ""
 	}
-	// The year is only worth a column when the estimate leaves this one.
-	eta := now.AddDate(0, 0, etaDays)
-	layout := "2 Jan"
-	if eta.Year() != now.Year() {
-		layout = "2 Jan 2006"
-	}
-	return fmt.Sprintf("%s · ~%s left (≈ %s)", paceStr, left, eta.Format(layout))
-}
-
-// daysBetween counts whole days from a to b, bucketed to the reader's own
-// midnight: a book started last night at 23:50 is a day old this morning,
-// not an hour.
-func daysBetween(a, b time.Time) int {
-	from := midnight(a.Local())
-	to := midnight(b.Local())
-	return int(math.Round(to.Sub(from).Hours() / 24))
-}
-
-func midnight(t time.Time) time.Time {
-	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
-}
-
-// humanDays renders a span at the coarsest unit that is still honest about
-// it. Past two years the estimate says nothing worth printing, so it is not
-// printed at all.
-func humanDays(d int) (string, bool) {
-	switch {
-	case d <= 0:
-		return "<1 day", true
-	case d == 1:
-		return "1 day", true
-	case d <= 14:
-		return fmt.Sprintf("%d days", d), true
-	case d <= 70:
-		return plural(int(math.Round(float64(d)/7)), "week"), true
-	case d <= 730:
-		return plural(int(math.Round(float64(d)/30)), "month"), true
-	default:
-		return "", false
-	}
-}
-
-func plural(n int, unit string) string {
-	if n == 1 {
-		return "1 " + unit
-	}
-	return fmt.Sprintf("%d %ss", n, unit)
+	return format.ReadPace(p, now)
 }
 
 // releaseYear keeps only the year of a release date, which is all a full
