@@ -67,9 +67,14 @@ func TestForecastGoalWindow(t *testing.T) {
 	if last.DaysLeft != 1 {
 		t.Errorf("on the last day DaysLeft = %d, want 1 (today counts)", last.DaysLeft)
 	}
-	first, _ := ForecastGoal(g, goalStart.Add(9*time.Hour))
-	if first.Projected != 0 {
-		t.Errorf("Projected on the first day = %d, want 0: a few hours is no pace", first.Projected)
+	for _, days := range []int{0, 1, minProjectionDays - 1} {
+		early, _ := ForecastGoal(g, goalStart.AddDate(0, 0, days).Add(9*time.Hour))
+		if early.Projected != 0 {
+			t.Errorf("Projected after %d days = %d, want 0: that is no pace yet", days, early.Projected)
+		}
+	}
+	if week, _ := ForecastGoal(g, goalStart.AddDate(0, 0, minProjectionDays)); week.Projected == 0 {
+		t.Error("a goal a week in should project its pace")
 	}
 }
 

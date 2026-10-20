@@ -10,6 +10,10 @@ import (
 // past two years the pace says nothing a reader could plan around.
 const MaxForecastDays = 730
 
+// minProjectionDays is how long a goal has to have run before its pace so
+// far is projected to the end: one book by 2 Jan is not a pace of 365.
+const minProjectionDays = 7
+
 // minForecastPace is the slowest pace, in pages a day, that still yields a
 // finish date. Below it the read has stalled rather than slowed.
 const minForecastPace = 0.5
@@ -116,8 +120,8 @@ type GoalPace struct {
 	Ahead    float64
 	// PerWeek is the rate from now that lands exactly on Target by End.
 	PerWeek float64
-	// Projected is where the pace kept so far lands by End, 0 until a day of
-	// the window has passed.
+	// Projected is where the pace kept so far lands by End, 0 until the goal
+	// has run minProjectionDays.
 	Projected int
 	// DaysLeft counts the days still in the window, today included.
 	DaysLeft int
@@ -158,7 +162,7 @@ func ForecastGoal(g Goal, now time.Time) (GoalPace, bool) {
 	}
 	p.Ahead = p.Progress - p.Expected
 	p.PerWeek = p.Remaining() / (float64(p.DaysLeft) / 7)
-	if elapsed > 0 {
+	if elapsed >= minProjectionDays {
 		p.Projected = int(math.Round(p.Progress / fraction))
 	}
 	return p, true
