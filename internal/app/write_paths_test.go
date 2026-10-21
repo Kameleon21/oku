@@ -238,6 +238,7 @@ func TestUpdateProgressStartsReadAfterFinishedOne(t *testing.T) {
 	if page != 10 {
 		t.Fatalf("page = %d, want 10", page)
 	}
+	assertCalls(t, hc, "LatestOpenRead", "LatestOpenRead(100)")
 	assertCalls(t, hc, "InsertUserBookRead", "InsertUserBookRead(100, 10)")
 	assertCalls(t, hc, "UpdateReadProgress")
 	read, err := a.store.GetLatestRead(100)
@@ -247,6 +248,44 @@ func TestUpdateProgressStartsReadAfterFinishedOne(t *testing.T) {
 	if read.ID != 1001 || read.ProgressPages != 10 || read.StartedAt == nil || !read.StartedAt.Equal(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) {
 		t.Fatalf("latest read = %+v, want new read 1001 at page 10 started 2026-10-01", read)
 	}
+}
+
+func TestUpdateProgressUsesReadOpenedByHardcover(t *testing.T) {
+	hc := newFakeHardcover()
+	startedAt := "2026-09-10"
+	hc.openReads = map[int]*api.APIUserBookRead{
+		100: {ID: 600, ProgressPages: 40, StartedAt: &startedAt},
+	}
+	a := newTestAppWith(t, hc)
+	upsertBookWithStatus(t, a, 100, 1, model.StatusCurrentlyReading, "Dune")
+
+	// Relative to the open read Hardcover holds, which the cache hasn't seen.
+	page, err := a.UpdateProgress(context.Background(), 1, model.PageUpdate{Delta: 10, Relative: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page != 50 {
+		t.Fatalf("page = %d, want 50", page)
+	}
+	assertCalls(t, hc, "UpdateReadProgress", "UpdateReadProgress(600, 50)")
+	assertCalls(t, hc, "InsertUserBookRead")
+	read, err := a.store.GetLatestRead(100)
+	if err != nil || read == nil || read.ID != 600 || read.ProgressPages != 50 {
+		t.Fatalf("latest read = %+v, %v; want read 600 at page 50", read, err)
+	}
+}
+
+func TestUpdateProgressOpenReadLookupFails(t *testing.T) {
+	hc := newFakeHardcover()
+	hc.errs = map[string]error{"LatestOpenRead": errors.New("unreachable")}
+	a := newTestAppWith(t, hc)
+	upsertBookWithStatus(t, a, 100, 1, model.StatusCurrentlyReading, "Dune")
+
+	if _, err := a.UpdateProgress(context.Background(), 1, model.PageUpdate{Absolute: 10}); err == nil {
+		t.Fatal("expected error when Hardcover can't report open reads")
+	}
+	// Never insert blind: that is how duplicate reads appeared.
+	assertCalls(t, hc, "InsertUserBookRead")
 }
 
 func TestUpdateProgressRequiresCachedBook(t *testing.T) {
