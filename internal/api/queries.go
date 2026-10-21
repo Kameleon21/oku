@@ -173,6 +173,35 @@ func userBooksQuery(statusID int, sel userBooksSelection) string {
 }`, statusID, seriesFields)
 }
 
+// LatestOpenRead returns the newest unfinished read of a user book, or nil
+// when every read is finished or there are none.
+func (c *Client) LatestOpenRead(ctx context.Context, userBookID int) (*APIUserBookRead, error) {
+	req := graphql.NewRequest(`query($id: Int!) {
+  user_book_reads(
+    where: { user_book_id: { _eq: $id }, finished_at: { _is_null: true } }
+    order_by: { id: desc }
+    limit: 1
+  ) {
+    id
+    progress_pages
+    started_at
+    finished_at
+  }
+}`)
+	req.Var("id", userBookID)
+
+	var resp struct {
+		UserBookReads []APIUserBookRead `json:"user_book_reads"`
+	}
+	if err := c.do(ctx, req, &resp); err != nil {
+		return nil, fmt.Errorf("LatestOpenRead: %w", err)
+	}
+	if len(resp.UserBookReads) == 0 {
+		return nil, nil
+	}
+	return &resp.UserBookReads[0], nil
+}
+
 // ListGoals returns the user's reading goals.
 func (c *Client) ListGoals(ctx context.Context) ([]APIGoal, error) {
 	req := graphql.NewRequest(`query {

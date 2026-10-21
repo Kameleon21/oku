@@ -22,6 +22,7 @@ type Hardcover interface {
 	UpdateUserBookStatus(ctx context.Context, userBookID int, statusID int) error
 	UpdateUserBookRating(ctx context.Context, userBookID int, rating float64) error
 	UpdateUserBookReviewAndRating(ctx context.Context, userBookID int, rating float64, review string, reviewedAt string) error
+	LatestOpenRead(ctx context.Context, userBookID int) (*api.APIUserBookRead, error)
 	InsertUserBookRead(ctx context.Context, userBookID int, progressPages int) (*api.APIUserBookRead, error)
 	UpdateReadProgress(ctx context.Context, userBookReadID int, progressPages int) error
 

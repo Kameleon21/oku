@@ -24,6 +24,19 @@ func (a *App) UpdateProgress(ctx context.Context, bookID int, pageUpdate model.P
 		return 0, err
 	}
 	latestRead = unfinishedRead(latestRead)
+	if latestRead == nil {
+		// Hardcover opens a read on its own when a book is marked as reading,
+		// and the cache doesn't hold it until the next sync. Inserting another
+		// would leave the site showing the empty one instead of this progress.
+		open, err := a.hc.LatestOpenRead(ctx, ub.ID)
+		if err != nil {
+			return 0, fmt.Errorf("update progress: %w", err)
+		}
+		if open != nil {
+			read := mapRead(ub.ID, *open)
+			latestRead = &read
+		}
+	}
 	if latestRead != nil {
 		currentPage = latestRead.ProgressPages
 	}

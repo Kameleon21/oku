@@ -34,6 +34,9 @@ type fakeHardcover struct {
 	// readStartedAt is what InsertUserBookRead reports as the new read's
 	// start date.
 	readStartedAt *string
+	// openReads is what LatestOpenRead reports per user book ID: reads
+	// Hardcover holds that the cache doesn't.
+	openReads map[int]*api.APIUserBookRead
 
 	journals     []api.APIReadingJournal
 	bookJournal  map[int][]api.JournalEntry
@@ -150,6 +153,13 @@ func (f *fakeHardcover) UpdateUserBookRating(ctx context.Context, userBookID int
 
 func (f *fakeHardcover) UpdateUserBookReviewAndRating(ctx context.Context, userBookID int, rating float64, review string, reviewedAt string) error {
 	return f.write("UpdateUserBookReviewAndRating", userBookID, rating, review, reviewedAt)
+}
+
+func (f *fakeHardcover) LatestOpenRead(ctx context.Context, userBookID int) (*api.APIUserBookRead, error) {
+	if err := f.record("LatestOpenRead", userBookID); err != nil {
+		return nil, err
+	}
+	return f.openReads[userBookID], nil
 }
 
 func (f *fakeHardcover) InsertUserBookRead(ctx context.Context, userBookID int, progressPages int) (*api.APIUserBookRead, error) {

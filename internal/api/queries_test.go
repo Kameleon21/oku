@@ -189,6 +189,56 @@ func TestGetAccountPrivacySettingMissingField(t *testing.T) {
 	}
 }
 
+func TestLatestOpenRead(t *testing.T) {
+	var gotBody struct {
+		Query     string         `json:"query"`
+		Variables map[string]any `json:"variables"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"user_book_reads":[{"id":6,"progress_pages":497,"started_at":"2026-09-10","finished_at":null}]}}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{
+		gql: graphql.NewClient(srv.URL),
+	}
+
+	got, err := c.LatestOpenRead(t.Context(), 42)
+	if err != nil {
+		t.Fatalf("LatestOpenRead returned error: %v", err)
+	}
+	if got == nil || got.ID != 6 || got.ProgressPages != 497 {
+		t.Fatalf("LatestOpenRead = %+v, want read 6 at page 497", got)
+	}
+	if gotBody.Variables["id"] != float64(42) {
+		t.Fatalf("id variable = %v, want 42", gotBody.Variables["id"])
+	}
+	if !strings.Contains(gotBody.Query, "finished_at: { _is_null: true }") {
+		t.Fatalf("query should only ask for unfinished reads, got: %s", gotBody.Query)
+	}
+}
+
+func TestLatestOpenReadNone(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"user_book_reads":[]}}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{
+		gql: graphql.NewClient(srv.URL),
+	}
+
+	got, err := c.LatestOpenRead(t.Context(), 42)
+	if err != nil || got != nil {
+		t.Fatalf("LatestOpenRead = %+v, %v; want nil, nil", got, err)
+	}
+}
+
 func TestListUserBooksRequestsAndDecodesFeaturedSeries(t *testing.T) {
 	var gotQuery string
 	c, srv := testClientForServer(func(w http.ResponseWriter, r *http.Request) {
